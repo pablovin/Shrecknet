@@ -1,6 +1,6 @@
 # Novelist Narrative Director: Design and Evaluation
 
-Status: implemented as the focused V5 revision `narrative-director-v3`. The
+Status: implemented as the focused V5 revision `narrative-director-v4`. The
 [runtime contract](Novelist.md) and [ordered flow](Generate_Draft/Generate_Draft.md)
 are authoritative. Live generation/token/latency and prose-quality comparison
 remain pending; the annotated context projection below is not a live-model result.
@@ -27,7 +27,11 @@ Arcs → deterministic budgets/subdivisions → sequential prose → local check
 - `orchestrator.py` owns handoffs, sequential accepted continuity, stage callbacks,
   per-call usage, and debug artifacts. Existing persisted progress enums are reused.
 - `prose_quality.py` owns conservative local format/completion, identity/gameplay,
-  and repeated-prose checks plus safe HTML rendering.
+  and repeated-prose checks plus safe HTML rendering. Persistent player/GM name
+  mentions use a focused edit over the full generated prose and confirmed mappings
+  when no hard failures are present. Other failures use broad regeneration. Both
+  share one retry; persistent identity mentions become warnings, other checks stay hard.
+  `orchestrator.py` records warning counts without claiming semantic fidelity.
 - `tasks/novelist.py` preserves job persistence and historical continuity reads,
   preferring directed plans for refined V5 records.
 
@@ -83,7 +87,7 @@ UTF-8 lengths of exact saved writer prompts.
 | --- | ---: | ---: |
 | Normal calls | 16 | 7 (1 extraction + 1 Director + 5 writers) |
 | Writing units | 15 | 5 |
-| Writer prompt bytes | 201,739 | 37,071 |
+| Writer prompt bytes | 201,739 | 38,591 |
 | Input tokens | 52,382 | Pending real provider execution |
 | Output tokens | 11,547 | Pending real provider execution |
 | Chapter length | 7741 generated words | 4,490 target words; actual prose pending |
@@ -92,7 +96,7 @@ UTF-8 lengths of exact saved writer prompts.
 
 The context projection uses the human-authored five-arc plan, current prompt
 builders, and a 700-ASCII-character transition tail after the first unit. It
-reduces repeated writer input by approximately 81.6%, without increasing context or
+reduces repeated writer input by approximately 80.9%, without increasing context or
 output-token settings. It is not a measured reduction in provider tokens, latency,
 or total chapter-generation cost. Changed chapter-length targets also require
 reporting generated word counts during quality comparison.

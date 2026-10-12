@@ -376,10 +376,13 @@ async def test_session9_arc_pipeline_context_usage_and_accepted_only_continuity(
             else:
                 self.writers += 1
                 prompt = request['messages'][0]['content']
-                assignment = json.loads(prompt.split('current_assignment=', 1)[1].split('\nsupporting_source_segments=', 1)[0])
-                block_id = assignment['block_id']
-                # Deliberately leak the GM once; that response must never advance continuity.
-                text = ('Pablo REJECTED_RENDERING ' if self.writers == 1 else '') + (f'{block_id} proceeds through its own events. ' * 75)
+                if 'Focused Identity Correction' in prompt:
+                    text = json.loads(prompt.split('prose_to_edit=', 1)[1]).replace('Pablo REJECTED_RENDERING ', '')
+                else:
+                    assignment = json.loads(prompt.split('current_assignment=', 1)[1].split('\nsupporting_source_segments=', 1)[0])
+                    block_id = assignment['block_id']
+                    # Deliberately leak the GM once; that response must never advance continuity.
+                    text = ('Pablo REJECTED_RENDERING ' if self.writers == 1 else '') + (f'{block_id} proceeds through its own events. ' * 75)
             return {'text': text, 'usage': {'prompt_tokens': 123, 'completion_tokens': 456}, 'response_metadata': {'finish_reason': 'stop'}}
     client = ReplayClient()
     runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
@@ -398,6 +401,10 @@ async def test_session9_arc_pipeline_context_usage_and_accepted_only_continuity(
     for i, call in enumerate(writers):
         prompt = call['messages'][0]['content']
         assert 'candidate_extraction=' not in prompt and 'complete_story_plan=' not in prompt
+        if 'Focused Identity Correction' in prompt:
+            assert 'supporting_source_segments=' not in prompt
+            assert 'REJECTED_RENDERING' in json.loads(prompt.split('prose_to_edit=', 1)[1])
+            continue
         tail = prompt.split('previous_accepted_tail=', 1)[1].split('\nStage 3r', 1)[0]
         assert len(tail) <= 700
         assert 'REJECTED_RENDERING' not in tail
@@ -604,3 +611,142 @@ async def test_repeated_oversized_plan_fails_before_director_and_writers(tmp_pat
     with pytest.raises(RuntimeError, match='failed after one retry'):
         await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text='Source'))
     assert [call['usage_tag'] for call in client.calls] == ['novelist.analysis.story_plan', 'novelist.analysis.story_plan.repair']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('name', ['Pietro', 'Pablo', 'Enrico'])
+async def test_identity_only_warning_after_retry_keeps_draft_and_continuity(tmp_path, monkeypatch, name):
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    value = plan()
+    value['identities'] = [
+        {'player': 'Pietro', 'character': 'Tamura', 'status': 'confirmed'},
+        {'player': 'Pablo', 'character': None, 'status': 'gm'},
+        {'player': 'Enrico', 'character': None, 'status': 'ambiguous'},
+    ]
+    value['beats'].append(dict(value['beats'][0], beat_id='beat-002', source_ranges=[{'start_id': 'passage-000002', 'end_id': 'passage-000002'}]))
+    # The first sentence reproduces the player-name leak in the failed block.
+    leaked = f'{name} Gravino spoke for them. ' + 'The king listened as the rain fell upon the silent courtyard. ' * 25
+    clean = 'Tamura returned through the empty corridors beneath the fading light. ' * 30
+    class WritingClient(Client):
+        async def chat(self, **request):
+            self.calls.append(request)
+            return {'text': next(self.values), 'response_metadata': {'finish_reason': 'stop'}}
+    client = WritingClient([json.dumps(value), json.dumps(director_selection(directed_payload(value))), leaked, leaked, clean])
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    result = await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text='Audience\n\nDeparture'))
+    artifacts = result['artifacts']
+    assert name in result['final_text_html']
+    assert artifacts['quality_gate'] == {'all_blocks_accepted': True, 'total_retries': 1, 'all_blocks_warning_free': False, 'warning_count': 1}
+    assert artifacts['blocks'][0]['warnings'] == [f'nonfiction identity appears in prose: {name}']
+    assert artifacts['blocks'][1]['warnings'] == []
+    assert artifacts['blocks'][0]['attempts'] == 2
+    assert f'nonfiction identity appears in prose: {name}' in client.calls[3]['messages'][0]['content']
+    assert leaked.strip()[-700:] in client.calls[4]['messages'][0]['content']
+    snapshots = [json.loads(path.read_text()) for path in sorted(runner.debug.output_dir.glob('*writer_validation.json'))]
+    assert [item['accepted'] for item in snapshots] == [False, True, True]
+    assert snapshots[1]['errors'] == [] and snapshots[1]['warnings']
+
+
+@pytest.mark.asyncio
+async def test_identity_warning_fixed_by_retry_is_not_retained(tmp_path, monkeypatch):
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    value = plan()
+    value['identities'] = [{'player': 'Pietro', 'character': 'Tamura', 'status': 'confirmed'}]
+    leaked = 'Pietro spoke for them. ' + 'The king listened beside the window. ' * 50
+    clean = leaked.replace('Pietro', 'Tamura')
+    class WritingClient(Client):
+        async def chat(self, **request):
+            self.calls.append(request)
+            return {'text': next(self.values), 'response_metadata': {'finish_reason': 'stop'}}
+    client = WritingClient([json.dumps(value), json.dumps(director_selection(directed_payload(value))), leaked, clean])
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    result = await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text='Audience'))
+    assert result['artifacts']['quality_gate']['all_blocks_warning_free'] is True
+    assert result['artifacts']['quality_gate']['warning_count'] == 0
+    assert result['artifacts']['blocks'][0]['warnings'] == []
+    assert 'Pietro' not in result['final_text_html']
+    correction = client.calls[3]['messages'][0]['content']
+    assert 'Focused Identity Correction' in correction
+    assert json.loads(correction.split('confirmed_mappings=', 1)[1].split('\nidentity_restrictions=', 1)[0]) == [{'player': 'Pietro', 'character': 'Tamura'}]
+    assert json.loads(correction.split('prose_to_edit=', 1)[1]) == leaked.strip()
+    assert 'supporting_source_segments=' not in correction
+    assert 'chapter_outline=' not in correction
+    assert 'current_assignment=' not in correction
+    assert 'Preserve every other event' in correction
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('problem', ['truncation', 'short', 'html', 'gameplay', 'repetition'])
+async def test_identity_warning_does_not_soften_other_writer_failures(tmp_path, monkeypatch, problem):
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    value = plan()
+    value['identities'] = [{'player': 'Pietro', 'character': 'Tamura', 'status': 'confirmed'}]
+    prose = 'Pietro spoke for them. ' + 'The king listened beside the window. ' * 50
+    if problem == 'short':
+        prose = 'Pietro spoke.'
+    elif problem == 'html':
+        prose = '<p>' + prose + '</p>'
+    elif problem == 'gameplay':
+        prose += 'They updated the character sheet.'
+    elif problem == 'repetition':
+        prose += '\n\n' + prose
+    class WritingClient(Client):
+        async def chat(self, **request):
+            self.calls.append(request)
+            if request['usage_tag'].startswith('novelist.analysis'):
+                return {'text': json.dumps(next(self.values)), 'response_metadata': {'finish_reason': 'stop'}}
+            return {'text': prose, 'response_metadata': {'finish_reason': 'length' if problem == 'truncation' else 'stop'}}
+    client = WritingClient([value, director_selection(directed_payload(value))])
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    with pytest.raises(RuntimeError, match='remained unusable'):
+        await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text='Audience'))
+    assert 'Literary Recovery' in client.calls[-1]['messages'][0]['content']
+    assert 'Focused Identity Correction' not in client.calls[-1]['messages'][0]['content']
+    assert len(client.calls) == 4
+    assert json.loads((runner.debug.output_dir / 'manifest.json').read_text())['status'] == 'failed'
+
+
+def test_identity_correction_preserves_full_draft_and_ambiguous_restrictions():
+    from app.jobs.novelist.prompts import build_identity_correction_prompt
+    fixture = session9()
+    directed = DirectedStoryPlan.model_validate(fixture['directed_plan'])
+    prose = 'Pietro Gravino spoke for them. ' + 'The audience waited. ' * 450 + 'The final land grant remained uncertain.'
+    prompt = build_identity_correction_prompt(prose=prose, plan=directed, language='en', detected_mentions=['nonfiction identity appears in prose: Pietro'])
+    assert len(prose) > 6000
+    assert json.loads(prompt.split('prose_to_edit=', 1)[1]) == prose
+    restrictions = json.loads(prompt.split('identity_restrictions=', 1)[1].split('\nprose_to_edit=', 1)[0])
+    assert {item['player']: item['status'] for item in restrictions} == {'Pablo': 'gm', 'Enrico': 'ambiguous'}
+    mappings = json.loads(prompt.split('confirmed_mappings=', 1)[1].split('\nidentity_restrictions=', 1)[0])
+    assert {'player': 'Pietro', 'character': 'Tamura'} in mappings
+    assert not any(item['player'] in ('Pablo', 'Enrico') for item in mappings)
+    assert 'never choose a character' in prompt
+    assert 'never turn the GM into a fictional character' in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('problem', ['truncated', 'html', 'repeated'])
+async def test_focused_identity_edit_is_revalidated_without_another_retry(tmp_path, monkeypatch, problem):
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    value = plan()
+    value['identities'] = [{'player': 'Pietro', 'character': 'Tamura', 'status': 'confirmed'}]
+    leaked = 'Pietro Gravino spoke for them. ' + 'The king listened beside the window. ' * 50
+    corrected = leaked.replace('Pietro Gravino', 'Tamura')
+    if problem == 'html':
+        corrected = '<p>' + corrected + '</p>'
+    elif problem == 'repeated':
+        corrected += '\n\n' + corrected
+    class EditClient(Client):
+        async def chat(self, **request):
+            self.calls.append(request)
+            tag = request['usage_tag']
+            if tag.startswith('novelist.analysis'):
+                text = json.dumps(next(self.values))
+            else:
+                text = corrected if tag.endswith('_retry') else leaked
+            return {'text': text, 'response_metadata': {'finish_reason': 'length' if tag.endswith('_retry') and problem == 'truncated' else 'stop'}}
+    client = EditClient([value, director_selection(directed_payload(value))])
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    with pytest.raises(RuntimeError, match='remained unusable'):
+        await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text='Audience'))
+    assert len(client.calls) == 4
+    assert 'Focused Identity Correction' in client.calls[-1]['messages'][0]['content']

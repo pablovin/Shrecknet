@@ -350,7 +350,7 @@ async def test_writer_receives_no_json_schema_and_retries_truncation() -> None:
     candidate = CandidateExtraction.model_validate(candidate_payload(_plan_payload()))
     directed = DirectedStoryPlan.model_validate(directed_payload(candidate.model_dump()))
     block = plan_blocks(directed, candidate, [SourceSegment(id="passage-000001", text="Tamura reaches the village.")])[0]
-    prose, attempts = await orchestrator._write_block(
+    prose, attempts, warnings = await orchestrator._write_block(
         block=block,
         plan=directed,
         segments=[SourceSegment(id="passage-000001", text="Tamura reaches the village.")],
@@ -360,6 +360,7 @@ async def test_writer_receives_no_json_schema_and_retries_truncation() -> None:
     )
     assert prose.strip()
     assert attempts == 2
+    assert warnings == []
     assert all("response_format" not in call for call in client.calls)
     assert all(call["model"] == orchestrator.writer_model for call in client.calls)
 

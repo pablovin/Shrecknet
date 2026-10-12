@@ -21,7 +21,7 @@ sending `None`) reuses the saved value; send an empty string to clear it.
 Refined V5 extracts candidate evidence, directs it into chronological narrative
 arcs, then writes one unit per arc. Session 9 guidance is approximately 4–6 arcs,
 not a hard quota. `block_count` includes bounded context/output subdivisions.
-Artifacts retain `pipeline_version: "v5"`, add revision `narrative-director-v3`,
+Artifacts retain `pipeline_version: "v5"`, add revision `narrative-director-v4`,
 `candidate_extraction`, `directed_story_plan`, and call usage/efficiency diagnostics.
 Existing `artifacts.story_plan.beats[].source_ranges` remain inclusive
 `start_id`/`end_id` references; `source_segments` maps them to text, offsets, and
@@ -37,3 +37,13 @@ Current runs extract 1–12 whole-source narrative beats (usually 8–10), regar
 of PDF page or paragraph count, before the Director groups them into writing arcs.
 The same maximum applies to oversized-document synthesis; historical records
 remain readable with their original counts. No SDK payload or model change is needed.
+
+Completed drafts may retain identity mentions as editorial warnings after a writer
+retry. Read `run.artifacts["blocks"][i]["warnings"]` for each affected block and
+`run.artifacts["quality_gate"]` for `all_blocks_warning_free` and `warning_count`.
+Historical artifacts may omit these additive fields. Empty/truncated or otherwise
+hard-invalid prose still fails; a warning does not change the completed status.
+
+Identity-only correction uses the existing writer retry to minimally edit the full
+draft with confirmed mappings. Mixed failures retain broad regeneration; both
+results are revalidated. SDK requests and the warning fields above are unchanged.

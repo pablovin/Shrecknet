@@ -59,16 +59,24 @@ _GAMEPLAY = re.compile(
 )
 
 
+def validate_identity_mentions(
+    text: str, *, forbidden_names: list[str], canonical_names: list[str],
+) -> list[str]:
+    """Report player/GM name mentions; the orchestrator owns retry/severity policy."""
+    issues = []
+    canonical = {name.casefold() for name in canonical_names}
+    for name in forbidden_names:
+        if name.casefold() not in canonical and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.IGNORECASE):
+            issues.append(f"nonfiction identity appears in prose: {name}")
+    return issues
+
+
 def validate_contextual_prose(
     text: str, *, forbidden_names: list[str], canonical_names: list[str],
     accepted_sections: list[str],
 ) -> list[str]:
     """Conservative local leakage/repetition checks, never semantic verification."""
-    errors = []
-    canonical = {name.casefold() for name in canonical_names}
-    for name in forbidden_names:
-        if name.casefold() not in canonical and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.IGNORECASE):
-            errors.append(f"nonfiction identity appears in prose: {name}")
+    errors = validate_identity_mentions(text, forbidden_names=forbidden_names, canonical_names=canonical_names)
     if _GAMEPLAY.search(text):
         errors.append("explicit RPG mechanics or gameplay administration appears in prose")
     paragraphs = [" ".join(part.casefold().split()) for part in re.split(r"\n\s*\n", text)]

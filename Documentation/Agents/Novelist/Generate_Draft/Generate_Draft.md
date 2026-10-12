@@ -38,10 +38,16 @@ observability, compatibility, and local-check limitations.
    passages, instructions/language, bounded prior context, and a 700-character accepted
    prose tail. It receives no complete candidate plan or other arcs' detailed facts.
 10. Local formatting/completion, identity/gameplay leakage, and repetition checks run.
-    Stage 3r `build_writer_retry_prompt` replaces a rejected unit once. Only accepted
-    prose becomes continuity. Exhausted repair never publishes a partial chapter.
-11. `quality_gate` confirms all units passed local checks; `merging` escapes title/prose
-    into safe chapter HTML. Artifacts remain V5 with revision `narrative-director-v3`.
+    Stage 3r uses `build_identity_correction_prompt` for identity-only mentions,
+    editing the full generated prose with explicit mappings and restrictions. It
+    receives no raw source or full writing prompt. Other failures use
+    `build_writer_retry_prompt` for broad regeneration. The alternatives share one
+    retry and all local checks run again. Only accepted
+    prose becomes continuity. Persistent player/GM name mentions are accepted as
+    block warnings after retry when every hard check passes. Other exhausted
+    checks still fail without publishing a partial chapter.
+11. `quality_gate` records hard-check acceptance and final identity warnings; `merging` escapes title/prose
+    into safe chapter HTML. Artifacts remain V5 with revision `narrative-director-v4`.
 
 Prompts have no retained inactive variants or mandatory semantic reviewer. Debug
 snapshots retain requests before dispatch, responses before validation, metrics,

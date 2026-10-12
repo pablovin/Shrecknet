@@ -27,8 +27,9 @@ from app.jobs.novelist.prompts import (
     build_analysis_retry_prompt,
     build_writer_prompt,
     build_writer_retry_prompt,
+    build_identity_correction_prompt,
 )
-from app.jobs.novelist.prose_quality import prose_to_html, validate_prose_text, validate_contextual_prose
+from app.jobs.novelist.prose_quality import prose_to_html, validate_prose_text, validate_contextual_prose, validate_identity_mentions
 from app.jobs.novelist.narrative_director import direct_story
 from app.jobs.novelist.source_interpreter import interpret_source
 from app.jobs.novelist.story_plan import (
@@ -230,7 +231,7 @@ class NovelistOrchestrator:
         payload: NovelistRunCreate,
         previous_tail: str,
         accepted_sections: list[str] | None = None,
-    ) -> tuple[str, int]:
+    ) -> tuple[str, int, list[str]]:
         self._active_block_id = block.block_id
         prompt = build_writer_prompt(
             plan=plan,
@@ -242,15 +243,20 @@ class NovelistOrchestrator:
             previous_tail=previous_tail,
         )
         failures: list[str] = []
+        identity_only_retry = False
         prose = ""
         for attempt in range(2):
-            request = (
-                prompt
-                if attempt == 0
-                else build_writer_retry_prompt(
+            if attempt == 0:
+                request = prompt
+            elif identity_only_retry:
+                request = build_identity_correction_prompt(
+                    prose=prose, plan=plan, language=payload.language or "",
+                    detected_mentions=failures,
+                )
+            else:
+                request = build_writer_retry_prompt(
                     original_prompt=prompt, rejected=prose, errors=failures,
                 )
-            )
             prose, metadata = await self._write(
                 request,
                 usage_tag="novelist.writer.section"
@@ -262,18 +268,28 @@ class NovelistOrchestrator:
                 target_words=block.target_words,
                 finish_reason=metadata.get("finish_reason"),
             )
-            failures.extend(validate_contextual_prose(
+            identity_warnings = validate_identity_mentions(
                 prose,
                 forbidden_names=[member.player for member in plan.canonical_cast] + [item.player for item in plan.identity_restrictions],
                 canonical_names=[member.character for member in plan.canonical_cast],
+            )
+            failures.extend(validate_contextual_prose(
+                prose,
+                # Name mentions receive one corrective retry, then remain warnings.
+                forbidden_names=[], canonical_names=[],
                 accepted_sections=accepted_sections or [],
             ))
+            accepted = not failures and (not identity_warnings or attempt == 1)
             self.debug.write(
                 "writer.validation", block_id=block.block_id, attempt=attempt + 1,
-                accepted=not failures, errors=failures,
+                accepted=accepted, errors=failures, warnings=identity_warnings,
             )
-            if not failures:
-                return prose, attempt + 1
+            if accepted:
+                if identity_warnings:
+                    logger.warning("novelist_writer_identity_warning block_id=%s warnings=%s", block.block_id, identity_warnings)
+                return prose, attempt + 1, identity_warnings
+            identity_only_retry = not failures and bool(identity_warnings)
+            failures.extend(identity_warnings)
         raise RuntimeError(
             f"Section {block.block_id} remained unusable after one retry: {'; '.join(failures)}"
         )
@@ -331,7 +347,7 @@ class NovelistOrchestrator:
         started = time.monotonic()
         artifacts: dict[str, Any] = {
             "pipeline_version": "v5",
-            "pipeline_revision": "narrative-director-v3",
+            "pipeline_revision": "narrative-director-v4",
             "inputs": payload.model_dump(
                 exclude={"previous_session_text", "previous_session_summary"}
             ),
@@ -439,6 +455,7 @@ class NovelistOrchestrator:
 
         accepted: dict[str, str] = {}
         attempts: dict[str, int] = {}
+        block_warnings: dict[str, list[str]] = {}
         previous_tail = ""
         writing_started = time.monotonic()
         for index, block in enumerate(blocks, start=1):
@@ -451,7 +468,7 @@ class NovelistOrchestrator:
                         "completed_blocks": index - 1,
                     },
                 )
-            prose, used = await self._write_block(
+            prose, used, warnings = await self._write_block(
                 block=block,
                 plan=plan,
                 segments=segments,
@@ -462,6 +479,7 @@ class NovelistOrchestrator:
             )
             accepted[block.block_id] = prose
             attempts[block.block_id] = used
+            block_warnings[block.block_id] = warnings
             previous_tail = prose[-700:]
 
         if stage_callback:
@@ -496,12 +514,15 @@ class NovelistOrchestrator:
                 "source_ids": block.source_ids,
                 "prose": accepted[block.block_id],
                 "attempts": attempts[block.block_id],
+                "warnings": block_warnings[block.block_id],
             }
             for block in blocks
         ]
         artifacts["quality_gate"] = {
             "all_blocks_accepted": True,
             "total_retries": sum(value - 1 for value in attempts.values()),
+            "all_blocks_warning_free": not any(block_warnings.values()),
+            "warning_count": sum(len(warnings) for warnings in block_warnings.values()),
         }
         artifacts["timings_ms"]["merging"] = round((time.monotonic() - merging_started) * 1000, 2)
         artifacts["timings_ms"]["total"] = round((time.monotonic() - started) * 1000, 2)

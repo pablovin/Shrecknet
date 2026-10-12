@@ -52,7 +52,7 @@ run with an actionable `error_message`; adjust the documented role context
 settings only within the selected model's supported capacity.
 
 Refined runs retain `pipeline_version: "v5"` and add artifact revision
-`narrative-director-v3`, `candidate_extraction`, `directed_story_plan`, and per-call
+`narrative-director-v4`, `candidate_extraction`, `directed_story_plan`, and per-call
 usage/efficiency diagnostics. Existing `story_plan` fields remain compatible.
 Director progress remains `interpretation`; an `analysis_step` detail identifies
 it without adding a persisted stage enum. Director failure follows the same
@@ -64,3 +64,14 @@ oversized-document synthesis. Over-limit plans get one complete regeneration;
 exhausted repair fails the background job before writing. Source paragraph/page
 count does not determine beat count. Historical artifacts retain their original
 shape and counts. See the [canonical contract](../Novelist.md).
+
+A completed run can contain editorial identity warnings. In `artifacts.blocks[]`,
+`warnings` lists persistent player/GM name mentions after one corrective retry.
+`artifacts.quality_gate.all_blocks_warning_free` and `warning_count` summarize them;
+`all_blocks_accepted` still means every block passed the hard checks. These additive
+artifact fields do not change endpoint payloads, statuses, or auth. Historical
+artifacts may lack them. See the [warning policy](../Novelist.md#writing-and-coverage).
+
+Identity-only writer recovery edits the generated unit using confirmed mappings;
+other failures regenerate the unit. Both share one retry, and every result is
+revalidated. This does not add endpoint fields, model settings, or job stages.

@@ -219,17 +219,58 @@ against current passages.
 
 Writers return plain continuous literary prose. Local checks reject empty/truncated
 output, output shorter than `max(40, 35% of target_words)`, list-shaped output,
-Markdown headings/fences, HTML, forbidden player/GM identities, and explicit RPG
+Markdown headings/fences, HTML, and explicit RPG
 administrative phrases in English, Italian, and French. Canonical name collisions
 are allowed; whole-name matching avoids substring false positives. Checks also
 reject repeated substantial paragraphs and exact 40-word spans from earlier
 accepted sections. They do not detect every paraphrased repetition, invented event,
 missing outcome, ambiguous attribution, or RPG term in every language.
 
-One complete-unit retry is allowed. Only accepted prose advances the transition
-tail. Exhausted analysis/Director/writer repair fails the run without publishing a
-partial chapter. Backend escaping wraps accepted paragraphs in `<p>` and adds the
+Player/GM name mentions trigger the same one complete-unit corrective retry.
+When names are the only first-attempt issue, `build_identity_correction_prompt`
+edits the complete generated prose using explicit confirmed player-to-character
+mappings and ambiguous/GM restrictions. It receives no original source passages,
+chapter outline, other blocks, or full generation prompt. It preserves events,
+paragraphs, order, uncertainty, and style, changing names and necessary grammar
+only. Longer player-name forms with surnames are covered when they clearly refer
+to the mapped player. Ambiguous mappings are never resolved and GM names are
+never turned into fictional characters. The full draft is passed without the
+broad retry's 6,000-byte excerpt limit, subject to normal context preflight.
+
+When hard failures accompany name mentions, `build_writer_retry_prompt` performs
+the existing broader regeneration. Both branches use the writer model, the same
+5,000-output-token allowance and `novelist.writer.section_retry` usage tag, and
+share a single retry. The edited result receives all completion, format, identity,
+gameplay, and repetition checks; a hard-invalid edit fails without another call.
+If the replacement passes every hard check but still mentions a player/GM name,
+the block is accepted with a warning and the draft continues. This policy applies
+to confirmed players, ambiguous players, and the GM; it does not resolve ambiguous
+mappings or rewrite prose automatically. Other source-supported fictional names
+are allowed; the canonical cast is a player mapping, not an exhaustive NPC list.
+
+Only accepted prose, including blocks accepted with warnings, advances the
+transition tail. Empty/truncated, malformed, too-short, explicit gameplay, or
+repeated prose remains a hard failure after one retry. Exhausted hard writer
+checks or analysis/Director validation fail the run without publishing a partial
+chapter. A warning is an editorial issue for review, not proof of correct
+attribution. Backend escaping wraps accepted paragraphs in `<p>` and adds the
 escaped `<h1>` title.
+
+Each `artifacts.blocks[]` entry includes `warnings: list[str]` for the accepted
+prose only, empty when clean. Corrected first-attempt mentions remain in debug
+history but are not counted as final warnings. `artifacts.quality_gate` retains
+`all_blocks_accepted` and `total_retries`, and adds `all_blocks_warning_free: bool`
+and `warning_count: int` (the sum of block warning-list lengths). A completed run
+can have `all_blocks_accepted: true` and `all_blocks_warning_free: false`.
+Debug `writer.validation` snapshots separate hard `errors` from identity `warnings`;
+the worker logs `novelist_writer_identity_warning` when accepting such a block.
+For example, an unresolved Pietro mention produces:
+
+```json
+{"all_blocks_accepted":true,"total_retries":1,"all_blocks_warning_free":false,"warning_count":1}
+```
+
+The affected block records `"warnings": ["nonfiction identity appears in prose: Pietro"]`.
 
 Coverage retains `beat_passages`, `unreferenced_passages`, and `shared_passages`, and
 adds `arc_beats` and `excluded_beat_ids`. Selection gaps/reuse do not establish
@@ -279,7 +320,7 @@ submit a new run after rebuilding workers to capture them.
 ## Persistence, rollout, and compatibility
 
 New artifacts use `pipeline_version: "v5"` and
-`pipeline_revision: "narrative-director-v3"`. They include the source index,
+`pipeline_revision: "narrative-director-v4"`. They include the source index,
 `story_plan`, deterministic `coverage`, `planning`, `continuity`, writing
 `block_plan`, accepted prose `blocks`, local quality results, timings, and LLM-call
 metadata. `draft_text` remains safe chapter HTML. Historical V1–V4 records are
@@ -305,9 +346,10 @@ See [the endpoint contract](Endpoints/Novelist%20-%20Endpoints.md),
 [the implementation plan and evaluation status](Narrative%20Planning%20and%20Source%20References%20Plan.md).
 
 Revision `narrative-director-v2` removed redundant identity fields from internal
-LLM responses. Revision `narrative-director-v3` restores compact narrative planning
-and enforces the 12-beat whole-source maximum. Historical `narrative-director-v1`
-and `narrative-director-v2` artifacts remain readable without revalidation or
+LLM responses. Revision `narrative-director-v3` restored compact narrative planning
+and enforced the 12-beat whole-source maximum. Revision `narrative-director-v4`
+accepts persistent writer identity mentions as warnings after corrective retry.
+Historical `narrative-director-v1`, `narrative-director-v2`, and `narrative-director-v3` artifacts remain readable without revalidation or
 backfill; public request/response models and the
 legacy `story_plan` shape are unchanged. Rebuild/restart API and worker containers,
 then resubmit failed runs. No database migration, new settings, extra analysis

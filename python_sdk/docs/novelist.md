@@ -18,13 +18,15 @@ To prefill a form, use `sdk.agents.get(agent_id)` or
 `sdk.agents.list(job="novelist")`. Omitting `language` or `instructions` (or
 sending `None`) reuses the saved value; send an empty string to clear it.
 
-V5 plans group related fictional actions into dramatic developments, typically
-8–10 beats for a three-hour session. This is a soft target. Writing units usually
-correspond to one beat; `block_count` includes subdivisions needed for context
-sizing. New `artifacts.story_plan.beats[].source_ranges` contain inclusive
-`start_id`/`end_id` passage references. `artifacts.source_segments` maps these
-to original text, character offsets, and original PDF pages when available.
-Historical artifacts retain their version and reference shape.
+Refined V5 extracts candidate evidence, directs it into chronological narrative
+arcs, then writes one unit per arc. Session 9 guidance is approximately 4–6 arcs,
+not a hard quota. `block_count` includes bounded context/output subdivisions.
+Artifacts retain `pipeline_version: "v5"`, add revision `narrative-director-v1`,
+`candidate_extraction`, `directed_story_plan`, and call usage/efficiency diagnostics.
+Existing `artifacts.story_plan.beats[].source_ranges` remain inclusive
+`start_id`/`end_id` references; `source_segments` maps them to text, offsets, and
+available PDF pages. Historical V5 beat units and earlier artifacts retain their
+original meaning. Public request models and resource calls are unchanged.
 
 Worker context settings and debug files are described in the
 [canonical Novelist contract](../../Documentation/Agents/Novelist/Novelist.md).

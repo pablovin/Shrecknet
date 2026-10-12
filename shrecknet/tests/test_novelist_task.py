@@ -71,3 +71,13 @@ async def test_previous_run_context_supports_v4_and_historical_v3(
     assert context is not None
     assert context["pipeline_version"] == artifacts["pipeline_version"]
     assert expected_key in context
+
+
+@pytest.mark.asyncio
+async def test_previous_run_context_prefers_directed_v5_without_rewriting_legacy():
+    artifacts = {'pipeline_version': 'v5', 'story_plan': {'beats': []}, 'directed_story_plan': {'arcs': [{'arc_id': 'old-arc'}]}}
+    run = type('Run', (), {'status': NovelistRunStatus.COMPLETED, 'artifacts': artifacts})()
+    repo = type('Repository', (), {'get_run': AsyncMock(return_value=run)})()
+    context = await novelist_task._previous_run_context(repo, 'prior-run')
+    assert context == {'pipeline_version': 'v5', 'directed_story_plan': artifacts['directed_story_plan']}
+    assert 'story_plan' in artifacts

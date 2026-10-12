@@ -48,3 +48,39 @@ def prose_to_html(text: str) -> str:
     return "\n".join(
         f"<p>{html.escape(paragraph, quote=False)}</p>" for paragraph in normalized
     )
+
+
+# Explicit administrative phrases, rather than broad words like "roll" or "glory".
+_GAMEPLAY = re.compile(
+    r"\b(?:roll (?:a |the )?d(?:4|6|8|10|12|20|100)|character sheet|"
+    r"glory points?|initiative roll|saving throw|experience points?|\d+d(?:4|6|8|10|12|20|100)|"
+    r"scheda (?:del personaggio|personaggio)|punti gloria|tiro (?:di iniziativa|salvezza)|"
+    r"fiche de personnage|points de gloire|jet (?:de sauvegarde|d’initiative))\b", re.IGNORECASE,
+)
+
+
+def validate_contextual_prose(
+    text: str, *, forbidden_names: list[str], canonical_names: list[str],
+    accepted_sections: list[str],
+) -> list[str]:
+    """Conservative local leakage/repetition checks, never semantic verification."""
+    errors = []
+    canonical = {name.casefold() for name in canonical_names}
+    for name in forbidden_names:
+        if name.casefold() not in canonical and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.IGNORECASE):
+            errors.append(f"nonfiction identity appears in prose: {name}")
+    if _GAMEPLAY.search(text):
+        errors.append("explicit RPG mechanics or gameplay administration appears in prose")
+    paragraphs = [" ".join(part.casefold().split()) for part in re.split(r"\n\s*\n", text)]
+    substantial = [part for part in paragraphs if len(part.split()) >= 40]
+    if len(substantial) != len(set(substantial)):
+        errors.append("narrative section repeats within the current unit")
+    normalized = " ".join(text.casefold().split())
+    # Long exact spans catch repeated paragraphs/openings without fuzzy semantic claims.
+    for accepted in accepted_sections:
+        prior = " ".join(accepted.casefold().split())
+        words = prior.split()
+        if normalized == prior or any(" ".join(words[i:i + 40]) in normalized for i in range(max(0, len(words) - 39))):
+            errors.append("narrative section repeats previously accepted prose")
+            break
+    return errors

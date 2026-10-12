@@ -102,3 +102,6 @@ backend/
 shreckrpg/
 shrecknet/media/
 shrecknet/databases/
+
+# Annotated Novelist Session 9 regression evidence and measured baseline.
+!shrecknet/tests/fixtures/novelist/session9.json

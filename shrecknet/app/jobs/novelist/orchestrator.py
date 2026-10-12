@@ -1,6 +1,6 @@
 """Novelist v5 orchestration.
 
-Execution order: understand source -> load continuity -> plan beat writing
+Execution order: extract candidate evidence -> direct arcs -> load continuity -> plan arc writing
 blocks -> write and locally check plain-prose sections -> render safe chapter HTML.
 The analysis model receives the strict story-plan JSON Schema. The writer model
 never receives a JSON schema because its contract is plain literary prose.
@@ -20,7 +20,7 @@ from jsonschema import validate as validate_json_schema
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.llm.structured_output import strict_json_schema
-from app.jobs.novelist.block_planner import WritingBlock, plan_blocks
+from app.jobs.novelist.block_planner import WritingBlock, arc_developments, chapter_word_target, plan_blocks
 from app.jobs.novelist.debug_artifacts import NovelistDebugArtifacts
 from app.jobs.novelist.context_budget import input_cost, require_context
 from app.jobs.novelist.prompts import (
@@ -28,7 +28,8 @@ from app.jobs.novelist.prompts import (
     build_writer_prompt,
     build_writer_retry_prompt,
 )
-from app.jobs.novelist.prose_quality import prose_to_html, validate_prose_text
+from app.jobs.novelist.prose_quality import prose_to_html, validate_prose_text, validate_contextual_prose
+from app.jobs.novelist.narrative_director import direct_story
 from app.jobs.novelist.source_interpreter import interpret_source
 from app.jobs.novelist.story_plan import (
     STORY_PLAN_JSON_SCHEMA,
@@ -36,7 +37,8 @@ from app.jobs.novelist.story_plan import (
     SourceInventory,
     coverage_diagnostics,
     NarrativeStoryPlan,
-    SourceSegment,
+    SourceSegment, CandidateExtraction, EvidenceInventory, DirectedStoryPlan,
+    CANDIDATE_JSON_SCHEMA, EVIDENCE_INVENTORY_JSON_SCHEMA, DIRECTED_PLAN_JSON_SCHEMA,
 )
 from app.models.agent import Agent
 from app.models.novelist import NovelistStage
@@ -68,6 +70,7 @@ class NovelistOrchestrator:
         ) or model_policy.get_model(LLMTask.SYNTHESIS)
         self.calls: list[dict[str, Any]] = []
         self.debug = NovelistDebugArtifacts(None)
+        self._active_block_id: str | None = None
 
     @staticmethod
     def _model_name(model: Any) -> Any:
@@ -83,7 +86,33 @@ class NovelistOrchestrator:
             context = self.analysis_context_tokens if schema is not None else self.writer_context_tokens
             require_context(request["messages"][0]["content"], schema,
                             context_tokens=context, output_tokens=request["max_tokens"])
-            result = await self.llm_client.chat(**request)
+            dispatched = time.monotonic()
+            metrics = {
+                "tag": tag, "role": "analysis" if schema is not None else "writer",
+                "block_id": self._active_block_id if schema is None else None,
+                "model": self._model_name(request["model"]),
+                "prompt_bytes": len(request["messages"][0]["content"].encode("utf-8")),
+                "schema_bytes": len(json.dumps(schema).encode("utf-8")) if schema is not None else 0,
+                "input_cost_estimate": input_cost(request["messages"][0]["content"], schema),
+                "is_retry": tag.endswith((".repair", "_retry")),
+            }
+            try:
+                result = await self.llm_client.chat(**request)
+            except Exception as exc:
+                row = metrics | {"elapsed_ms": round((time.monotonic() - dispatched) * 1000, 2), "error": str(exc)}
+                self.calls.append(row)
+                self.debug.write("llm.metrics", **row)
+                raise
+            usage = result.get("usage") if isinstance(result, dict) else None
+            usage = usage if isinstance(usage, dict) else {}
+            metadata = result.get("response_metadata", {}) if isinstance(result, dict) else {}
+            row = metrics | {
+                "response_metadata": metadata, "provider_usage": usage,
+                "input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens"),
+                "elapsed_ms": round((time.monotonic() - dispatched) * 1000, 2),
+            }
+            self.calls.append(row)
+            self.debug.write("llm.metrics", **row)
         except Exception as exc:
             self.debug.write(f"{tag}.error", error=str(exc), traceback=traceback.format_exc())
             raise
@@ -96,9 +125,18 @@ class NovelistOrchestrator:
     ) -> dict[str, Any]:
         """Call the analysis role with its schema and one bounded repair attempt."""
 
-        if schema not in (STORY_PLAN_JSON_SCHEMA, INVENTORY_JSON_SCHEMA):
+        contracts = [
+            (STORY_PLAN_JSON_SCHEMA, NarrativeStoryPlan, "novelist_v5_story_plan"),
+            (INVENTORY_JSON_SCHEMA, SourceInventory, "novelist_v5_inventory"),
+            (CANDIDATE_JSON_SCHEMA, CandidateExtraction, "novelist_v5_candidate"),
+            (EVIDENCE_INVENTORY_JSON_SCHEMA, EvidenceInventory, "novelist_v5_evidence_inventory"),
+            (DIRECTED_PLAN_JSON_SCHEMA, DirectedStoryPlan, "novelist_v5_directed"),
+        ]
+        contract = next((item for item in contracts if item[0] == schema), None)
+        if contract is None:
             raise ValueError("Unknown Novelist structured schema")
-        response_format = strict_json_schema("novelist_v5_inventory" if schema == INVENTORY_JSON_SCHEMA else "novelist_v5_story_plan", schema)
+        _, model_type, schema_name = contract
+        response_format = strict_json_schema(schema_name, schema)
         rejected = ""
         last_error: Exception | None = None
         for attempt in range(2):
@@ -118,6 +156,7 @@ class NovelistOrchestrator:
                 response_format=response_format,
                 temperature=0.0,
                 return_metadata=True,
+                use_conversation_memory=False,
                 usage_tag=attempt_tag,
                 max_tokens=ANALYSIS_MAX_TOKENS,
             )
@@ -126,14 +165,6 @@ class NovelistOrchestrator:
                 result.get("response_metadata", {}) if isinstance(result, dict) else {}
             )
             rejected = str(text or "")
-            self.calls.append(
-                {
-                    "tag": attempt_tag,
-                    "role": "analysis",
-                    "model": self._model_name(self.analysis_model),
-                    "response_metadata": metadata,
-                }
-            )
             try:
                 finish_reason = str(metadata.get("finish_reason") or "").casefold()
                 if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
@@ -144,7 +175,6 @@ class NovelistOrchestrator:
                 if not isinstance(parsed, dict):
                     raise ValueError("structured response must be a JSON object")
                 validate_json_schema(parsed, schema)
-                model_type = SourceInventory if schema == INVENTORY_JSON_SCHEMA else NarrativeStoryPlan
                 model_type.model_validate(parsed)
                 if validator:
                     validator(parsed)
@@ -181,14 +211,6 @@ class NovelistOrchestrator:
         metadata = (
             result.get("response_metadata", {}) if isinstance(result, dict) else {}
         )
-        self.calls.append(
-            {
-                "tag": usage_tag,
-                "role": "writer",
-                "model": self._model_name(self.writer_model),
-                "response_metadata": metadata,
-            }
-        )
         return str(text or "").strip(), metadata
 
     @staticmethod
@@ -202,12 +224,14 @@ class NovelistOrchestrator:
         self,
         *,
         block: WritingBlock,
-        plan: NarrativeStoryPlan,
+        plan: DirectedStoryPlan,
         segments: list[SourceSegment],
         continuity: dict[str, Any],
         payload: NovelistRunCreate,
         previous_tail: str,
+        accepted_sections: list[str] | None = None,
     ) -> tuple[str, int]:
+        self._active_block_id = block.block_id
         prompt = build_writer_prompt(
             plan=plan,
             block=block.as_prompt_dict(),
@@ -238,6 +262,12 @@ class NovelistOrchestrator:
                 target_words=block.target_words,
                 finish_reason=metadata.get("finish_reason"),
             )
+            failures.extend(validate_contextual_prose(
+                prose,
+                forbidden_names=[member.player for member in plan.canonical_cast] + [item.player for item in plan.identity_restrictions],
+                canonical_names=[member.character for member in plan.canonical_cast],
+                accepted_sections=accepted_sections or [],
+            ))
             self.debug.write(
                 "writer.validation", block_id=block.block_id, attempt=attempt + 1,
                 accepted=not failures, errors=failures,
@@ -257,6 +287,7 @@ class NovelistOrchestrator:
         stage_callback: StageCallback | None = None,
     ) -> dict[str, Any]:
         self.calls = []
+        self._active_block_id = None
         self.debug = NovelistDebugArtifacts.create(conversation_id)
         self.debug.write(
             "inputs", payload=payload.model_dump(),
@@ -300,6 +331,7 @@ class NovelistOrchestrator:
         started = time.monotonic()
         artifacts: dict[str, Any] = {
             "pipeline_version": "v5",
+            "pipeline_revision": "narrative-director-v1",
             "inputs": payload.model_dump(
                 exclude={"previous_session_text", "previous_session_summary"}
             ),
@@ -316,7 +348,7 @@ class NovelistOrchestrator:
             if step == "planning_path":
                 artifacts.setdefault("planning", {})[step] = values
 
-        plan, segments = await interpret_source(
+        candidate, segments = await interpret_source(
             text=payload.unstructured_text,
             source_type=payload.source_type,
             language=payload.language or "",
@@ -327,13 +359,26 @@ class NovelistOrchestrator:
             pages=getattr(payload, "source_pages", None),
             diagnostic=record_planning,
         )
-        artifacts["story_plan"] = plan.model_dump()
+        artifacts["candidate_extraction"] = candidate.model_dump()
+        artifacts["story_plan"] = candidate.legacy_plan().model_dump()
         artifacts["source_index_version"] = "paragraph-v1"
-        artifacts["coverage"] = coverage_diagnostics(plan, segments)
+        artifacts["coverage"] = coverage_diagnostics(candidate, segments)
         artifacts["source_segments"] = [segment.model_dump() for segment in segments]
         artifacts["timings_ms"]["interpretation"] = round(
             (time.monotonic() - interpretation_started) * 1000, 2
         )
+
+        director_started = time.monotonic()
+        if stage_callback:
+            await stage_callback(NovelistStage.INTERPRETATION, {"artifacts": artifacts, "analysis_step": "narrative_director"})
+        plan = await direct_story(
+            candidate=candidate, instructions=payload.instructions or "",
+            language=payload.language or "", call_json=self._json,
+        )
+        artifacts["directed_story_plan"] = plan.model_dump()
+        artifacts["timings_ms"]["director"] = round((time.monotonic() - director_started) * 1000, 2)
+        artifacts["coverage"]["arc_beats"] = {arc.arc_id: arc.beat_ids for arc in plan.arcs}
+        artifacts["coverage"]["excluded_beat_ids"] = plan.excluded_beat_ids
 
         if stage_callback:
             await stage_callback(NovelistStage.CONTINUITY, {"artifacts": artifacts})
@@ -351,15 +396,37 @@ class NovelistOrchestrator:
         }
         artifacts["continuity"] = continuity
 
-        empty_block = {"block_id": "block-000", "beat_ids": [], "target_words": 700, "is_final": False}
-        base_prompt = build_writer_prompt(
-            plan=plan, block=empty_block, source_segments=[],
-            language=payload.language or "", instructions=payload.instructions or "",
-            continuity=continuity, previous_tail="𐍈" * 1800,
-        )
-        # Reserve 8 KiB for bounded writer recovery and framing variations.
-        available = int(self.writer_context_tokens * 0.8) - WRITER_MAX_TOKENS - input_cost(base_prompt) - 8192
-        blocks = plan_blocks(plan.beats, segments, max_source_bytes=available)
+        # Full history stays in artifacts; the writer receives only matching,
+        # bounded prior sentences and no historical source reference IDs.
+        names = [member.character.casefold() for member in plan.canonical_cast]
+        prior = continuity["previous_session"]
+        previous = continuity.get("previous_run_context") or {}
+        if isinstance(previous, dict):
+            historical = previous.get("directed_story_plan") or previous.get("story_plan") or previous.get("evidence_ledger") or {}
+            def narrative_strings(value: Any, key: str = "") -> list[str]:
+                if isinstance(value, str):
+                    return [value] if key in {"summary", "outline", "description", "statement", "text", "fact"} else []
+                if isinstance(value, list):
+                    return [text for item in value for text in narrative_strings(item, key)]
+                if isinstance(value, dict):
+                    return [text for field, item in value.items() for text in narrative_strings(item, field)]
+                return []
+            prior += "\n" + "\n".join(narrative_strings(historical))
+        relevant = [sentence.strip() for sentence in prior.splitlines() if not names or any(name in sentence.casefold() for name in names)]
+        compact_continuity = {"prior_context": "\n".join(relevant)[:1000], "authority": "lower_than_current_source"}
+        empty_block = {"block_id": "block-000", "arc_id": "arc-000", "beat_ids": [],
+                       "target_words": 1400, "is_final": False, "part_index": 999, "part_count": 999,
+                       "developments": []}
+        # Reserve each arc's own details plus the maximum UTF-8 continuity tail.
+        base_prompts = {arc.arc_id: build_writer_prompt(
+            plan=plan, block=empty_block | {"beat_ids": arc.beat_ids, "developments": arc_developments(candidate, arc.beat_ids)},
+            source_segments=[], language=payload.language or "", instructions=payload.instructions or "",
+            continuity=compact_continuity, previous_tail="𐍈" * 700,
+        ) for arc in plan.arcs}
+        available = {arc_id: int(self.writer_context_tokens * 0.8) - WRITER_MAX_TOKENS - input_cost(prompt) - 8192
+                     for arc_id, prompt in base_prompts.items()}
+        artifacts["chapter_target_words"] = chapter_word_target(segments)
+        blocks = plan_blocks(plan, candidate, segments, max_source_bytes=available)
         artifacts["block_plan"] = [
             block.as_prompt_dict() | {"source_ids": block.source_ids}
             for block in blocks
@@ -373,6 +440,7 @@ class NovelistOrchestrator:
         accepted: dict[str, str] = {}
         attempts: dict[str, int] = {}
         previous_tail = ""
+        writing_started = time.monotonic()
         for index, block in enumerate(blocks, start=1):
             if stage_callback:
                 await stage_callback(
@@ -387,13 +455,14 @@ class NovelistOrchestrator:
                 block=block,
                 plan=plan,
                 segments=segments,
-                continuity=continuity,
+                continuity=compact_continuity,
                 payload=payload,
                 previous_tail=previous_tail,
+                accepted_sections=list(accepted.values()),
             )
             accepted[block.block_id] = prose
             attempts[block.block_id] = used
-            previous_tail = prose[-1800:]
+            previous_tail = prose[-700:]
 
         if stage_callback:
             await stage_callback(
@@ -404,6 +473,8 @@ class NovelistOrchestrator:
                     "completed_blocks": len(blocks),
                 },
             )
+        artifacts["timings_ms"]["writing"] = round((time.monotonic() - writing_started) * 1000, 2)
+        merging_started = time.monotonic()
         title = (plan.title or "Chapter").strip() or "Chapter"
         rendered_sections = [
             prose_to_html(accepted[block.block_id]) for block in blocks
@@ -420,6 +491,7 @@ class NovelistOrchestrator:
         artifacts["blocks"] = [
             {
                 "block_id": block.block_id,
+                "arc_id": block.arc_id,
                 "beat_ids": block.beat_ids,
                 "source_ids": block.source_ids,
                 "prose": accepted[block.block_id],
@@ -431,8 +503,18 @@ class NovelistOrchestrator:
             "all_blocks_accepted": True,
             "total_retries": sum(value - 1 for value in attempts.values()),
         }
+        artifacts["timings_ms"]["merging"] = round((time.monotonic() - merging_started) * 1000, 2)
         artifacts["timings_ms"]["total"] = round((time.monotonic() - started) * 1000, 2)
         artifacts["llm_calls"] = self.calls
+        artifacts["efficiency"] = {
+            "writing_calls": sum(call["role"] == "writer" for call in self.calls),
+            "total_calls": len(self.calls),
+            "retry_count": sum(call.get("is_retry", False) for call in self.calls),
+            "writer_prompt_bytes": sum(call["prompt_bytes"] for call in self.calls if call["role"] == "writer"),
+            "reported_input_tokens": sum(call["input_tokens"] for call in self.calls if isinstance(call.get("input_tokens"), int)),
+            "reported_output_tokens": sum(call["output_tokens"] for call in self.calls if isinstance(call.get("output_tokens"), int)),
+            "calls_missing_usage": sum(not isinstance(call.get("input_tokens"), int) or not isinstance(call.get("output_tokens"), int) for call in self.calls),
+        }
         artifacts["output_summary"] = {
             "block_count": len(blocks),
             "fidelity_status": "not_run",

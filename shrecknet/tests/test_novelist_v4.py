@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from novelist_test_support import candidate_payload, directed_payload
 from jsonschema import ValidationError as JSONSchemaValidationError
 from jsonschema import validate as validate_json_schema
 from pydantic import ValidationError
@@ -18,7 +19,7 @@ from app.jobs.novelist.prompts import (
 from app.jobs.novelist.prose_quality import prose_to_html, validate_prose_text
 from app.jobs.novelist.source_interpreter import interpret_source, segment_source
 from app.jobs.novelist.story_plan import (
-    STORY_PLAN_JSON_SCHEMA,
+    STORY_PLAN_JSON_SCHEMA, CANDIDATE_JSON_SCHEMA, CandidateExtraction, DirectedStoryPlan,
     NarrativeStoryPlan,
     SourceSegment,
     StoryBeat,
@@ -96,7 +97,7 @@ def test_story_plan_has_no_maximum_beat_count() -> None:
     validate_json_schema(payload, STORY_PLAN_JSON_SCHEMA)
     plan = NarrativeStoryPlan.model_validate(payload)
     assert len(plan.beats) == 50
-    assert sum(len(block.beat_ids) for block in plan_blocks(plan.beats, [SourceSegment(id="passage-000001", text="source")])) == 50
+    assert sum(len(block.beat_ids) for block in plan_blocks(DirectedStoryPlan.model_validate(directed_payload(candidate_payload(payload))), CandidateExtraction.model_validate(candidate_payload(payload)), [SourceSegment(id="passage-000001", text="source")])) == 50
 
 
 @pytest.mark.parametrize(
@@ -164,11 +165,12 @@ def test_blocks_are_ordered_bounded_and_retain_source_ids() -> None:
         )
         for index in range(1, 5)
     ]
-    blocks = plan_blocks(beats, [SourceSegment(id=f"passage-{index:06d}", text="source") for index in range(1, 5)])
+    candidate = CandidateExtraction.model_validate(candidate_payload(dict(_plan_payload(), beats=[beat.model_dump() for beat in beats])))
+    blocks = plan_blocks(DirectedStoryPlan.model_validate(directed_payload(candidate.model_dump())), candidate, [SourceSegment(id=f"passage-{index:06d}", text="source") for index in range(1, 5)])
     assert [beat_id for block in blocks for beat_id in block.beat_ids] == [
         beat.beat_id for beat in beats
     ]
-    assert all(200 <= block.target_words <= 700 for block in blocks)
+    assert sum(block.target_words for block in blocks) == 700
     assert blocks[-1].is_final is True
     assert blocks[0].source_ids == ["passage-000001"]
 
@@ -322,7 +324,7 @@ async def test_source_interpreter_passes_the_story_plan_schema() -> None:
     async def call_json(prompt: str, schema: dict, tag: str, **kwargs) -> dict:
         assert "Every root field" in prompt
         calls.append((schema, tag))
-        return _plan_payload()
+        return candidate_payload(_plan_payload())
 
     plan, segments = await interpret_source(
         text="Pietro plays Tamura. Tamura reaches the village.",
@@ -333,7 +335,7 @@ async def test_source_interpreter_passes_the_story_plan_schema() -> None:
     )
     assert plan.cast[0].model_dump() == {"player": "Pietro", "character": "Tamura"}
     assert len(segments) == 1
-    assert calls == [(STORY_PLAN_JSON_SCHEMA, "novelist.analysis.story_plan")]
+    assert calls == [(CANDIDATE_JSON_SCHEMA, "novelist.analysis.story_plan")]
 
 
 @pytest.mark.asyncio
@@ -345,10 +347,12 @@ async def test_writer_receives_no_json_schema_and_retries_truncation() -> None:
         ]
     )
     orchestrator = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
-    block = plan_blocks(NarrativeStoryPlan.model_validate(_plan_payload()).beats, [SourceSegment(id="passage-000001", text="Tamura reaches the village.")])[0]
+    candidate = CandidateExtraction.model_validate(candidate_payload(_plan_payload()))
+    directed = DirectedStoryPlan.model_validate(directed_payload(candidate.model_dump()))
+    block = plan_blocks(directed, candidate, [SourceSegment(id="passage-000001", text="Tamura reaches the village.")])[0]
     prose, attempts = await orchestrator._write_block(
         block=block,
-        plan=NarrativeStoryPlan.model_validate(_plan_payload()),
+        plan=directed,
         segments=[SourceSegment(id="passage-000001", text="Tamura reaches the village.")],
         continuity={},
         payload=type("Payload", (), {"language": "en", "instructions": ""})(),
@@ -368,9 +372,10 @@ async def test_v5_workflow_renders_safe_html_without_fidelity_call() -> None:
     client = _StructuredClient(
         [
             {
-                "text": json.dumps(_plan_payload()),
+                "text": json.dumps(candidate_payload(_plan_payload())),
                 "response_metadata": {"finish_reason": "stop"},
             },
+            {"text": json.dumps(directed_payload(candidate_payload(_plan_payload()))), "response_metadata": {"finish_reason": "stop"}},
             {"text": prose, "response_metadata": {"finish_reason": "stop"}},
         ]
     )
@@ -390,7 +395,8 @@ async def test_v5_workflow_renders_safe_html_without_fidelity_call() -> None:
     assert result["final_text_html"].startswith("<h1>Winter Road</h1>\n<p>")
     assert [call["usage_tag"] for call in client.calls] == [
         "novelist.analysis.story_plan",
+        "novelist.analysis.director",
         "novelist.writer.section",
     ]
     assert "response_format" in client.calls[0]
-    assert "response_format" not in client.calls[1]
+    assert "response_format" not in client.calls[2]

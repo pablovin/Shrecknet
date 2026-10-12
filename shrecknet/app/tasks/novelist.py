@@ -57,6 +57,8 @@ async def _previous_run_context(
         return None
     artifacts = run.artifacts if isinstance(run.artifacts, dict) else {}
     version = artifacts.get("pipeline_version")
+    if version == "v5" and isinstance(artifacts.get("directed_story_plan"), dict):
+        return {"pipeline_version": version, "directed_story_plan": artifacts["directed_story_plan"]}
     if version in {"v4", "v5"} and isinstance(artifacts.get("story_plan"), dict):
         return {"pipeline_version": version, "story_plan": artifacts["story_plan"]}
     if version == "v3" and isinstance(artifacts.get("evidence_ledger"), dict):

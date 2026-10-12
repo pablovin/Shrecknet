@@ -24,7 +24,7 @@ An explicit empty string clears it. Preferences are updated when a run is accept
 Unknown, incomplete, or unsupported historical runs contribute no previous-run
 context and do not override current source material.
 
-Story-plan analysis has one bounded retry, with a fixed 6,000-token output budget
+Each extraction, synthesis, inventory, and Narrative Director call has one bounded retry, with a fixed 6,000-token output budget
 on both attempts and schema-enforced content limits, as described in the
 [generation flow](../Generate_Draft/Generate_Draft.md). If it still fails, the run
 has `status: "failed"` and an `error_message`, without a partial chapter. Submit
@@ -42,7 +42,7 @@ diagnostics remain nullable compatibility fields.
 Clients should render server-provided progress text and must not branch core UX on
 fixed stage names or artifact internals.
 
-V5 `block_count` counts beat writing units (including bounded subdivisions).
+Refined V5 `block_count` counts arc writing units (including bounded subdivisions).
 `artifacts.story_plan.beats[].source_ranges` references inclusive passage ranges;
 historical V4 `source_ids` retain their original meaning. PDF uploads retain
 original page spans in run settings/artifacts. A page extraction exception returns
@@ -50,3 +50,11 @@ HTTP 400 rather than silently skipping that page. Text, Markdown, JSON, and past
 input need no metadata changes. Context preflight errors fail the asynchronous
 run with an actionable `error_message`; adjust the documented role context
 settings only within the selected model's supported capacity.
+
+Refined runs retain `pipeline_version: "v5"` and add artifact revision
+`narrative-director-v1`, `candidate_extraction`, `directed_story_plan`, and per-call
+usage/efficiency diagnostics. Existing `story_plan` fields remain compatible.
+Director progress remains `interpretation`; an `analysis_step` detail identifies
+it without adding a persisted stage enum. Director failure follows the same
+asynchronous failed-run contract. No new creation fields or model configuration
+are required. Historical V5 runs retain their beat-unit meaning and artifacts.

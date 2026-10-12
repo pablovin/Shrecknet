@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from novelist_test_support import candidate_payload, directed_payload
 
 from app.integrations.llm.model_policy import ModelPolicy
 from app.jobs.novelist.debug_artifacts import NovelistDebugArtifacts
@@ -76,8 +77,10 @@ async def test_provider_exception_keeps_request_and_failure(tmp_path, monkeypatc
 async def test_success_records_writer_retry_and_final_html(tmp_path, monkeypatch):
     monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
     plan = {'title': 'Arrival', 'cast': [], 'beats': [{'beat_id': 'beat-001', 'summary': 'Arrival', 'importance': 'major', 'source_ranges': [{'start_id': 'passage-000001', 'end_id': 'passage-000001'}]}], 'continuity_notes': None}
+    plan = candidate_payload(plan)
     client = Client([
         {'text': json.dumps(plan), 'response_metadata': {'finish_reason': 'stop'}},
+        {'text': json.dumps(directed_payload(plan)), 'response_metadata': {'finish_reason': 'stop'}},
         {'text': 'Truncated prose', 'response_metadata': {'finish_reason': 'length'}},
         {'text': 'word ' * 300, 'response_metadata': {'finish_reason': 'stop'}},
     ])
@@ -86,9 +89,10 @@ async def test_success_records_writer_retry_and_final_html(tmp_path, monkeypatch
     files = snapshots(runner.debug.output_dir)
     assert files[0]['payload']['previous_session_text'] == 'Prior text'
     requests = [item['request'] for item in files if item['step'].endswith('.request')]
-    assert len(requests) == 3
-    assert 'response_format' not in requests[1]
-    assert requests[2]['usage_tag'] == 'novelist.writer.section_retry'
+    assert len(requests) == 4
+    assert 'response_format' not in requests[2]
+    assert 'Prior text' in requests[2]['messages'][0]['content']
+    assert requests[3]['usage_tag'] == 'novelist.writer.section_retry'
     assert [item['accepted'] for item in files if item['step'] == 'writer.validation'] == [False, True]
     assert files[-1]['result']['final_text_html'] == result['final_text_html']
     assert json.loads((runner.debug.output_dir / 'manifest.json').read_text())['status'] == 'completed'

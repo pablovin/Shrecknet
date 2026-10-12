@@ -1,39 +1,48 @@
 # Novelist V5 Generate Draft Pipeline
 
-`NovelistOrchestrator` owns the active generation pipeline. The Celery task owns
-persistence and tracking. [The canonical contract](../Novelist.md) defines schemas,
-limits, configuration, source provenance, observability, and compatibility.
+`NovelistOrchestrator` owns generation; the Celery task owns persistence/tracking.
+The [canonical contract](../Novelist.md) defines schemas, budgets, provenance,
+observability, compatibility, and local-check limitations.
 
-1. Backend indexing preserves the canonical source as ordered paragraphs/bounded
-   fragments with exact offsets and optional original PDF page provenance.
-2. `interpretation`: Stage 1 `build_story_plan_prompt` frames the complete session
-   globally when its prompt fits the configured analysis context. It returns one
-   compact dramatic plan, typically 8–10 beats, with inclusive passage ranges.
-3. Oversized-input branch: Stage 1a `build_inventory_prompt` extracts chronological
-   factual inventories from bounded windows. Stage 1b
-   `build_reconciliation_prompt` synthesizes one global dramatic plan from all
-   inventories and ordered passage IDs. If synthesis cannot fit, fail clearly;
-   do not drop windows. There are no parallel planning branches or local beat quotas.
-4. Stage 1r `build_analysis_retry_prompt` repairs malformed, truncated, schema-invalid,
-   duplicate-ID, or invalid-range output once. The initial and repair calls use
-   strict schemas and a 6,000-token budget. Recovery is subject to context checks.
-5. Backend range resolution and coverage diagnostics record selections, omissions,
-   and overlap. They do not independently verify semantic coverage.
-6. `continuity` loads lower-authority previous-session text and V3/V4/V5 context.
-7. `block_planning` creates one unit per beat, subdividing large source selections
-   under the same beat identity. Targets reflect dramatic importance.
-8. `writing`: Stage 2 `build_writer_prompt` runs sequentially with the overall plan,
-   assigned original passages, instructions, continuity, and previous prose tail.
-   Writer calls receive no JSON response schema and return plain prose.
-9. Local completion checks run per unit. Stage 2r `build_writer_retry_prompt` rewrites
-   an unusable unit once. `quality_gate` confirms all units were accepted.
-10. `merging` escapes prose/title and renders chapter HTML. Final artifacts are
-    versioned V5. No partial chapter is published on analysis or writing failure.
+1. Backend indexing preserves all canonical text, exact offsets, and available PDF
+   page provenance as `paragraph-v1` passages.
+2. `interpretation`: Stage 1 `build_story_plan_prompt` frames the whole source into
+   `CandidateExtraction`: ordered candidates, source ranges, material classification,
+   confirmed/unresolved facts, and explicit/ambiguous/GM identities.
+3. Oversized branch: Stage 1a `build_inventory_prompt` gathers factual evidence from
+   bounded windows; Stage 1b `build_reconciliation_prompt` synthesizes every inventory
+   into one candidate extraction. No local arc quotas or parallel branches run.
+   Over-budget synthesis fails without dropping windows.
+4. Backend source-reference validation runs inside the structured repair boundary.
+   `build_analysis_retry_prompt` regenerates a complete rejected structured result
+   once, for extraction, inventories, synthesis, or Director. Initial and repair
+   analysis calls use strict schemas, preflight, and 6,000 output tokens.
+5. Stage 2 `build_director_prompt` reasons over candidate JSON, original instructions,
+   and language only. `direct_story` returns validated chronological arcs and exact
+   fact references. No original passages, historical continuity, or prose reach it.
+   Director activity uses the existing `interpretation` progress stage.
+6. Backend validation checks candidate accounting, chronology, identity restrictions,
+   gameplay exclusions, and fact references; it does not verify semantic fidelity.
+7. `continuity` retains prior session and V3/V4/V5 context. Writer context receives
+   bounded matching prior narrative strings, without historical reference objects.
+8. `block_planning` allocates an independent chapter word target across Director arcs.
+   Context/output-limited subdivisions retain arc identity and ordered evidence.
+9. `writing`: Stage 3 `build_writer_prompt` renders units sequentially from canonical
+   identities, a short global outline, current developments, locally resolved original
+   passages, instructions/language, bounded prior context, and a 700-character accepted
+   prose tail. It receives no complete candidate plan or other arcs' detailed facts.
+10. Local formatting/completion, identity/gameplay leakage, and repetition checks run.
+    Stage 3r `build_writer_retry_prompt` replaces a rejected unit once. Only accepted
+    prose becomes continuity. Exhausted repair never publishes a partial chapter.
+11. `quality_gate` confirms all units passed local checks; `merging` escapes title/prose
+    into safe chapter HTML. Artifacts remain V5 with revision `narrative-director-v1`.
 
-There are no retained inactive prompts, normal-path LLM fidelity/correction calls,
-or independent coverage verifier. Prompts and responses, including failures and
-repairs, are saved incrementally in the local debug area before validation.
+Prompts have no retained inactive variants or mandatory semantic reviewer. Debug
+snapshots retain requests before dispatch, responses before validation, metrics,
+repairs, and failures. Normal calls are one extraction, one Director, and one writer
+per arc; fallback, subdivisions, and retries add calls explicitly.
 
-Deploy rebuilt workers, drain old queues, and submit fresh runs for failed jobs.
-No database migration is needed; historical runs remain readable. Live semantic
-quality evaluation is separate from automated contract/regression tests.
+Rebuild workers, drain queues during cutover, and submit new runs for failures.
+No database migration or new model setting is needed. Historical artifacts remain
+readable. Real model quality requires annotated-session evaluation separately from
+automated contract tests.

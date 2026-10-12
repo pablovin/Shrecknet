@@ -19,3 +19,5 @@ This folder contains release notes by application version.
 
 - [Foundry v0.1.11](./foundry-v0.1.11.md) - Narrative Scene rendering, layout, and duplicate-image fixes.
 - [Unreleased CharacterAgent dispositional personality](unreleased-character-dispositions.md)
+
+- [Unreleased Novelist V5 Narrative Director](unreleased-novelist-director.md)

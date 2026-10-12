@@ -26,7 +26,8 @@ The standalone Docker stack binds that host folder into the container as `/data`
 
 ## Novelist context configuration
 
-Novelist V5 plans dramatic beats globally and writes from precise source passages.
+Novelist V5 extracts evidence globally, directs chronological literary arcs, and
+writes from compact arc assignments and precise source passages.
 `novelist_analysis_context_tokens` and `novelist_writer_context_tokens` default to
 64,000 (minimum 24,000); configure them through the runtime configuration API within
 the selected models' capacities. See the [Novelist contract](../Documentation/Agents/Novelist/Novelist.md)

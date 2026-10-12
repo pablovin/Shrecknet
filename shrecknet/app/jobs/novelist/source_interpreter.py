@@ -7,8 +7,8 @@ from app.schemas.novelist import SourcePage
 from app.jobs.novelist.context_budget import fits_context, require_context
 from app.jobs.novelist.prompts import build_inventory_prompt, build_reconciliation_prompt, build_story_plan_prompt
 from app.jobs.novelist.story_plan import (
-    INVENTORY_JSON_SCHEMA, STORY_PLAN_JSON_SCHEMA, NarrativeStoryPlan,
-    SourceInventory, SourceSegment, resolve_ranges, validate_source_references,
+    EVIDENCE_INVENTORY_JSON_SCHEMA, CANDIDATE_JSON_SCHEMA, CandidateExtraction,
+    EvidenceInventory, SourceSegment, resolve_ranges, validate_source_references, validate_instruction_identities,
 )
 
 JsonCaller = Callable[..., Awaitable[dict[str, Any]]]
@@ -41,7 +41,7 @@ async def interpret_source(
     call_json: JsonCaller, context_tokens: int = 64000, output_tokens: int = 6000,
     pages: list[SourcePage] | None = None,
     diagnostic: Callable[..., None] | None = None,
-) -> tuple[NarrativeStoryPlan, list[SourceSegment]]:
+) -> tuple[CandidateExtraction, list[SourceSegment]]:
     if any(page.end > len(text) for page in pages or []):
         raise ValueError("PDF page offsets exceed canonical source length")
     segments = segment_source(text, pages=pages)
@@ -49,16 +49,18 @@ async def interpret_source(
         raise ValueError("Novelist source contains no text")
 
     def plan_validator(value):
-        return validate_source_references(NarrativeStoryPlan.model_validate(value), segments)
+        candidate = CandidateExtraction.model_validate(value)
+        validate_instruction_identities(candidate, instructions)
+        return validate_source_references(candidate, segments)
 
     prompt = build_story_plan_prompt(source_type=source_type, language=language, instructions=instructions, segments=segments)
     if diagnostic:
         diagnostic("source_index", indexing_version="paragraph-v1", passages=[s.model_dump() for s in segments])
-    if fits_context(prompt, STORY_PLAN_JSON_SCHEMA, context_tokens=context_tokens, output_tokens=output_tokens):
+    if fits_context(prompt, CANDIDATE_JSON_SCHEMA, context_tokens=context_tokens, output_tokens=output_tokens):
         path = "global"
         if diagnostic:
             diagnostic("planning_path", path=path, context_tokens=context_tokens, output_tokens=output_tokens)
-        value = await call_json(prompt, STORY_PLAN_JSON_SCHEMA, "novelist.analysis.story_plan", validator=plan_validator)
+        value = await call_json(prompt, CANDIDATE_JSON_SCHEMA, "novelist.analysis.story_plan", validator=plan_validator)
     else:
         path = "inventory_synthesis"
         if diagnostic:
@@ -71,7 +73,7 @@ async def interpret_source(
         for segment in segments:
             candidate = current + [segment]
             request = build_inventory_prompt(segments=candidate, source_type=source_type, language=language, instructions=instructions)
-            if current and not fits_context(request, INVENTORY_JSON_SCHEMA, context_tokens=window_context, output_tokens=output_tokens):
+            if current and not fits_context(request, EVIDENCE_INVENTORY_JSON_SCHEMA, context_tokens=window_context, output_tokens=output_tokens):
                 windows.append(current)
                 current = [segment]
             else:
@@ -81,22 +83,22 @@ async def interpret_source(
         inventories = []
         for window in windows:
             def inventory_validator(value, window=window):
-                inventory = SourceInventory.model_validate(value)
+                inventory = EvidenceInventory.model_validate(value)
                 for item in inventory.observations:
                     resolve_ranges(item.source_ranges, window)
                 return inventory
             request = build_inventory_prompt(segments=window, source_type=source_type, language=language, instructions=instructions)
             if diagnostic:
-                diagnostic("inventory.request", prompt=request, schema=INVENTORY_JSON_SCHEMA)
-            require_context(request, INVENTORY_JSON_SCHEMA, context_tokens=context_tokens, output_tokens=output_tokens)
-            inventories.append(await call_json(request, INVENTORY_JSON_SCHEMA, "novelist.analysis.inventory", validator=inventory_validator))
+                diagnostic("inventory.request", prompt=request, schema=EVIDENCE_INVENTORY_JSON_SCHEMA)
+            require_context(request, EVIDENCE_INVENTORY_JSON_SCHEMA, context_tokens=context_tokens, output_tokens=output_tokens)
+            inventories.append(await call_json(request, EVIDENCE_INVENTORY_JSON_SCHEMA, "novelist.analysis.inventory", validator=inventory_validator))
         prompt = build_reconciliation_prompt(segments=segments, partial_plans=inventories, language=language, instructions=instructions)
         # An explicitly bounded failure is preferable to dropping inventories or
         # sending a synthesis request that still exceeds the configured context.
         if diagnostic:
-            diagnostic("synthesis.request", prompt=prompt, schema=STORY_PLAN_JSON_SCHEMA)
-        require_context(prompt, STORY_PLAN_JSON_SCHEMA, context_tokens=context_tokens, output_tokens=output_tokens)
-        value = await call_json(prompt, STORY_PLAN_JSON_SCHEMA, "novelist.analysis.story_plan_reconcile", validator=plan_validator)
+            diagnostic("synthesis.request", prompt=prompt, schema=CANDIDATE_JSON_SCHEMA)
+        require_context(prompt, CANDIDATE_JSON_SCHEMA, context_tokens=context_tokens, output_tokens=output_tokens)
+        value = await call_json(prompt, CANDIDATE_JSON_SCHEMA, "novelist.analysis.story_plan_reconcile", validator=plan_validator)
     if diagnostic:
         diagnostic("planning_path", path=path, context_tokens=context_tokens, output_tokens=output_tokens)
     return plan_validator(value), segments

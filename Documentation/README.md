@@ -29,9 +29,9 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## Novelist
 
-- [Narrative planning and source references plan](./Agents/Novelist/Narrative%20Planning%20and%20Source%20References%20Plan.md) — V5 implementation record; live semantic evaluation remains pending
+- [Narrative planning and source references plan](./Agents/Novelist/Narrative%20Planning%20and%20Source%20References%20Plan.md) — Narrative Director design, recorded Session 9 baseline, context projection, and pending live evaluation
 
-- [Novelist](./Agents/Novelist/Novelist.md) — V5 dramatic planning, precise passage ranges, context budgets, and local debug artifacts
+- [Novelist](./Agents/Novelist/Novelist.md) — V5 candidate extraction, directed arcs, precise passages, context budgets, and diagnostics
 - [Novelist endpoints](./Agents/Novelist/Endpoints/Novelist%20-%20Endpoints.md)
 - [Novelist pipeline](./Agents/Novelist/Generate_Draft/Generate_Draft.md)
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import pytest
+from novelist_test_support import candidate_payload, directed_payload
 from pydantic import ValidationError
 from app.core.config_store import Settings
 from app.integrations.llm.model_policy import ModelPolicy
@@ -11,17 +12,17 @@ from app.jobs.novelist.orchestrator import NovelistOrchestrator
 from app.jobs.novelist.prose_quality import validate_prose_text
 from app.jobs.novelist.source_interpreter import interpret_source, segment_source
 from app.jobs.novelist.story_plan import (
-    INVENTORY_JSON_SCHEMA, STORY_PLAN_JSON_SCHEMA, NarrativeStoryPlan,
+    EVIDENCE_INVENTORY_JSON_SCHEMA as INVENTORY_JSON_SCHEMA, CANDIDATE_JSON_SCHEMA as STORY_PLAN_JSON_SCHEMA, CandidateExtraction, DirectedStoryPlan, NarrativeStoryPlan,
     SourceRange, coverage_diagnostics, resolve_ranges,
 )
 from app.schemas.novelist import NovelistRunCreate, SourcePage
 
 
 def plan(start='passage-000001', end=None):
-    return {'title': 'Consequences', 'cast': [], 'continuity_notes': None, 'beats': [{
+    return candidate_payload({'title': 'Consequences', 'cast': [], 'continuity_notes': None, 'beats': [{
         'beat_id': 'beat-001', 'summary': 'A discovery changes the stakes.',
         'importance': 'major', 'source_ranges': [{'start_id': start, 'end_id': end or start}],
-    }]}
+    }]})
 
 
 class Client:
@@ -78,7 +79,7 @@ async def test_more_than_four_passages_still_get_one_global_read():
     result, passages = await interpret_source(text=text, source_type='notes', language='en', instructions='', call_json=call)
     assert len(calls) == 1
     assert json.loads(calls[0][0].split('source_segments=', 1)[1]) == [p.model_dump() for p in passages]
-    assert 'approximately 8–10 beats' in calls[0][0]
+    assert 'candidate developments' in calls[0][0]
     assert 'final fictional development' in calls[0][0]
     assert len(result.beats) == 1  # A soft editorial target, never a hard quota.
 
@@ -92,7 +93,7 @@ async def test_oversized_source_gets_factual_windows_then_one_global_plan():
         calls.append((prompt, schema, tag))
         if schema == INVENTORY_JSON_SCHEMA:
             window = json.loads(prompt.split('source_segments=', 1)[1])
-            value = {'observations': [{'summary': 'A conflict creates consequences.', 'source_ranges': [{'start_id': window[0]['id'], 'end_id': window[-1]['id']}]}], 'cast': []}
+            value = {'observations': [{'summary': 'A conflict creates consequences.', 'source_ranges': [{'start_id': window[0]['id'], 'end_id': window[-1]['id']}], 'material': 'fiction', 'confirmed_facts': [], 'unresolved_facts': []}], 'cast': [], 'identities': []}
         else:
             value = plan(end='passage-000040')
         validator(value)
@@ -127,15 +128,15 @@ async def test_semantic_reference_errors_use_the_bounded_repair(bad, tmp_path, m
 
 def test_beat_units_keep_identity_and_split_only_for_context():
     passages = segment_source('One\n\nTwo\n\nThree')
-    value = NarrativeStoryPlan.model_validate(plan(end='passage-000003'))
-    blocks = plan_blocks(value.beats, passages, max_source_bytes=160)
+    value = CandidateExtraction.model_validate(plan(end='passage-000003'))
+    blocks = plan_blocks(DirectedStoryPlan.model_validate(directed_payload(value.model_dump())), value, passages, max_source_bytes=60)
     assert len(blocks) == 3
     assert all(b.beat_ids == ['beat-001'] for b in blocks)
     assert [b.source_ids for b in blocks] == [[p.id] for p in passages]
     assert [b.is_final for b in blocks] == [False, False, True]
     assert coverage_diagnostics(value, passages)['unreferenced_passages'] == []
     with pytest.raises(ValueError, match='one source passage'):
-        plan_blocks(value.beats, passages, max_source_bytes=1)
+        plan_blocks(DirectedStoryPlan.model_validate(directed_payload(value.model_dump())), value, passages, max_source_bytes=1)
 
 
 def test_short_transition_is_not_forced_to_major_beat_length():
@@ -152,7 +153,7 @@ def test_context_preflight_counts_utf8_schema_and_output_reservation():
 
 
 @pytest.mark.asyncio
-async def test_writer_gets_only_assigned_passages_with_full_plan_and_previous_prose(tmp_path, monkeypatch):
+async def test_writer_gets_only_assigned_passages_with_compact_outline_and_accepted_tail(tmp_path, monkeypatch):
     monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
     value = plan()
     value['beats'].append({**plan('passage-000003')['beats'][0], 'beat_id': 'beat-002', 'importance': 'transition'})
@@ -160,22 +161,28 @@ async def test_writer_gets_only_assigned_passages_with_full_plan_and_previous_pr
         calls = []
         async def chat(self, **request):
             self.calls.append(request)
-            if request['usage_tag'].startswith('novelist.analysis'):
+            if request['usage_tag'] == 'novelist.analysis.director':
+                text = json.dumps(directed_payload(value))
+            elif request['usage_tag'].startswith('novelist.analysis'):
                 text = json.dumps(value)
             else:
-                text = 'Accepted literary prose. ' * 100
+                text = ('Accepted literary prose. ' if len(self.calls) == 3 else 'Different ending follows. ') * 100
             return {'text': text, 'response_metadata': {'finish_reason': 'stop'}}
     client = WriterClient()
     runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
     result = await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text='Arrival\n\nTable chatter\n\nUnresolved ending'))
     assert result['artifacts']['pipeline_version'] == 'v5'
+    assert result['artifacts']['efficiency']['calls_missing_usage'] == len(client.calls)
+    assert all(call['input_tokens'] is None for call in result['artifacts']['llm_calls'])
     writers = [call for call in client.calls if call['usage_tag'].startswith('novelist.writer')]
     assert len(writers) == 2
     first, second = [call['messages'][0]['content'] for call in writers]
     for prompt, expected in [(first, 'Arrival\n\n'), (second, 'Unresolved ending')]:
-        selected = json.loads(prompt.split('supporting_source_segments=', 1)[1].split('\ncontinuity=', 1)[0])
+        selected = json.loads(prompt.split('supporting_source_segments=', 1)[1].split('\nprevious_accepted_tail=', 1)[0])
         assert [p['text'] for p in selected] == [expected]
-        assert 'complete_story_plan=' in prompt
+        assert 'complete_story_plan=' not in prompt
+        assert 'candidate_extraction=' not in prompt
+        assert 'chapter_outline=' in prompt
     assert 'Accepted literary prose.' in second
     assert result['artifacts']['coverage']['unreferenced_passages'] == ['passage-000002']
     assert result['final_text_html'].startswith('<h1>Consequences</h1>')
@@ -199,7 +206,7 @@ async def test_writer_exhausted_retry_does_not_publish_partial_chapter(tmp_path,
     monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
     class BrokenWriter:
         async def chat(self, **request):
-            return {'text': json.dumps(plan()) if request['usage_tag'].startswith('novelist.analysis') else '', 'response_metadata': {'finish_reason': 'stop'}}
+            return {'text': json.dumps(directed_payload(plan()) if request['usage_tag'] == 'novelist.analysis.director' else plan()) if request['usage_tag'].startswith('novelist.analysis') else '', 'response_metadata': {'finish_reason': 'stop'}}
     runner = NovelistOrchestrator(llm_client=BrokenWriter(), model_policy=ModelPolicy())
     with pytest.raises(RuntimeError, match='remained unusable'):
         await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text='Source'))
@@ -273,13 +280,232 @@ def test_annotated_session_preserves_major_turns_and_groups_combat():
     ]
     value = plan()
     value['beats'] = [{
-        'beat_id': f'beat-{index:03d}', 'summary': summary, 'importance': 'major',
+        'beat_id': f'beat-{index:03d}', 'summary': summary, 'importance': 'major', 'material': 'fiction', 'confirmed_facts': [], 'unresolved_facts': [],
         'source_ranges': [{'start_id': f'passage-{start:06d}', 'end_id': f'passage-{end:06d}'}],
     } for index, (summary, start, end) in enumerate(annotations, start=1)]
-    result = NarrativeStoryPlan.model_validate(value)
+    result = CandidateExtraction.model_validate(value)
     diagnostics = coverage_diagnostics(result, passages)
     assert len(result.beats) == 9
     assert diagnostics['unreferenced_passages'] == ['passage-000002']
     assert len(diagnostics['beat_passages']['beat-005']) == 3
     assert diagnostics['beat_passages']['beat-009'] == [passages[-1].id]
     assert ''.join(p.text for p in passages) == text
+
+
+def session9():
+    from pathlib import Path
+    return json.loads((Path(__file__).parent / 'fixtures/novelist/session9.json').read_text())
+
+
+@pytest.mark.parametrize('mutation,match', [
+    ('unknown', 'Every candidate beat'), ('duplicate', 'Every candidate beat'),
+    ('reorder', 'chronology'), ('resolve_ambiguous', 'restriction'),
+    ('invent_mapping', 'confirmed mappings'), ('drop_fact', 'confirmed_facts'),
+    ('wrong_fact', 'unresolved_facts'), ('include_gameplay', 'Gameplay-only'),
+    ('drop_mixed', 'fictional developments'), ('duplicate_arc', 'arc_id'),
+])
+def test_director_rejects_invalid_assignments_identities_and_fact_references(mutation, match):
+    from app.jobs.novelist.story_plan import validate_directed_plan
+    fixture = session9()
+    candidate = CandidateExtraction.model_validate(fixture['candidate'])
+    value = directed_payload(fixture['candidate'], fixture['arc_groups'])
+    if mutation == 'unknown':
+        value['arcs'][0]['beat_ids'][0] = 'unknown'
+    elif mutation == 'duplicate':
+        value['arcs'][0]['beat_ids'].append('beat-001')
+    elif mutation == 'reorder':
+        value['arcs'].reverse()
+    elif mutation == 'resolve_ambiguous':
+        value['identity_restrictions'] = value['identity_restrictions'][:1]
+    elif mutation == 'invent_mapping':
+        value['canonical_cast'].append({'player': 'Enrico', 'character': 'Asterius'})
+    elif mutation == 'drop_fact':
+        value['arcs'][0]['confirmed_facts'].pop()
+    elif mutation == 'wrong_fact':
+        value['arcs'][0]['unresolved_facts'][0]['fact_index'] = 99
+    elif mutation == 'include_gameplay':
+        value['excluded_beat_ids'] = []
+        value['arcs'][2]['beat_ids'].insert(0, 'beat-007')
+    elif mutation == 'drop_mixed':
+        value['arcs'][0]['beat_ids'].remove('beat-001')
+        value['excluded_beat_ids'].append('beat-001')
+    else:
+        value['arcs'][1]['arc_id'] = value['arcs'][0]['arc_id']
+    with pytest.raises(ValueError, match=match):
+        validate_directed_plan(DirectedStoryPlan.model_validate(value), candidate)
+
+
+@pytest.mark.asyncio
+async def test_director_repairs_invalid_output_without_seeing_original_passages(tmp_path, monkeypatch):
+    from app.jobs.novelist.narrative_director import direct_story
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    fixture = session9()
+    valid = directed_payload(fixture['candidate'], fixture['arc_groups'])
+    invalid = json.loads(json.dumps(valid))
+    invalid['identity_restrictions'] = []
+    client = Client([invalid, valid])
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    directed = await direct_story(candidate=CandidateExtraction.model_validate(fixture['candidate']), instructions=fixture['instructions'], language='en', call_json=runner._json)
+    assert len(directed.arcs) == 5
+    assert len(client.calls) == 2
+    for call in client.calls:
+        prompt = call['messages'][0]['content']
+        assert fixture['source_text'][:150] not in prompt
+        assert 'source_segments=' not in prompt
+        assert 'previous_accepted_tail=' not in prompt
+        assert fixture['instructions'] in prompt
+        assert call['model'] == runner.analysis_model
+    assert client.calls[-1]['usage_tag'].endswith('.repair')
+
+
+@pytest.mark.asyncio
+async def test_session9_arc_pipeline_context_usage_and_accepted_only_continuity(tmp_path, monkeypatch):
+    """Replays annotated evidence; it does not claim model discovery or semantic fidelity."""
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    fixture = session9()
+    class ReplayClient:
+        def __init__(self):
+            self.calls = []
+            self.writers = 0
+        async def chat(self, **request):
+            self.calls.append(request)
+            tag = request['usage_tag']
+            if tag == 'novelist.analysis.story_plan':
+                text = json.dumps(fixture['candidate'])
+            elif tag == 'novelist.analysis.director':
+                text = json.dumps(directed_payload(fixture['candidate'], fixture['arc_groups']))
+            else:
+                self.writers += 1
+                prompt = request['messages'][0]['content']
+                assignment = json.loads(prompt.split('current_assignment=', 1)[1].split('\nsupporting_source_segments=', 1)[0])
+                block_id = assignment['block_id']
+                # Deliberately leak the GM once; that response must never advance continuity.
+                text = ('Pablo REJECTED_RENDERING ' if self.writers == 1 else '') + (f'{block_id} proceeds through its own events. ' * 75)
+            return {'text': text, 'usage': {'prompt_tokens': 123, 'completion_tokens': 456}, 'response_metadata': {'finish_reason': 'stop'}}
+    client = ReplayClient()
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    result = await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text=fixture['source_text'], instructions=fixture['instructions'], language='en'))
+    artifacts = result['artifacts']
+    assert len(artifacts['directed_story_plan']['arcs']) == 5
+    assert artifacts['output_summary']['block_count'] == 5
+    assert artifacts['efficiency']['total_calls'] == 8  # 7 normal calls + deliberate writer retry.
+    assert artifacts['efficiency']['retry_count'] == 1
+    assert artifacts['efficiency']['calls_missing_usage'] == 0
+    assert artifacts['efficiency']['reported_input_tokens'] == 8 * 123
+    assert artifacts['efficiency']['reported_output_tokens'] == 8 * 456
+    assert all(call['elapsed_ms'] >= 0 for call in artifacts['llm_calls'])
+    assert artifacts['efficiency']['writer_prompt_bytes'] < fixture['baseline']['writer_prompt_bytes'] * .6
+    writers = [call for call in client.calls if call['usage_tag'].startswith('novelist.writer')]
+    for i, call in enumerate(writers):
+        prompt = call['messages'][0]['content']
+        assert 'candidate_extraction=' not in prompt and 'complete_story_plan=' not in prompt
+        tail = prompt.split('previous_accepted_tail=', 1)[1].split('\nStage 3r', 1)[0]
+        assert len(tail) <= 700
+        assert 'REJECTED_RENDERING' not in tail
+        assert fixture['source_text'] not in prompt
+        assignment = json.loads(prompt.split('current_assignment=', 1)[1].split('\nsupporting_source_segments=', 1)[0])
+        assert len(assignment['beat_ids']) < len(fixture['candidate']['beats'])
+    assert 'Pablo' not in result['final_text_html']
+    assert artifacts['story_plan']['beats'][0].keys() == {'beat_id', 'summary', 'importance', 'source_ranges'}
+    assert artifacts['coverage']['semantic_coverage'] == 'not_independently_verified'
+
+
+def test_arc_output_subdivisions_preserve_budget_source_and_order():
+    fixture = session9()
+    candidate = CandidateExtraction.model_validate(fixture['candidate'])
+    directed = DirectedStoryPlan.model_validate(directed_payload(fixture['candidate'], [[beat.beat_id for beat in candidate.beats if beat.material != 'gameplay']]))
+    segments = segment_source(fixture['source_text'])
+    blocks = plan_blocks(directed, candidate, segments, target_words=4000)
+    assert len(blocks) == 3
+    assert all(block.arc_id == 'arc-001' and block.target_words <= 1400 for block in blocks)
+    assert sum(block.target_words for block in blocks) == 4000
+    assert [block.part_index for block in blocks] == [1, 2, 3]
+    selected = {s.id for beat in candidate.beats if beat.material != 'gameplay' for s in resolve_ranges(beat.source_ranges, segments)}
+    ids = [source_id for block in blocks for source_id in block.source_ids]
+    assert len(ids) == len(set(ids)) and set(ids) == selected
+    assert ids == [s.id for s in segments if s.id in selected]
+
+
+@pytest.mark.parametrize('text,forbidden,canonical,expected', [
+    ('Pietro walked into the hall.', ['Pietro'], ['Tamura'], True),
+    ('Pietro walked into the hall.', ['Pietro'], ['Pietro'], False),
+    ('Pietroson walked into the hall.', ['Pietro'], ['Tamura'], False),
+    ('He reviewed the character sheet.', [], [], True),
+    ('Calcolarono i punti gloria.', [], [], True),
+    ('Ils lisent la fiche de personnage.', [], [], True),
+    ('The dice of fate rolled toward glory.', [], [], False),
+])
+def test_contextual_checks_avoid_broad_vocabulary_and_name_collisions(text, forbidden, canonical, expected):
+    from app.jobs.novelist.prose_quality import validate_contextual_prose
+    assert bool(validate_contextual_prose(text, forbidden_names=forbidden, canonical_names=canonical, accepted_sections=[])) is expected
+
+
+@pytest.mark.asyncio
+async def test_director_failure_never_dispatches_writer(tmp_path, monkeypatch):
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    client = Client([plan(), {}, {}])
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    with pytest.raises(RuntimeError, match='failed after one retry'):
+        await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text='Source'))
+    assert len(client.calls) == 3
+    assert all(call['usage_tag'].startswith('novelist.analysis') for call in client.calls)
+    assert json.loads((runner.debug.output_dir / 'manifest.json').read_text())['status'] == 'failed'
+
+
+def test_new_structured_schemas_require_complete_objects_and_match_models():
+    from jsonschema import validate
+    from app.jobs.novelist.story_plan import CANDIDATE_JSON_SCHEMA, DIRECTED_PLAN_JSON_SCHEMA, EVIDENCE_INVENTORY_JSON_SCHEMA
+    fixture = session9()
+    validate(fixture['candidate'], CANDIDATE_JSON_SCHEMA)
+    validate(fixture['directed_plan'], DIRECTED_PLAN_JSON_SCHEMA)
+    def check(node):
+        if isinstance(node, dict):
+            if node.get('type') == 'object':
+                assert node.get('additionalProperties') is False
+                assert set(node['required']) == set(node['properties'])
+            for value in node.values():
+                check(value)
+        elif isinstance(node, list):
+            for value in node:
+                check(value)
+    for schema in (CANDIDATE_JSON_SCHEMA, DIRECTED_PLAN_JSON_SCHEMA, EVIDENCE_INVENTORY_JSON_SCHEMA):
+        check(schema)
+    invalid = json.loads(json.dumps(fixture['candidate']))
+    invalid['identities'][-1]['character'] = 'Asterius'
+    with pytest.raises(ValueError, match='null character'):
+        CandidateExtraction.model_validate(invalid)
+    invalid = json.loads(json.dumps(fixture['candidate']))
+    invalid['cast'].pop()
+    with pytest.raises(ValueError, match='confirmed identity'):
+        CandidateExtraction.model_validate(invalid)
+
+
+def test_repeated_narrative_paragraphs_within_unit_are_rejected():
+    from app.jobs.novelist.prose_quality import validate_contextual_prose
+    paragraph = 'The riders crossed the river beneath the empty winter sky. ' * 5
+    errors = validate_contextual_prose(paragraph + '\n\n' + paragraph, forbidden_names=[], canonical_names=[], accepted_sections=[])
+    assert 'narrative section repeats within the current unit' in errors
+
+
+@pytest.mark.asyncio
+async def test_extraction_repairs_wrong_mapping_against_explicit_user_instructions(tmp_path, monkeypatch):
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    valid = plan()
+    valid['identities'] = [{'player': 'Enrico America', 'character': None, 'status': 'ambiguous'}]
+    invalid = json.loads(json.dumps(valid))
+    invalid['identities'][0].update(status='confirmed', character='Asterius')
+    invalid['cast'] = [{'player': 'Enrico America', 'character': 'Asterius'}]
+    client = Client([invalid, valid])
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    candidate, _ = await interpret_source(text='A combatant falls.', source_type='notes', language='en', instructions='Enrico is Cwenhild or Asterius', call_json=runner._json)
+    assert candidate.identities[0].character is None
+    assert len(client.calls) == 2
+    assert 'explicit user mapping' in client.calls[1]['messages'][0]['content']
+
+
+def test_identity_instruction_validation_ignores_style_prose_and_requires_missing_mappings():
+    from app.jobs.novelist.story_plan import validate_instruction_identities
+    candidate = CandidateExtraction.model_validate(plan())
+    validate_instruction_identities(candidate, 'There is a lot of spelling to fix.\nKeep the story in the present tense.')
+    with pytest.raises(ValueError, match='Pietro'):
+        validate_instruction_identities(candidate, 'Pietro plays Tamura. Do not refer to him as Pietro')

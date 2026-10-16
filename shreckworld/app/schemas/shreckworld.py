@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 
 WebSearchPolicy = Literal["disabled", "fallback", "supplemental"]
@@ -64,6 +64,7 @@ class ShreckWorldLibraryItemRead(BaseModel):
     mime_type: str | None
     file_size: int | None
     cover_path: str | None
+    source_sha256: str
     index_status: str
     index_error: str | None
     embedding_status: str
@@ -71,6 +72,44 @@ class ShreckWorldLibraryItemRead(BaseModel):
     embedded_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field
+    @property
+    def cover_url(self) -> str | None:
+        """Authenticated relative URL for the frontend; never a public media URL."""
+        if self.cover_path:
+            return f"/shreckworlds/{self.shreckworld_id}/library-items/{self.id}/cover"
+        return None
+
+
+class IndexingJobMetrics(BaseModel):
+    phase: Literal["validating_model", "parsing", "chunking", "embedding", "storing", "completed", "failed"]
+    progress_mode: Literal["determinate", "indeterminate"] = "determinate"
+    parser_name: str | None = None
+    parser_version: str | None = None
+    parse_quality: dict[str, int | None] = Field(default_factory=dict)
+    sections: int = 0
+    blocks: int = 0
+    parent_chunks: int = 0
+    tokenizer_limit: int | None = None
+    embedding_fingerprint: str | None = None
+    embedding_revision: str | None = None
+    processed_pages: int = 0
+    total_pages: int | None = None
+    text_pages: int = 0
+    empty_pages: int = 0
+    extracted_characters: int = 0
+    processed_chunks: int = 0
+    total_chunks: int | None = None
+    embedding_backend: Literal["sentence_transformers", "hash"] | None = None
+    embedding_model: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    phase_seconds: dict[str, float] = Field(default_factory=dict)
+
+
+def _utc(value: datetime) -> datetime:
+    # SQLite stores naive datetimes even for timezone-aware columns.
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 class EmbeddingJobRead(BaseModel):
@@ -82,12 +121,82 @@ class EmbeddingJobRead(BaseModel):
     detail: str | None
     created_at: datetime
     completed_at: datetime | None
+    started_at: datetime | None = None
+    updated_at: datetime | None = None
+    metrics_json: str | None = Field(default=None, exclude=True)
+
+    @field_validator("created_at", "started_at", "updated_at", "completed_at")
+    @classmethod
+    def normalize_timestamps(cls, value: datetime | None) -> datetime | None:
+        return _utc(value) if value is not None else None
+
+    @computed_field
+    @property
+    def metrics(self) -> IndexingJobMetrics | None:
+        return IndexingJobMetrics.model_validate_json(self.metrics_json) if self.metrics_json else None
+
+    @computed_field
+    @property
+    def elapsed_seconds(self) -> float:
+        end = self.completed_at or datetime.now(timezone.utc)
+        return round(max(0, (_utc(end) - _utc(self.created_at)).total_seconds()), 3)
+
+    @computed_field
+    @property
+    def processing_seconds(self) -> float | None:
+        if self.started_at is None:
+            return None
+        end = self.completed_at or datetime.now(timezone.utc)
+        return round(max(0, (_utc(end) - _utc(self.started_at)).total_seconds()), 3)
+
+    @computed_field
+    @property
+    def queue_wait_seconds(self) -> float | None:
+        if self.started_at is None and self.completed_at is not None:
+            return None  # Historical jobs do not have a recorded start time.
+        end = self.started_at or datetime.now(timezone.utc)
+        return round(max(0, (_utc(end) - _utc(self.created_at)).total_seconds()), 3)
+
+
+class PassageContext(BaseModel):
+    library_item_id: str = Field(min_length=1, max_length=64)
+    source_sha256: str = Field(min_length=64, max_length=64)
+    page_number: int = Field(ge=1)
+    text: str = Field(min_length=1, max_length=4000)
 
 
 class ShreckWorldQueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     top_k: int = Field(default=6, ge=1, le=20)
     include_trace: bool = False
+    library_item_id: str | None = Field(default=None, max_length=64)
+    selection: PassageContext | None = None
+
+
+class PdfBoundingBox(BaseModel):
+    left: float | None = None
+    top: float | None = None
+    right: float | None = None
+    bottom: float | None = None
+    coord_origin: str | None = None
+
+
+class CitationProvenance(BaseModel):
+    block_id: str
+    page_number: int
+    page_label: str | None = None
+    page_width: float | None = None
+    page_height: float | None = None
+    bounding_box: PdfBoundingBox | None = None
+    charspan: tuple[int, int] | None = None
+
+
+class CitationRectangle(BaseModel):
+    page_number: int = Field(ge=1)
+    left: float = Field(ge=0, le=100)
+    top: float = Field(ge=0, le=100)
+    width: float = Field(gt=0, le=100)
+    height: float = Field(gt=0, le=100)
 
 
 class ShreckWorldCitation(BaseModel):
@@ -100,6 +209,18 @@ class ShreckWorldCitation(BaseModel):
     excerpt: str
     authority_tier: AuthorityTier
     authority_priority: int
+    document_id: str | None = None
+    parent_chunk_id: str | None = None
+    content_type: str | None = None
+    heading_path: list[str] = Field(default_factory=list)
+    page_numbers: list[int] = Field(default_factory=list)
+    evidence_text: str | None = None
+    content_url: str | None = None
+    provenance: list[CitationProvenance] = Field(default_factory=list)
+    source_sha256: str | None = None
+    page_label: str | None = None
+    parent_excerpt: str | None = None
+    rectangles: list[CitationRectangle] = Field(default_factory=list)
 
 
 class ShreckWorldQueryResponse(BaseModel):
@@ -107,4 +228,28 @@ class ShreckWorldQueryResponse(BaseModel):
     query: str
     answer: str
     citations: list[ShreckWorldCitation]
-    trace: dict[str, int | str] | None = None
+    trace: dict[str, int | str | bool | float] | None = None
+
+
+class ActionResolutionRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=2000)
+    facts: list[str] = Field(default_factory=list, max_length=20)
+    library_item_id: str | None = Field(default=None, max_length=64)
+
+    @field_validator("facts")
+    @classmethod
+    def bounded_facts(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or len(value) > 500 for value in values):
+            raise ValueError("Each fact must contain 1–500 characters")
+        return values
+
+
+class ActionResolutionResponse(BaseModel):
+    status: Literal["resolved", "ambiguous", "unsupported"]
+    policy_revision: str = "source-priority-v1"
+    explanation: str
+    citations: list[ShreckWorldCitation]
+    preferred_source_ids: list[str] = Field(default_factory=list)
+    conflicting_source_ids: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    missing_facts: list[str] = Field(default_factory=list)

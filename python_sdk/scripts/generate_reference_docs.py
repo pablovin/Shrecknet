@@ -38,6 +38,11 @@ def _sig_of(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
             args.append(name)
     if fn.args.vararg:
         args.append(f"*{fn.args.vararg.arg}")
+    if fn.args.kwonlyargs:
+        if not fn.args.vararg:
+            args.append("*")
+        for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults):
+            args.append(arg.arg if default is None else f"{arg.arg}={ast.unparse(default)}")
     if fn.args.kwarg:
         args.append(f"**{fn.args.kwarg.arg}")
     return f"({', '.join(args)})"
@@ -63,14 +68,17 @@ def _class_page(title: str, class_node: ast.ClassDef, methods: list[str]) -> str
     return "\n".join(lines).strip() + "\n"
 
 
-def main() -> None:
+def main(only: set[str] | None = None) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     client_mod = ast.parse(_get_source(ROOT / "shrecknet_client" / "client.py"))
     init_mod = ast.parse(_get_source(ROOT / "shrecknet_client" / "__init__.py"))
+    shreckworld_mod = ast.parse(_get_source(ROOT / "shrecknet_client" / "shreckworld.py"))
     resources_mod = ast.parse(_get_source(ROOT / "shrecknet_client" / "resources.py"))
 
     pages = {
+        "shreckworld.md": _class_page("ShreckWorldAPI", _find_class(shreckworld_mod, "ShreckWorldAPI"),
+            ["worlds", "sources", "query", "resolve_action", "readiness", "start_indexing", "indexing_job", "aclose"]),
         "character-agents.md": _class_page(
             "CharacterAgentsAPI",
             _find_class(resources_mod, "CharacterAgentsAPI"),
@@ -105,13 +113,19 @@ def main() -> None:
     }
 
     for name, content in pages.items():
-        (OUT_DIR / name).write_text(content, encoding="utf-8")
+        if only is None or name in only:
+            (OUT_DIR / name).write_text(content, encoding="utf-8")
 
-    (OUT_DIR / "index.md").write_text(
-        """# API Reference (Generated)\n\nGenerated from SDK source docstrings and method signatures.\n\n- [AsyncShrecknetClient](./async-client.md)\n- [Shrecknet](./shrecknet.md)\n- [CharacterAgentsAPI](./character-agents.md)\n- [WorldsAPI](./worlds.md)\n- [OntologiesAPI](./ontologies.md)\n- [OntologyInstancesAPI](./ontology-instances.md)\n""",
+    if only is None or "index.md" in only:
+        (OUT_DIR / "index.md").write_text(
+        """# API Reference (Generated)\n\nGenerated from SDK source docstrings and method signatures.\n\n- [AsyncShrecknetClient](./async-client.md)\n- [Shrecknet](./shrecknet.md)\n- [ShreckWorldAPI](./shreckworld.md)\n- [CharacterAgentsAPI](./character-agents.md)\n- [WorldsAPI](./worlds.md)\n- [OntologiesAPI](./ontologies.md)\n- [OntologyInstancesAPI](./ontology-instances.md)\n""",
         encoding="utf-8",
     )
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate SDK API reference pages")
+    parser.add_argument("--only", nargs="+", help="Write only these reference filenames (including index.md)")
+    options = parser.parse_args()
+    main(set(options.only) if options.only else None)

@@ -5,6 +5,13 @@ parent expansion, synthesis evidence, provenance, and cleanup behavior.
 
 Query v2 is the only supported Librarian retrieval strategy.
 
+## Shared ranking rules
+
+Named-term extraction, RRF, and diversity selection are defined once in
+`shreckdoc.retrieval`. `LibrarianRetrievalStrategyV2` retains its public/static
+methods and Neo4j search/expansion adapters; ShreckWorld reuses the pure rules
+with its own SQL/Qdrant adapters. Neither service calls the other's storage.
+
 ## Retrieval v2 Pipeline
 
 This retriever is the active evidence provider for Query v2. Query v2 invokes

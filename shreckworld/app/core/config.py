@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,8 +26,16 @@ class Settings(BaseSettings):
     embedding_model_id: str = "intfloat/multilingual-e5-small"
     embedding_dimension: int = 384
     embedding_device: str = "cpu"
+    embedding_revision: str | None = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+    embedding_local_files_only: bool = True
+    embedding_batch_size: int = Field(default=16, ge=1, le=128)
+    embedding_threads: int = Field(default=4, ge=1, le=32)
+    docling_artifacts_path: Path = Path("./models/docling")
+    parser_heartbeat_seconds: float = Field(default=5, ge=0.1, le=60)
+    reranker_model_id: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranker_enabled: bool = True
     qdrant_url: str = "http://qdrant:6333"
-    qdrant_collection: str = "shreckworld_chunks_v1"
+    qdrant_collection: str = "shreckworld_semantic_v2"
 
 
 def get_settings() -> Settings:

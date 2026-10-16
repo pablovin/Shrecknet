@@ -10,6 +10,7 @@ Official documentation for the async Shrecknet Python SDK.
 ## Core Workflows
 
 - [Worlds and Ontologies](./core_workflows/worlds-and-ontologies.md)
+- [ShreckWorld upload, indexing, and readiness](./core_workflows/shreckworld-upload.md)
 - [Ontology Content Creation](./core_workflows/ontology-content-creation.md)
 - [Search and Listing](./core_workflows/search-and-listing.md)
 - [Resolve Entities and Scene Counts](./core_workflows/resolve-entities-and-scene-counts.md)
@@ -47,3 +48,5 @@ Official documentation for the async Shrecknet Python SDK.
 - [API Reference (Generated)](./reference/index.md)
 
 - [CharacterAgent dispositions and evidence](character_agents.md)
+
+- [ShreckWorld reader and rule review](core_workflows/shreckworld-reader.md) — Typed read-only knowledge access with the current Shrecknet identity.

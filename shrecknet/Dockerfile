@@ -28,6 +28,9 @@ RUN pip install --prefer-binary --index-url "$TORCH_INDEX_URL" \
       "torch>=2,<3" \
       "torchvision>=0.17,<1"
 
+COPY --from=shreckdoc / /tmp/shreckdoc
+RUN pip install --no-deps /tmp/shreckdoc
+
 COPY app ./app
 COPY default ./default
 

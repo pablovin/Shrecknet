@@ -8,6 +8,18 @@ This is the active embedding source for Librarian Query v2. Its E5 child
 vectors provide precise matches, while the parent/child graph reconstructs the
 complete display evidence used by final synthesis.
 
+## Shared document algorithms
+
+The storage-independent adapter, normalized records, contextual E5 serializer,
+and structural chunk builder live in the local `shreckdoc.pipeline` package.
+`app.services.docling_ingestion_service` preserves its prior import surface and
+owns Librarian's locks, graph persistence, and activation. ShreckWorld uses the
+same algorithms with independent SQL/Qdrant storage and strict semantic readiness;
+see [ShreckWorld architecture](../../../Architecture/SHRECKWORLD.md). Local
+application installation must install `shreckdoc` first; Compose supplies its
+named build context automatically. This extraction does not migrate Librarian
+storage or change its graph contracts.
+
 ## Entry Points
 
 The existing frontend and API contracts are unchanged:

@@ -67,6 +67,8 @@ Detailed API documentation for specific features
 - [Favorite API Quick Reference](./API/FAVORITE_API_QUICK_REFERENCE.md)
 - [Forum API Documentation](./API/FORUM_API_DOCUMENTATION.md)
 - [Library API](./API/LIBRARY_API.md)
+- [ShreckWorld indexing API](./API/SHRECKWORLD_INDEXING_API.md) - Structured indexing, strict semantic readiness, job polling, extraction coverage, deployment, and migration
+- [ShreckWorld upload API](./API/SHRECKWORLD_UPLOAD_API.md) - Metadata autofill, frontend multipart fields, and authenticated covers
 - [Backup API](./API/BACKUP_API.md)
 - [Admin Clear Endpoints](./API/ADMIN_CLEAR_ENDPOINTS.md)
 - [Architect API Examples](./API/ARCHITECT_API_EXAMPLES.md)
@@ -84,7 +86,7 @@ Documentation for AI agent systems
 ### [Architecture](./Architecture/)
 System architecture and design documentation
 - [Shrecknet Architecture](./Architecture/SHRECKNET_ARCHITECTURE.md) - High-level architecture diagram and explanation
-- [ShreckWorld Phase 1](./Architecture/SHRECKWORLD.md) - Standalone world knowledge service, admin API, ingestion, and query contract
+- [ShreckWorld structured knowledge service](./Architecture/SHRECKWORLD.md) - Shared Docling/E5 algorithms, independent SQL/Qdrant storage, model readiness, activation, and citation provenance
 - [GraphRAG](./Architecture/GRAPHRAG.md) - Graph-based retrieval augmented generation
 - [Celery](./Architecture/CELERY.md) - Background job processing
 - [Linking](./Architecture/LINKING.md) - Entity linking system
@@ -144,3 +146,5 @@ When adding new documentation:
 ## 🤝 Contributing
 
 See the main [README](../README.md) for contribution guidelines.
+
+- [ShreckWorld reader and rule-review API](API/SHRECKWORLD_READER_API.md) — Authenticated libraries, original files, passage questions, citations, and agent evidence access.

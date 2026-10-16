@@ -1,0 +1,12 @@
+[project]
+name = "shreckdoc"
+version = "0.1.0"
+description = "Shared Shrecknet document normalization and structural chunking"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["shreckdoc*"]

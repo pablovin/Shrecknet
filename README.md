@@ -61,7 +61,9 @@ Narrative generation agent for converting notes/session material into polished s
 ## Quick Start (Compose Only)
 
 ### 1. Prerequisites
-- Docker Engine with Docker Compose v2
+- Docker Engine with Docker Compose v2 and BuildKit support for additional build contexts.
+- `shreckdoc/` is the local shared document-algorithm package installed by the
+  Shrecknet and ShreckWorld images. Compose supplies its named build context.
 
 ### 2. Review first-start config
 

@@ -16,7 +16,7 @@ Architect scene-centric chunking docs: `../Documentation/Agents/Architect/Scene 
 ## Run
 ```bash
 cd shrecknet
-pip install -e ".[test]"
+pip install -e ../shreckdoc -e ".[test]"
 uvicorn app.main:app --reload --port 8100
 ```
 

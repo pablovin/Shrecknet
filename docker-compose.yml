@@ -8,6 +8,18 @@ x-shrecknet-env: &shrecknet-env
   DOCLING_ARTIFACTS_PATH: /hf-cache/docling
   SHRECKNET_CONFIG_SEED_FILE: /configs/shrecknet.initial.json
 
+x-shreckworld-env: &shreckworld-env
+  SHRECKWORLD_EMBEDDING_MODEL_ID: ${SHRECKWORLD_EMBEDDING_MODEL_ID:-intfloat/multilingual-e5-small}
+  SHRECKWORLD_EMBEDDING_REVISION: ${SHRECKWORLD_EMBEDDING_REVISION:-614241f622f53c4eeff9890bdc4f31cfecc418b3}
+  SHRECKWORLD_EMBEDDING_DEVICE: ${SHRECKWORLD_EMBEDDING_DEVICE:-cpu}
+  SHRECKWORLD_EMBEDDING_LOCAL_FILES_ONLY: "true"
+  SHRECKWORLD_DOCLING_ARTIFACTS_PATH: /hf-cache/docling
+  HF_HOME: /hf-cache
+  HF_HUB_CACHE: /hf-cache
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  TOKENIZERS_PARALLELISM: "false"
+
 x-shreckllm-env: &shreckllm-env
   PYTHONUNBUFFERED: "1"
   SHRECKLLM_CONFIG_SEED_FILE: /configs/shreckllm.initial.json
@@ -18,6 +30,8 @@ services:
     build:
       context: ./shrecknet
       dockerfile: Dockerfile
+      additional_contexts:
+        shreckdoc: ./shreckdoc
     restart: "no"
     init: true
     user: "0:0"
@@ -297,6 +311,8 @@ services:
     build:
       context: ./shrecknet
       dockerfile: Dockerfile
+      additional_contexts:
+        shreckdoc: ./shreckdoc
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
@@ -339,6 +355,8 @@ services:
     build:
       context: ./shrecknet
       dockerfile: Dockerfile
+      additional_contexts:
+        shreckdoc: ./shreckdoc
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
@@ -430,15 +448,37 @@ services:
       - qdrant-data:/qdrant/storage
     # Deliberately no host port: ShreckWorld is the only retrieval owner.
 
+  shreckworld_model_prefetch:
+    build:
+      context: ./shreckworld
+      dockerfile: Dockerfile
+      additional_contexts:
+        shreckdoc: ./shreckdoc
+    restart: "no"
+    init: true
+    user: "0:0"
+    command: python -m app.prefetch
+    environment:
+      <<: *shreckworld-env
+      HF_HUB_OFFLINE: "0"
+      TRANSFORMERS_OFFLINE: "0"
+      SHRECKNET_CONTAINER_UID: ${SHRECKNET_CONTAINER_UID:-1000}
+      SHRECKNET_CONTAINER_GID: ${SHRECKNET_CONTAINER_GID:-1000}
+    volumes:
+      - hf-model-cache:/hf-cache
+
   shreckworld_api:
     build:
       context: ./shreckworld
       dockerfile: Dockerfile
+      additional_contexts:
+        shreckdoc: ./shreckdoc
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8120
     environment:
+      <<: *shreckworld-env
       SHRECKWORLD_DATABASE_URL: sqlite:////data/shreckworld.db
       SHRECKWORLD_MEDIA_ROOT: /app/media
       SHRECKWORLD_CELERY_BROKER_URL: redis://shreckworld_redis:6379/0
@@ -451,7 +491,10 @@ services:
     volumes:
       - ./shreckworld/databases:/data
       - ./shreckworld/media:/app/media
+      - hf-model-cache:/hf-cache:ro
     depends_on:
+      shreckworld_model_prefetch:
+        condition: service_completed_successfully
       shreckworld_permissions:
         condition: service_completed_successfully
       shreckworld_redis:
@@ -459,7 +502,7 @@ services:
       qdrant:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8120/health', timeout=5).read()\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8120/ready', timeout=5).read()\""]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -469,11 +512,14 @@ services:
     build:
       context: ./shreckworld
       dockerfile: Dockerfile
+      additional_contexts:
+        shreckdoc: ./shreckdoc
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
-    command: celery -A app.celery_app:celery_app worker --loglevel=info --queues=shreckworld_embedding
+    command: python -m app.worker
     environment:
+      <<: *shreckworld-env
       SHRECKWORLD_DATABASE_URL: sqlite:////data/shreckworld.db
       SHRECKWORLD_MEDIA_ROOT: /app/media
       SHRECKWORLD_CELERY_BROKER_URL: redis://shreckworld_redis:6379/0
@@ -482,7 +528,10 @@ services:
     volumes:
       - ./shreckworld/databases:/data
       - ./shreckworld/media:/app/media
+      - hf-model-cache:/hf-cache:ro
     depends_on:
+      shreckworld_model_prefetch:
+        condition: service_completed_successfully
       shreckworld_permissions:
         condition: service_completed_successfully
       shreckworld_redis:

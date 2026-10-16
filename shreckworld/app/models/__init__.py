@@ -1,3 +1,4 @@
+from app.models.document import (ShreckWorldDocument, ShreckWorldDocumentPage, ShreckWorldDocumentSection, ShreckWorldDocumentBlock)
 from app.models.shreckworld import (
     ShreckWorld,
     ShreckWorldDocumentChunk,
@@ -6,6 +7,10 @@ from app.models.shreckworld import (
 )
 
 __all__ = [
+    "ShreckWorldDocument",
+    "ShreckWorldDocumentPage",
+    "ShreckWorldDocumentSection",
+    "ShreckWorldDocumentBlock",
     "ShreckWorld",
     "ShreckWorldLibraryItem",
     "ShreckWorldDocumentChunk",

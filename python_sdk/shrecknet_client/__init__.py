@@ -1,3 +1,4 @@
+from .shreckworld import ShreckWorldAPI, SelectedPassage, KnowledgeWorld, KnowledgeSource, KnowledgeCitation, KnowledgeAnswer, RuleReview, KnowledgeIndexingJob, KnowledgeJobMetrics, KnowledgeReadiness
 from .client import AsyncShrecknetClient
 from .models import *
 from .resources import AgentsAPI, ArchitectAPI, CharacterAgentsAPI, ElderAPI, EmbeddingsAPI, JobsAPI, NovelistAPI, OntologiesAPI, OntologyEmbeddingsAPI, OntologyInstancesAPI, PersonalCompanionAPI, ShreckLLMAPI, WorldsAPI
@@ -12,8 +13,10 @@ class Shrecknet:
         token: str | None = None,
         timeout: float = 30.0,
         shreckllm_base_url: str = "http://localhost:8111",
+        shreckworld_base_url: str = "http://localhost:8121",
     ):
         self.client = AsyncShrecknetClient(base_url=base_url, token=token, timeout=timeout)
+        self.shreckworld = ShreckWorldAPI(self.client, base_url=shreckworld_base_url, timeout=timeout)
         self.worlds = WorldsAPI(self.client)
         self.ontologies = OntologiesAPI(self.client)
         self.ontology_instances = OntologyInstancesAPI(self.client)
@@ -33,6 +36,7 @@ class Shrecknet:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.shreckworld.aclose()
         await self.shreckllm.aclose()
         await self.client.__aexit__(exc_type, exc, tb)
 

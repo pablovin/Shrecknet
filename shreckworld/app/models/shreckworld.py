@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -74,6 +74,16 @@ class ShreckWorldDocumentChunk(Base):
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     embedding_json: Mapped[str] = mapped_column(Text, nullable=False)
+    document_id: Mapped[str | None] = mapped_column(ForeignKey("shreckworld_documents.id", ondelete="CASCADE"), nullable=True, index=True)
+    chunk_role: Mapped[str] = mapped_column(String(16), default="child")
+    parent_chunk_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    section_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    embedding_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    heading_path: Mapped[list[str]] = mapped_column(JSON, default=list)
+    source_block_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    page_numbers: Mapped[list[int]] = mapped_column(JSON, default=list)
+    token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     library_item: Mapped[ShreckWorldLibraryItem] = relationship(back_populates="chunks")
@@ -89,5 +99,8 @@ class ShreckWorldEmbeddingJob(Base):
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metrics_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

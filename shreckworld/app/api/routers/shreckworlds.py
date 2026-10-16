@@ -3,13 +3,16 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import shutil
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.private_files import private_file_response
 from app.api.deps import get_current_user, require_world_manager
 from app.core.config import get_settings
 from app.db.session import get_db
@@ -17,14 +20,28 @@ from app.models import ShreckWorld, ShreckWorldEmbeddingJob, ShreckWorldLibraryI
 from app.schemas.shreckworld import (
     AuthorityTier, EmbeddingJobRead, ShreckWorldCreate, ShreckWorldLibraryItemRead,
     ShreckWorldLibraryItemUpdate, ShreckWorldQueryRequest, ShreckWorldQueryResponse,
-    ShreckWorldRead, ShreckWorldUpdate,
+    ShreckWorldRead, ShreckWorldUpdate, ActionResolutionRequest, ActionResolutionResponse,
 )
 from app.services.query import query_shreckworld
+from app.services.rule_resolution import resolve_action
+from app.services.embedding import EmbeddingInputError, EmbeddingUnavailable, get_embedder
+from app.services.document_metadata import resolve_upload_metadata
+from app.services.source_lifecycle import delete_source, delete_world
 
 admin_router = APIRouter(prefix="/admin/shreckworlds", tags=["ShreckWorld admin"])
 query_router = APIRouter(prefix="/shreckworlds", tags=["ShreckWorld query"])
 router = APIRouter()
 
+
+@contextmanager
+def _semantic_errors():
+    """Use one HTTP error contract for query and agent rule-review transport."""
+    try:
+        yield
+    except EmbeddingUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Semantic retrieval is unavailable. Reading remains available.") from exc
+    except EmbeddingInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 def _world_or_404(session: Session, shreckworld_id: str) -> ShreckWorld:
     world = session.get(ShreckWorld, shreckworld_id)
@@ -53,11 +70,13 @@ def create_shreckworld(payload: ShreckWorldCreate, session: Session = Depends(ge
     return world
 
 
+@query_router.get("", response_model=list[ShreckWorldRead], dependencies=[Depends(get_current_user)])
 @admin_router.get("", response_model=list[ShreckWorldRead], dependencies=[Depends(require_world_manager)])
 def list_shreckworlds(session: Session = Depends(get_db)) -> list[ShreckWorld]:
     return list(session.scalars(select(ShreckWorld).order_by(ShreckWorld.name)))
 
 
+@query_router.get("/{shreckworld_id}", response_model=ShreckWorldRead, dependencies=[Depends(get_current_user)])
 @admin_router.get("/{shreckworld_id}", response_model=ShreckWorldRead, dependencies=[Depends(require_world_manager)])
 def get_shreckworld(shreckworld_id: str, session: Session = Depends(get_db)) -> ShreckWorld:
     return _world_or_404(session, shreckworld_id)
@@ -80,15 +99,17 @@ def update_shreckworld(shreckworld_id: str, payload: ShreckWorldUpdate, session:
 @admin_router.delete("/{shreckworld_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, dependencies=[Depends(require_world_manager)])
 def delete_shreckworld(shreckworld_id: str, session: Session = Depends(get_db)) -> None:
     world = _world_or_404(session, shreckworld_id)
-    root = get_settings().media_root / "shreckworlds" / world.id
-    session.delete(world); session.commit()
-    shutil.rmtree(root, ignore_errors=True)
+    delete_world(session, world)
 
 
 @admin_router.post("/{shreckworld_id}/library-items", response_model=ShreckWorldLibraryItemRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_world_manager)])
 def upload_library_item(
-    shreckworld_id: str, title: str, pdf: UploadFile = File(...), authors: str | None = None,
+    shreckworld_id: str, title: str | None = None, pdf: UploadFile = File(...), authors: str | None = None,
     description: str | None = None, authority_tier: AuthorityTier = "core_rules", authority_priority: int = 100,
+    auto_extract_metadata: bool = Form(False, description="Fill empty title, authors and description from document properties and render a PDF cover."),
+    form_title: str | None = Form(None, alias="title", validation_alias="title"),
+    form_authors: str | None = Form(None, alias="authors", validation_alias="authors"),
+    form_description: str | None = Form(None, alias="description", validation_alias="description"),
     session: Session = Depends(get_db),
 ) -> ShreckWorldLibraryItem:
     _world_or_404(session, shreckworld_id)
@@ -99,28 +120,52 @@ def upload_library_item(
     raw = pdf.file.read()
     if not raw or len(raw) > get_settings().max_document_bytes:
         raise HTTPException(status_code=413, detail="Source is empty or exceeds the configured size limit")
+    try:
+        metadata = resolve_upload_metadata(
+            raw, filename=pdf.filename or "", title=form_title if form_title is not None else title,
+            authors=form_authors if form_authors is not None else authors,
+            description=form_description if form_description is not None else description,
+            auto_extract_metadata=auto_extract_metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     source_hash = hashlib.sha256(raw).hexdigest()
     item = ShreckWorldLibraryItem(
-        shreckworld_id=shreckworld_id, title=title.strip(), authors=authors, description=description,
+        shreckworld_id=shreckworld_id, title=metadata.title, authors=metadata.authors, description=metadata.description,
         authority_tier=authority_tier, authority_priority=authority_priority,
         pdf_path="pending", storage_path="pending", original_filename=pdf.filename,
         mime_type=pdf.content_type or mimetypes.guess_type(pdf.filename or "")[0] or "application/octet-stream",
         file_size=len(raw), source_sha256=source_hash, index_status="unindexed",
     )
-    session.add(item); session.flush()
-    target = get_settings().media_root / "shreckworlds" / shreckworld_id / item.id / f"source{extension}"
-    target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(raw)
-    item.pdf_path = str(target.resolve())  # legacy worker compatibility
-    item.storage_path = item.pdf_path
+    session.add(item)
     try:
-        session.commit()
+        session.flush()
     except Exception as exc:
-        session.rollback(); target.unlink(missing_ok=True)
+        session.rollback()
+        raise HTTPException(status_code=409, detail="A source with that title already exists in this ShreckWorld") from exc
+    target = get_settings().media_root / "shreckworlds" / shreckworld_id / item.id / f"source{extension}"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+        item.pdf_path = str(target.resolve())  # legacy worker compatibility
+        item.storage_path = item.pdf_path
+        if metadata.cover:
+            cover = target.parent / "cover.png"
+            cover.write_bytes(metadata.cover)
+            item.cover_path = str(cover.resolve())
+        session.commit()
+    except OSError as exc:
+        session.rollback()
+        shutil.rmtree(target.parent, ignore_errors=True)
+        raise HTTPException(status_code=500, detail="Unable to store source files") from exc
+    except Exception as exc:
+        session.rollback(); shutil.rmtree(target.parent, ignore_errors=True)
         raise HTTPException(status_code=409, detail="A source with that title already exists in this ShreckWorld") from exc
     session.refresh(item)
     return item
 
 
+@query_router.get("/{shreckworld_id}/library-items", response_model=list[ShreckWorldLibraryItemRead], dependencies=[Depends(get_current_user)])
 @admin_router.get("/{shreckworld_id}/library-items", response_model=list[ShreckWorldLibraryItemRead], dependencies=[Depends(require_world_manager)])
 def list_library_items(shreckworld_id: str, session: Session = Depends(get_db)) -> list[ShreckWorldLibraryItem]:
     _world_or_404(session, shreckworld_id)
@@ -138,18 +183,32 @@ def update_library_item(shreckworld_id: str, item_id: str, payload: ShreckWorldL
 @admin_router.delete("/{shreckworld_id}/library-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, dependencies=[Depends(require_world_manager)])
 def delete_library_item(shreckworld_id: str, item_id: str, session: Session = Depends(get_db)) -> None:
     item = _item_or_404(session, shreckworld_id, item_id)
-    root = Path(item.pdf_path).parent
-    session.delete(item); session.commit(); shutil.rmtree(root, ignore_errors=True)
+    delete_source(session, item)
 
 
+@query_router.get("/{shreckworld_id}/library-items/{item_id}", response_model=ShreckWorldLibraryItemRead, dependencies=[Depends(get_current_user)])
+def get_library_item(shreckworld_id: str, item_id: str, session: Session = Depends(get_db)) -> ShreckWorldLibraryItem:
+    return _item_or_404(session, shreckworld_id, item_id)
+
+
+@query_router.head("/{shreckworld_id}/library-items/{item_id}/content", dependencies=[Depends(get_current_user)])
 @query_router.get("/{shreckworld_id}/library-items/{item_id}/content", dependencies=[Depends(get_current_user)])
-def download_library_item(shreckworld_id: str, item_id: str, session: Session = Depends(get_db)) -> FileResponse:
+def download_library_item(shreckworld_id: str, item_id: str, request: Request, session: Session = Depends(get_db)) -> Response:
     """Private download route for the shared Shrecknet frontend."""
     item = _item_or_404(session, shreckworld_id, item_id)
     path = Path(item.storage_path or item.pdf_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Source file not found")
-    return FileResponse(path, media_type=item.mime_type or "application/octet-stream", filename=item.original_filename or path.name)
+    return private_file_response(path, request=request, media_type=item.mime_type or "application/octet-stream",
+                                 filename=item.original_filename or path.name, revision=item.source_sha256)
+
+
+@query_router.get("/{shreckworld_id}/library-items/{item_id}/cover", dependencies=[Depends(get_current_user)])
+def download_library_cover(shreckworld_id: str, item_id: str, session: Session = Depends(get_db)) -> FileResponse:
+    item = _item_or_404(session, shreckworld_id, item_id)
+    if not item.cover_path or not Path(item.cover_path).is_file():
+        raise HTTPException(status_code=404, detail="Source cover not found")
+    return FileResponse(item.cover_path, media_type="image/png", filename="cover.png")
 
 
 @admin_router.post("/{shreckworld_id}/library-items/{item_id}/embed", response_model=EmbeddingJobRead, status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_world_manager)])
@@ -157,7 +216,11 @@ def start_embedding(shreckworld_id: str, item_id: str, session: Session = Depend
     item = _item_or_404(session, shreckworld_id, item_id)
     if item.embedding_status in {"queued", "embedding"}:
         raise HTTPException(status_code=409, detail="Embedding is already running")
-    job = ShreckWorldEmbeddingJob(library_item_id=item.id)
+    try:
+        get_embedder().ensure_ready()
+    except EmbeddingUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    job = ShreckWorldEmbeddingJob(library_item_id=item.id, created_at=datetime.now(timezone.utc))
     item.embedding_status = "queued"; item.embedding_error = None
     item.index_status, item.index_error = "queued", None
     session.add(job); session.commit(); session.refresh(job)
@@ -180,20 +243,52 @@ def index_status(shreckworld_id: str, item_id: str, session: Session = Depends(g
 @admin_router.get("/{shreckworld_id}/library-items/{item_id}/embedding-status", response_model=EmbeddingJobRead, dependencies=[Depends(require_world_manager)])
 def embedding_status(shreckworld_id: str, item_id: str, session: Session = Depends(get_db)) -> ShreckWorldEmbeddingJob:
     item = _item_or_404(session, shreckworld_id, item_id)
-    job = session.scalar(select(ShreckWorldEmbeddingJob).where(ShreckWorldEmbeddingJob.library_item_id == item.id).order_by(ShreckWorldEmbeddingJob.created_at.desc()))
+    job = session.scalar(select(ShreckWorldEmbeddingJob).where(ShreckWorldEmbeddingJob.library_item_id == item.id).order_by(ShreckWorldEmbeddingJob.created_at.desc(), ShreckWorldEmbeddingJob.id.desc()))
     if job is None: raise HTTPException(status_code=404, detail="No embedding job exists")
+    return job
+
+
+@admin_router.get("/{shreckworld_id}/library-items/{item_id}/index-jobs/{job_id}", response_model=EmbeddingJobRead, dependencies=[Depends(require_world_manager)])
+def get_indexing_job(shreckworld_id: str, item_id: str, job_id: str, session: Session = Depends(get_db)) -> ShreckWorldEmbeddingJob:
+    _item_or_404(session, shreckworld_id, item_id)
+    job = session.get(ShreckWorldEmbeddingJob, job_id)
+    if job is None or job.library_item_id != item_id:
+        raise HTTPException(status_code=404, detail="Indexing job not found")
     return job
 
 
 @query_router.post("/{shreckworld_id}/query", response_model=ShreckWorldQueryResponse, dependencies=[Depends(get_current_user)])
 def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Session = Depends(get_db)) -> ShreckWorldQueryResponse:
     _world_or_404(session, shreckworld_id)
-    citations, trace = query_shreckworld(session, shreckworld_id=shreckworld_id, query=payload.query, top_k=payload.top_k)
+    if payload.library_item_id:
+        _item_or_404(session, shreckworld_id, payload.library_item_id)
+    if payload.selection:
+        selected = _item_or_404(session, shreckworld_id, payload.selection.library_item_id)
+        if selected.source_sha256 != payload.selection.source_sha256:
+            raise HTTPException(status_code=409, detail="The selected document has changed. Reopen it before asking.")
+        if payload.library_item_id and payload.selection.library_item_id != payload.library_item_id:
+            raise HTTPException(status_code=422, detail="Selection must belong to the requested book")
+    # Selection supplies untrusted retrieval context, never model instructions.
+    retrieval_query = payload.query + (" " + payload.selection.text if payload.selection else "")
+    with _semantic_errors():
+        citations, trace = query_shreckworld(session, shreckworld_id=shreckworld_id, query=retrieval_query,
+                                           top_k=payload.top_k, library_item_id=payload.library_item_id)
     if citations:
         answer = "Relevant ShreckWorld evidence was found: " + " ".join(f"[{citation.source_id}] {citation.excerpt}" for citation in citations)
+    elif trace.get("sources_requiring_reindex"):
+        answer = "Sources require reindexing with the verified semantic model before they can be searched."
     else:
         answer = "No embedded source in this ShreckWorld contains enough evidence to answer that question."
     return ShreckWorldQueryResponse(shreckworld_id=shreckworld_id, query=payload.query, answer=answer, citations=citations, trace=trace if payload.include_trace else None)
+
+
+@query_router.post("/{shreckworld_id}/resolve-action", response_model=ActionResolutionResponse, dependencies=[Depends(get_current_user)])
+def resolve_world_action(shreckworld_id: str, payload: ActionResolutionRequest, session: Session = Depends(get_db)) -> ActionResolutionResponse:
+    _world_or_404(session, shreckworld_id)
+    if payload.library_item_id:
+        _item_or_404(session, shreckworld_id, payload.library_item_id)
+    with _semantic_errors():
+        return resolve_action(session, shreckworld_id=shreckworld_id, request=payload)
 
 
 router.include_router(admin_router)

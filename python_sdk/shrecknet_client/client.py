@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from .errors import raise_for_status
-from .models import Token, User, UserBootstrapStatus
+from .models import Token, User, UserBootstrapStatus, PublicUserSummary
 
 
 class AsyncShrecknetClient:
@@ -53,6 +53,13 @@ class AsyncShrecknetClient:
         if response.status_code == 204:
             return None
         return response.json()
+
+    async def user_summaries(self, ids: list[int]) -> list[PublicUserSummary]:
+        """Read up to 100 public profiles; missing IDs are omitted by the service."""
+        if not 1 <= len(ids) <= 100 or any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in ids):
+            raise ValueError("Supply 1–100 positive user IDs")
+        data = await self.raw_request("GET", "/contracts/users", params={"ids": ids})
+        return [PublicUserSummary.model_validate(row) for row in data]
 
     async def bootstrap_status(self) -> UserBootstrapStatus:
         """Return whether at least one user already exists in Shrecknet."""

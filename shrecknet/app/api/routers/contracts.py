@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Annotated
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db_session
 from app.models import User
+from app.schemas.user_contracts import PublicUserSummary
 from app.services.users import user_service
 from app.services.worlds import world_service
 
@@ -24,6 +26,17 @@ class ContractWorld(BaseModel):
     id: str
     name: str
     ontology_ids: list[int]
+
+
+@router.get("/users", response_model=list[PublicUserSummary])
+async def contract_user_summaries(
+    ids: Annotated[list[Annotated[int, Query(gt=0)]], Query(min_length=1, max_length=100)],
+    _: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> list[PublicUserSummary]:
+    # Same authenticated profile-read permission as /contracts/users/{user_id};
+    # intentionally excludes email, role, and private account configuration.
+    return await user_service.summaries_async(session, ids)
 
 
 @router.get("/users/me", response_model=ContractUser)

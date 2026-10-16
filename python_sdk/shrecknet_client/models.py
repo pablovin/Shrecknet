@@ -972,3 +972,10 @@ class NovelistRunRead(BaseModel):
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class PublicUserSummary(BaseModel):
+    id: int
+    username: str
+    full_name: str
+    avatar_url: str | None = None

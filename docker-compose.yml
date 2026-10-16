@@ -317,7 +317,12 @@ services:
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8100
-    environment: *shrecknet-env
+    environment:
+      <<: *shrecknet-env
+      SHRECKNET_BROWSER_ENABLED: ${SHRECKNET_BROWSER_ENABLED:-false}
+      SHRECKNET_BROWSER_SECRET: ${SHRECKNET_BROWSER_SECRET:-}
+      SHRECKNET_BROWSER_ALLOWED_ORIGINS: ${SHRECKNET_BROWSER_ALLOWED_ORIGINS:-[]}
+      SHRECKNET_BROWSER_SECURE_COOKIES: ${SHRECKNET_BROWSER_SECURE_COOKIES:-true}
     env_file:
       - ./configs/compose.env
       - ./configs/neo4j.env

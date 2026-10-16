@@ -4,6 +4,10 @@ Low-level async HTTP client for Shrecknet APIs.
 
 ## Methods
 
+### `user_summaries(self, ids)`
+
+Resolve 1–100 positive user IDs into typed `PublicUserSummary` records (ID, username, full name, and optional avatar). Duplicates collapse and missing users are omitted. See [the workflow](../core_workflows/public-user-summaries.md).
+
 ### `set_token(self, token)`
 
 Set bearer token used for authenticated requests.

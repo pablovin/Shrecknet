@@ -5,9 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.db.session import AsyncSessionCompat
 from app.models import User
+from app.repositories.user_profiles import public_profiles
+from app.schemas.user_contracts import PublicUserSummary
 
 
 class UserService:
+    async def summaries_async(self, session: AsyncSessionCompat, ids: list[int]) -> list[PublicUserSummary]:
+        return [PublicUserSummary.model_validate(user) for user in await public_profiles(session, ids)]
+
     def authenticate(self, session: Session, email: str, password: str) -> User | None:
         result = session.execute(select(User).where(User.email == email, User.password == password))
         return result.scalar_one_or_none()

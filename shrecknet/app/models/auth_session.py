@@ -22,7 +22,7 @@ class AuthRotation(Base):
     digest: Mapped[str] = mapped_column(String(64), primary_key=True)
     session_id: Mapped[str] = mapped_column(ForeignKey("auth_sessions.id", ondelete="CASCADE"), index=True)
     request_id: Mapped[str] = mapped_column(String(64))
-    rotated_at: Mapped[int] = mapped_column(Integer)
+    rotated_at: Mapped[int] = mapped_column(Integer, index=True)
     # Fernet-encrypted replacement, meaningful only in the 30-second retry window.
     replacement: Mapped[str | None] = mapped_column(Text, nullable=True)
 

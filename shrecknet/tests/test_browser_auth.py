@@ -139,6 +139,57 @@ async def test_rate_limit_is_persisted(session_maker, browser_settings):
 def test_secure_cookie_configuration_and_password_hashes():
     with pytest.raises(ValueError):
         BrowserAuthSettings(enabled=True, secret=Fernet.generate_key().decode(), allowed_origins=["http://example.com"])
+    with pytest.raises(ValueError):
+        BrowserAuthSettings(enabled=True, secret=Fernet.generate_key().decode(), allowed_origins=["https://example.com"], secure_cookies=False)
     hashed = get_password_hash("correct password")
     assert verify_password("correct password", hashed)
     assert not verify_password("wrong password", hashed)
+
+
+@pytest.mark.asyncio
+async def test_new_login_replaces_only_proven_previous_session(session_maker, browser_settings):
+    async with session_maker() as db:
+        user = await seed_user(db)
+        service = BrowserSessionService(db, browser_settings)
+        _, old, old_row = await service.create(user, True)
+        await service.revoke_credential(old_row.id + ".unknown-secret")
+        await db.commit()
+        await service.active(old_row.id)
+        _, new, new_row = await service.create(user, False, old)
+        with pytest.raises(SessionFailure):
+            await service.active(old_row.id)
+        assert (await service.active(new_row.id))[1].id == user.id
+        assert old != new
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,expected", [("allowed", "authenticated"), ("moderated", "pending_approval"), ("stopped", "registration_closed")])
+async def test_browser_registration_respects_server_mode(client, session_maker, browser_settings, monkeypatch, mode, expected):
+    from app.core.config_store import get_settings, UserCreationMode
+    settings = get_settings().model_copy(update={"user_creation_mode": UserCreationMode(mode), "email_verification_enabled": False})
+    for module in ("app.services.user_service", "app.services.auth_sessions", "app.api.routers.browser_auth"):
+        monkeypatch.setattr(module + ".get_settings", lambda: settings)
+    async with session_maker() as db:
+        await seed_user(db)
+    csrf = (await client.get("/auth/csrf")).json()["csrf_token"]
+    headers = {"Origin": "http://localhost", "X-CSRF-Token": csrf}
+    payload = {"full_name": "New Storyteller", "username": "newstory", "email": "new@example.com", "password": "a long memorable password", "timezone": "Europe/Brussels"}
+    response = await client.post("/auth/register", json=payload, headers=headers)
+    if mode == "stopped":
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == expected
+    else:
+        assert response.status_code == 201, response.text
+        assert response.json()["outcome"] == expected
+        assert (response.json()["session"] is not None) == (mode == "allowed")
+        if mode == "allowed":
+            assert response.json()["session"]["user"]["role"] == "player"
+
+
+@pytest.mark.asyncio
+async def test_validation_errors_never_echo_passwords(client, browser_settings):
+    csrf = (await client.get("/auth/csrf")).json()["csrf_token"]
+    response = await client.post("/auth/register", json={"password": "secret-text-that-must-not-be-reflected"}, headers={"Origin": "http://localhost", "X-CSRF-Token": csrf})
+    assert response.status_code == 422
+    assert "secret-text" not in response.text
+    assert response.headers["cache-control"] == "no-store"

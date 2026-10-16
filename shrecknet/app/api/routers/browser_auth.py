@@ -32,7 +32,7 @@ class AuthRoute(APIRoute):
             try:
                 response = await handler(request)
             except SessionFailure as exc:
-                response = JSONResponse(status_code=exc.status, content={"detail": {"code": exc.code}}, headers={"Retry-After": "60"} if exc.status == 429 else None)
+                response = JSONResponse(status_code=exc.status, content={"detail": {"code": exc.code}}, headers={"Retry-After": str(exc.retry_after)} if exc.status == 429 else None)
             except OperationalError:
                 response = JSONResponse(status_code=503, content={"detail": {"code": "unavailable"}})
             except RequestValidationError:
@@ -50,7 +50,10 @@ router = APIRouter(prefix="/auth", tags=["browser-auth"], route_class=AuthRoute,
 
 
 def browser_service(service: UserService = Depends(get_user_service)) -> BrowserSessionService:
-    settings = get_browser_auth_settings()
+    try:
+        settings = get_browser_auth_settings()
+    except ValueError as exc:
+        raise SessionFailure("unavailable", 503) from exc
     if not settings.enabled:
         raise SessionFailure("unavailable", 503)
     jwt_settings = get_settings()
@@ -109,7 +112,7 @@ async def login(payload: BrowserLogin, request: Request, response: Response, use
     user, failure = await users.authenticate_user_with_reason(payload.identifier.strip(), payload.password)
     if not user:
         raise SessionFailure(failure or "invalid_credentials", 401 if failure == "invalid_credentials" else 403)
-    return set_session(response, service, await service.create(user, payload.remember_me))
+    return set_session(response, service, await service.create(user, payload.remember_me, request.cookies.get(service.settings.refresh_cookie, "")))
 
 
 @router.post("/refresh", response_model=BrowserSessionResponse)
@@ -121,6 +124,7 @@ async def refresh(request: Request, response: Response, service: BrowserSessionS
         UUID(request_id)
     except ValueError as exc:
         raise SessionFailure("invalid_request", 422) from exc
+    await service.limit("refresh-ip", remote_address(request), 120)
     await service.limit("refresh", session_id(request, service) or remote_address(request), 60)
     return set_session(response, service, await service.refresh(credential, request_id))
 
@@ -128,15 +132,9 @@ async def refresh(request: Request, response: Response, service: BrowserSessionS
 @router.post("/logout", status_code=204)
 async def logout(request: Request, response: Response, service: BrowserSessionService = Depends(browser_service)):
     protect(request, service)
-    # Revocation must prove possession, not merely know a public session id.
     credential = request.cookies.get(service.settings.refresh_cookie, "")
-    from app.services.auth_sessions import digest
-    row = await service.repository.get(session_id(request, service))
-    if row:
-        previous = await service.repository.rotation(digest(credential))
-        if row.refresh_digest == digest(credential) or (previous and previous.session_id == row.id):
-            await service.repository.revoke(row.id, int(time.time()))
-            await service.db.commit()
+    await service.revoke_credential(credential)
+    await service.db.commit()
     for name in (service.settings.refresh_cookie, service.settings.csrf_cookie):
         response.delete_cookie(name, path="/", secure=service.settings.secure_cookies, httponly=True, samesite="lax")
 
@@ -151,7 +149,7 @@ async def session_user(user: User = Depends(get_current_user)):
 async def register(payload: BrowserRegistration, request: Request, response: Response, service: BrowserSessionService = Depends(browser_service)):
     protect(request, service)
     await service.limit("register", remote_address(request), 5, 300)
-    result, issued = await service.register(payload)
+    result, issued = await service.register(payload, request.cookies.get(service.settings.refresh_cookie, ""))
     if issued:
         set_session(response, service, issued)
     return result

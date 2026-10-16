@@ -22,8 +22,8 @@ from app.services.user_service import account_login_failure, UserService, UserCr
 
 
 class SessionFailure(ValueError):
-    def __init__(self, code: str, status: int = 401):
-        self.code, self.status = code, status
+    def __init__(self, code: str, status: int = 401, retry_after: int = 60):
+        self.code, self.status, self.retry_after = code, status, retry_after
         super().__init__(code)
 
 
@@ -62,7 +62,7 @@ class BrowserSessionService:
         # Keyed digest prevents identifiers/IPs being stored directly in counters.
         key = hmac.new(self.settings.secret.encode(), f"{action}:{identity}".encode(), hashlib.sha256).hexdigest()
         if not await self.repository.rate_limit(key, int(time.time()), window, maximum):
-            raise SessionFailure("rate_limited", 429)
+            raise SessionFailure("rate_limited", 429, window)
 
     async def active(self, session_id: str, user_id: int | None = None) -> tuple[AuthSession, User]:
         row = await self.repository.get(session_id)
@@ -89,7 +89,7 @@ class BrowserSessionService:
             csrf_token=self.csrf(row.id),
         )
 
-    async def create(self, user: User, persistent: bool) -> tuple[BrowserSessionResponse, str, AuthSession]:
+    async def create(self, user: User, persistent: bool, previous_credential: str = "") -> tuple[BrowserSessionResponse, str, AuthSession]:
         now = int(time.time())
         session_id = secrets.token_urlsafe(24)
         credential = f"{session_id}.{secrets.token_urlsafe(32)}"
@@ -97,7 +97,7 @@ class BrowserSessionService:
         idle = min(absolute, now + self.idle_seconds(persistent))
         row = AuthSession(id=session_id, user_id=user.id, refresh_digest=digest(credential), created_at=now, absolute_expires_at=absolute, idle_expires_at=idle, persistent=persistent)
         self.db.add(row)
-        await self.repository.cleanup(now)
+        await self.revoke_credential(previous_credential)
         await self.db.commit()
         return self.response(row, user), credential, row
 
@@ -119,7 +119,6 @@ class BrowserSessionService:
             row, user = await self.active(session_id)
             return await self._duplicate(row, user, old, request_id, now)
         self.db.add(AuthRotation(digest=old, session_id=session_id, request_id=request_id, rotated_at=now, replacement=self.cipher.encrypt(replacement.encode()).decode()))
-        await self.repository.cleanup(now)
         await self.db.commit()
         row = await self.repository.get(session_id)
         return self.response(row, user), replacement, row
@@ -129,7 +128,10 @@ class BrowserSessionService:
         if previous and previous.session_id == row.id:
             if now - previous.rotated_at < 30:
                 if previous.request_id == request_id and previous.replacement:
-                    replacement = self.cipher.decrypt(previous.replacement.encode(), ttl=30).decode()
+                    try:
+                        replacement = self.cipher.decrypt(previous.replacement.encode(), ttl=30).decode()
+                    except InvalidToken as exc:
+                        raise SessionFailure("invalid_session") from exc
                     if hmac.compare_digest(digest(replacement), row.refresh_digest):
                         return self.response(row, user), replacement, row
                 # Parallel tab: no cookie mutation and no revocation; caller obtains
@@ -140,7 +142,7 @@ class BrowserSessionService:
         raise SessionFailure("invalid_session")
 
 
-    async def register(self, payload: BrowserRegistration) -> tuple[BrowserRegistrationResponse, tuple[BrowserSessionResponse, str, AuthSession] | None]:
+    async def register(self, payload: BrowserRegistration, previous_credential: str = "") -> tuple[BrowserRegistrationResponse, tuple[BrowserSessionResponse, str, AuthSession] | None]:
         users = UserService(self.db)
         if get_settings().user_creation_mode == UserCreationMode.STOPPED:
             raise SessionFailure("registration_closed", 403)
@@ -159,5 +161,16 @@ class BrowserSessionService:
             return BrowserRegistrationResponse(outcome="verification_required", verification_email_sent=user.verification_email_sent), None
         if account_login_failure(user):
             return BrowserRegistrationResponse(outcome="pending_approval"), None
-        issued = await self.create(user, payload.remember_me)
+        issued = await self.create(user, payload.remember_me, previous_credential)
         return BrowserRegistrationResponse(outcome="authenticated", session=issued[0]), issued
+
+    async def revoke_credential(self, credential: str) -> None:
+        """Know the actual current/prior secret, not merely a public session ID."""
+        if not credential:
+            return
+        row = await self.repository.get(credential.partition(".")[0])
+        if row:
+            token_digest = digest(credential)
+            previous = await self.repository.rotation(token_digest)
+            if hmac.compare_digest(row.refresh_digest, token_digest) or (previous and previous.session_id == row.id):
+                await self.repository.revoke(row.id, int(time.time()))

@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 
 
 class BrowserAuthSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SHRECKNET_BROWSER_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="SHRECKNET_BROWSER_", extra="ignore", hide_input_in_errors=True)
 
     enabled: bool = False
     secret: str = ""
@@ -28,8 +28,10 @@ class BrowserAuthSettings(BaseSettings):
             from urllib.parse import urlsplit
             for origin in self.allowed_origins:
                 url = urlsplit(origin)
-                if not url.netloc or url.path or url.query or url.fragment or url.username:
+                if not url.netloc or url.path or url.query or url.fragment or url.username or "*" in origin:
                     raise ValueError("Invalid browser authentication origin")
+                if not self.secure_cookies and url.hostname not in {"localhost", "127.0.0.1", "::1"}:
+                    raise ValueError("Insecure cookies are restricted to loopback development")
                 if url.scheme != "https" and (self.secure_cookies or url.hostname not in {"localhost", "127.0.0.1", "::1"}):
                     raise ValueError("HTTP cookies are restricted to explicit loopback development")
         return self

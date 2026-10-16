@@ -2,6 +2,10 @@
 
 Welcome to the Shrecknet documentation! This directory contains all organized documentation for the project.
 
+## Authentication
+
+- [Browser authentication and sessions](API/BROWSER_AUTHENTICATION.md) — ShreckOS cookie contracts, eligibility, rotation/revocation, private configuration, migration, and SDK integration
+
 ## CharacterAgent
 
 - [Weighted trait evidence embodiment plan](./Agents/CharacterAgent/Weighted%20Trait%20Evidence%20Embodiment%20Plan.md) — implementation record for compact Stage 3, weighted scoring, baseline/evolving cross-scene Steadiness, and event deduplication; live evaluation and pilot remain pending

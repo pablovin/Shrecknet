@@ -36,9 +36,7 @@ class AuthSessionRepository:
     async def rate_limit(self, key: str, now: int, window: int, maximum: int) -> bool:
         # Expired counters can be replaced; unique-key upsert serializes increments.
         await self.session.execute(delete(AuthRateLimit).where(AuthRateLimit.expires_at <= now))
-        # AsyncSessionCompat exposes a synchronous query session; genuine AsyncSession
-        # supplies get_bind directly. Both database adapters support this path.
-        bind = self.session._session.get_bind() if hasattr(self.session, "_session") else self.session.get_bind()
+        bind = self.session.get_bind()
         insert = postgres_insert if bind.dialect.name == "postgresql" else sqlite_insert
         stmt = insert(AuthRateLimit).values(key=key, count=1, expires_at=now + window)
         await self.session.execute(stmt.on_conflict_do_update(index_elements=["key"], set_={"count": AuthRateLimit.count + 1}))
@@ -48,7 +46,7 @@ class AuthSessionRepository:
 
     async def cleanup(self, now: int) -> None:
         await self.session.execute(delete(AuthRateLimit).where(AuthRateLimit.expires_at <= now))
-        await self.session.execute(update(AuthRotation).where(AuthRotation.rotated_at <= now - 30).values(replacement=None))
+        await self.session.execute(update(AuthRotation).where(AuthRotation.rotated_at <= now - 30, AuthRotation.replacement.is_not(None)).values(replacement=None))
         # Rotation digests stay until their family's absolute lifetime ends so
         # older refresh credentials can still trigger reuse detection.
         expired = select(AuthSession.id).where(AuthSession.absolute_expires_at <= now)

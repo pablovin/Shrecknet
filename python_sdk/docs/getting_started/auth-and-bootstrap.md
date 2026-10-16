@@ -19,3 +19,12 @@ Use [01_register_and_login.py](../../../python_sdk/examples/01_login_and_user_cr
 ## Deprecated naming note
 
 `_bootstrap.py` was used earlier and is now deprecated/removed. `0_user_registration.py` is the canonical bootstrap helper.
+
+
+## Opt-in browser sessions
+
+Legacy `Shrecknet.login()` remains bearer-based. For an enabled browser-session deployment, use `BrowserAuthAPI(sdk.client, "https://os.example.com")`. It uses the HTTPX client's in-memory cookie jar and explicit Origin/CSRF headers. Call `login(identifier, password, remember_me=False)`, `register(...)`, `refresh(request_id=None)`, or `logout()`; verify/resend helpers are also available. A successful login/registration/renewal updates the shared client bearer token, while logout clears it and revokes the cookie session. Nothing is saved to disk.
+
+Reuse a refresh request ID only to recover the same lost response within 30 seconds. The SDK does not automatically retry passwords or implement browser-tab coordination. An unknown/expired session needs a new login. New browser registration requires a 12-character password and never bootstraps the first admin; approval/verification outcomes must be handled explicitly.
+
+See the [canonical browser API contract](../../../Documentation/API/BROWSER_AUTHENTICATION.md) for private deployment settings, origin/cookie rules, rate limits, errors, revocation, and migration.

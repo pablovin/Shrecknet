@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config_store import get_settings
@@ -31,6 +32,10 @@ class AsyncSessionCompat:
     # Sync-style helpers often used directly by service code.
     def add(self, instance: object) -> None:
         self._session.add(instance)
+
+    def get_bind(self) -> Engine | Connection:
+        """Expose the SQLAlchemy dialect without leaking the wrapped session."""
+        return self._session.get_bind()
 
     def add_all(self, instances: list[object]) -> None:
         self._session.add_all(instances)

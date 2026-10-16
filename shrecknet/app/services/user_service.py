@@ -105,6 +105,10 @@ class UserService:
 
         # Verify password
         if not await asyncio.to_thread(verify_password, password, user.hashed_password):
+            if not user.hashed_password.startswith("$argon2id$"):
+                # Legacy SHA verification must not make a wrong-password account
+                # observably cheaper than the unknown-account dummy work.
+                await asyncio.to_thread(get_password_hash, password)
             return None, "invalid_credentials"
 
         failure = account_login_failure(user)

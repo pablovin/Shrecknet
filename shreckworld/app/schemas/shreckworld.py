@@ -138,6 +138,9 @@ class EmbeddingJobRead(BaseModel):
     @computed_field
     @property
     def elapsed_seconds(self) -> float:
+        metrics = self.metrics
+        if self.started_at is not None and metrics and metrics.phase_seconds:
+            return round((self.processing_seconds or 0) + (self.queue_wait_seconds or 0), 3)
         end = self.completed_at or datetime.now(timezone.utc)
         return round(max(0, (_utc(end) - _utc(self.created_at)).total_seconds()), 3)
 
@@ -146,6 +149,14 @@ class EmbeddingJobRead(BaseModel):
     def processing_seconds(self) -> float | None:
         if self.started_at is None:
             return None
+        metrics = self.metrics
+        if metrics and metrics.phase_seconds:
+            # Worker checkpoints use a monotonic clock. Wall-clock adjustments
+            # must not rewrite measured parsing/inference durations.
+            measured = sum(metrics.phase_seconds.values())
+            if self.completed_at is None and self.updated_at is not None:
+                measured += max(0, (datetime.now(timezone.utc) - _utc(self.updated_at)).total_seconds())
+            return round(measured, 3)
         end = self.completed_at or datetime.now(timezone.utc)
         return round(max(0, (_utc(end) - _utc(self.started_at)).total_seconds()), 3)
 

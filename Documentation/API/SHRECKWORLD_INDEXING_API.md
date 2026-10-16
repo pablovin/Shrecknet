@@ -60,6 +60,13 @@ and `completed_at` remain. All timestamps are explicit UTC. Additive fields:
 | `queue_wait_seconds` | Creation to start; grows while queued; `null` for historical finished jobs lacking start data |
 | `metrics` | Structured diagnostics below, or `null` before worker start/for historical jobs |
 
+When phase measurements exist, `processing_seconds` sums the worker's monotonic
+`phase_seconds`, avoiding clock adjustments during parsing or inference. While
+running, it extrapolates from the last `updated_at` checkpoint with nonnegative
+wall-clock time. `elapsed_seconds` adds queue wait to that measured duration.
+Historical jobs without measurements retain timestamp-based timing. Phase totals
+exclude small gaps between phases and final commit overhead.
+
 `status` is `queued`, `running`, `completed`, or `failed`. Example completed job
 with illustrative counts/timings (not a benchmark):
 

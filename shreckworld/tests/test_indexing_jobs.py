@@ -212,3 +212,22 @@ def test_schema_upgrade_is_idempotent_and_preserves_historical_jobs(api):
     with session_factory()() as session:
         old = EmbeddingJobRead.model_validate(session.get(ShreckWorldEmbeddingJob, "old"))
         assert old.elapsed_seconds == 6 and old.processing_seconds is None and old.metrics is None
+
+
+def test_measured_processing_survives_wall_clock_adjustments():
+    import json
+    start = datetime(2026, 10, 15, 12, tzinfo=timezone.utc)
+    job = EmbeddingJobRead(
+        id="job", library_item_id="item", status="completed", progress=100, detail=None,
+        created_at=start - timedelta(seconds=2), started_at=start,
+        completed_at=start + timedelta(seconds=10), updated_at=start + timedelta(seconds=10),
+        metrics_json=json.dumps({"phase": "completed", "phase_seconds": {"parsing": 30, "embedding": 20.5}}),
+    )
+    assert job.processing_seconds == 50.5
+    assert job.elapsed_seconds == 52.5
+    # A backward wall-clock jump cannot make recorded work disappear.
+    live = job.model_copy(update={"status": "running", "completed_at": None,
+                                  "updated_at": datetime.now(timezone.utc) + timedelta(hours=1)})
+    assert live.processing_seconds == 50.5
+    live = live.model_copy(update={"updated_at": datetime.now(timezone.utc) - timedelta(seconds=3)})
+    assert 53.5 <= live.processing_seconds < 54.5

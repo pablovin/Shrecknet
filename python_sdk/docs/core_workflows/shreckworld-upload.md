@@ -31,6 +31,9 @@ returned job `id`. Poll `GET /admin/shreckworlds/{world_id}/library-items/{item_
 with the same manager token. Use `processing_seconds`, `progress`, and
 `metrics.phase`/counts/warnings to display work; stop at `completed` or `failed`.
 The existing `/index-status` endpoint returns the latest attempt instead.
+Processing time prefers recorded monotonic phase durations; while running it
+estimates time since the last checkpoint. See the
+[job timing contract](../../../Documentation/API/SHRECKWORLD_INDEXING_API.md#job-response).
 
 Run the [polling example](../../examples/11_shreckworld/poll_indexing_job.py):
 

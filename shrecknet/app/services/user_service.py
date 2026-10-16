@@ -10,7 +10,7 @@ from typing import Iterable
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_password_hash, verify_password
+from app.core.security import get_password_hash, verify_password, password_needs_upgrade
 from app.core.config_store import UserCreationMode, get_settings
 from app.models.ontology import OntologyEntity
 from app.models.user import User, UserApprovalStatus, UserRole, user_entities
@@ -70,7 +70,7 @@ class UserService:
         user = await self.repository.create(
             {
                 **data,
-                "hashed_password": get_password_hash(password),
+                "hashed_password": await asyncio.to_thread(get_password_hash, password),
             }
         )
 
@@ -99,21 +99,20 @@ class UserService:
 
         # If still not found, authentication fails
         if not user:
+            # Match the work for an existing modern account without exposing existence.
+            await asyncio.to_thread(get_password_hash, password)
             return None, "invalid_credentials"
 
         # Verify password
-        if not verify_password(password, user.hashed_password):
+        if not await asyncio.to_thread(verify_password, password, user.hashed_password):
             return None, "invalid_credentials"
 
-        # SQLAlchemy column defaults are populated on flush, so preserve legacy
-        # in-memory model compatibility while persisted rows are always explicit.
-        approval_status = user.approval_status or UserApprovalStatus.APPROVED
-        if approval_status == UserApprovalStatus.PENDING:
-            return None, "pending_approval"
-        if approval_status != UserApprovalStatus.APPROVED:
-            return None, "account_not_approved"
-        if getattr(get_settings(), "email_verification_enabled", False) and user.email_verified_at is None:
-            return None, "email_not_verified"
+        failure = account_login_failure(user)
+        if failure:
+            return None, failure
+        if password_needs_upgrade(user.hashed_password):
+            await self.repository.update(user, {"hashed_password": await asyncio.to_thread(get_password_hash, password)})
+            await self.session.commit()
 
         return user, None
 
@@ -215,8 +214,11 @@ class UserService:
 
         update_payload = data.copy()
         if new_password:
-            update_payload["hashed_password"] = get_password_hash(new_password)
+            update_payload["hashed_password"] = await asyncio.to_thread(get_password_hash, new_password)
 
+        if new_password or "email" in data or "role" in data:
+            from app.repositories.auth_sessions import AuthSessionRepository
+            await AuthSessionRepository(self.session).revoke_user(user.id, int(datetime.now(timezone.utc).timestamp()))
         updated = await self.repository.update(user, update_payload)
 
         if entity_ids is not None:
@@ -299,3 +301,15 @@ class UserCreationStoppedError(PermissionError):
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def account_login_failure(user: User) -> str | None:
+    """One eligibility predicate for password login, renewal, and protected access."""
+    approval = user.approval_status or UserApprovalStatus.APPROVED
+    if approval == UserApprovalStatus.PENDING:
+        return "pending_approval"
+    if approval != UserApprovalStatus.APPROVED:
+        return "account_not_approved"
+    if getattr(get_settings(), "email_verification_enabled", False) and user.email_verified_at is None:
+        return "email_not_verified"
+    return None

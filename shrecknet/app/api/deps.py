@@ -47,6 +47,18 @@ async def get_current_user(
         ) from exc
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if payload.get("sid"):
+        from app.core.browser_auth import get_browser_auth_settings
+        from app.services.auth_sessions import BrowserSessionService, SessionFailure
+        settings = get_browser_auth_settings()
+        if not settings.enabled:
+            raise HTTPException(status_code=401, detail="Browser sessions disabled")
+        try:
+            _, user = await BrowserSessionService(session, settings).active(str(payload["sid"]), user.id)
+        except SessionFailure as exc:
+            raise HTTPException(status_code=401, detail={"code": exc.code}) from exc
+    # Preserve existing legacy bearer behavior; new browser credentials always
+    # enforce current eligibility and revocation through their sid.
     return user
 
 

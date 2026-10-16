@@ -1,3 +1,4 @@
+from .browser_auth import BrowserAuthAPI, BrowserSession, BrowserRegistration
 from .shreckworld import ShreckWorldAPI, SelectedPassage, KnowledgeWorld, KnowledgeSource, KnowledgeCitation, KnowledgeAnswer, RuleReview, KnowledgeIndexingJob, KnowledgeJobMetrics, KnowledgeReadiness
 from .client import AsyncShrecknetClient
 from .models import *

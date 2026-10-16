@@ -387,7 +387,10 @@ async def ensure_media_cors_headers(request, call_next):
             response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
 
+from app.api.routers import browser_auth
+
 app.include_router(auth.router)
+app.include_router(browser_auth.router)
 app.include_router(users.router)
 app.include_router(worlds.router)
 app.include_router(ontologies.router)

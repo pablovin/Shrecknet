@@ -1,3 +1,4 @@
+from app.models.auth_session import AuthSession, AuthRotation, AuthRateLimit
 from app.models.agent import Agent
 from app.models.agent import agent_ontologies
 from app.models.architect import (
@@ -32,6 +33,7 @@ from app.models.world import World
 from app.models.foundry_integration import FoundryIntegration
 
 __all__ = [
+    "AuthSession", "AuthRotation", "AuthRateLimit",
     "User",
     "UserRole",
     "UserApprovalStatus",

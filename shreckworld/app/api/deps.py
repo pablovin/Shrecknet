@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -53,11 +54,33 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> ShrecknetPrincipal:
         user_id, role = str(claims.get("sub") or ""), str(claims.get("role") or "")
         if not user_id or role not in {"admin", "world_builder", "writer", "architect", "player"}:
             raise JWTError("invalid claims")
+        if claims.get("sid"):
+            _verify_browser_session(token, user_id, role)
         return ShrecknetPrincipal(user_id=user_id, role=role)
     except HTTPException:
         raise
     except JWTError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Shrecknet access token", headers={"WWW-Authenticate": "Bearer"}) from exc
+
+
+def _verify_browser_session(token: str, user_id: str, role: str) -> None:
+    """Check sid revocation live; legacy bearer credentials retain JWKS behavior."""
+    settings = get_settings()
+    # Same trusted identity owner/prefix as JWKS; no browser-controlled URL.
+    url = settings.shrecknet_jwks_url.rsplit("/", 1)[0] + "/session"
+    try:
+        request = Request(url, headers={"Authorization": f"Bearer {token}"})
+        with urlopen(request, timeout=3) as response:  # nosec: configured identity origin
+            profile = json.loads(response.read())
+        if str(profile.get("id")) != user_id or str(profile.get("role")) != role:
+            raise HTTPException(status_code=401, detail="Browser session identity changed")
+    except HTTPException:
+        raise
+    except HTTPError as exc:
+        code = 401 if exc.code in {401, 403} else 503
+        raise HTTPException(status_code=code, detail="Browser session validation failed") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Shrecknet identity service is unavailable") from exc
 
 
 def require_world_manager(principal: ShrecknetPrincipal = Depends(get_current_user)) -> ShrecknetPrincipal:

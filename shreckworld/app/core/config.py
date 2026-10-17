@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     embedding_threads: int = Field(default=4, ge=1, le=32)
     docling_artifacts_path: Path = Path("./models/docling")
     parser_heartbeat_seconds: float = Field(default=5, ge=0.1, le=60)
+    parser_cache_enabled: bool = True
+    parser_export_markdown: bool = False
+    parser_threads: int = Field(default=4, ge=1, le=32)
+    parser_layout_batch_size: int = Field(default=4, ge=1, le=64)
+    parser_table_batch_size: int = Field(default=4, ge=1, le=64)
     reranker_model_id: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     reranker_enabled: bool = True
     qdrant_url: str = "http://qdrant:6333"

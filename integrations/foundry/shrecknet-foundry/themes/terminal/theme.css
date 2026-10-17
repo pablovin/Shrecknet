@@ -1,17 +1,44 @@
 .shrecknet.theme-terminal {
-  --shrecknet-bg: #0c120d;
-  --shrecknet-panel: #152019;
-  --shrecknet-text: #d6e8cf;
-  --shrecknet-muted: #8ca38b;
-  --shrecknet-accent: #8fe36c;
-  --shrecknet-border: #42613e;
-  --shrecknet-font-ui: "Courier New", monospace;
-  --shrecknet-font-content: Georgia, serif;
+  --shrecknet-bg: #111318;
+  --shrecknet-panel: #191c23;
+  --shrecknet-surface: #222630;
+  --shrecknet-text: #f0f0f4;
+  --shrecknet-muted: #a1a5b1;
+  --shrecknet-accent: #c1a8ff;
+  --shrecknet-success: #8dc9a5;
+  --shrecknet-danger: #e58c91;
+  --shrecknet-border: #343844;
+  --shrecknet-font-ui: Inter, "Segoe UI", system-ui, sans-serif;
+  --shrecknet-font-content: Georgia, "Times New Roman", serif;
+  color-scheme: dark;
 }
 .shrecknet.theme-terminal button, .shrecknet.theme-terminal input, .shrecknet.theme-terminal select {
   background: var(--shrecknet-panel);
   border-color: var(--shrecknet-border);
   color: var(--shrecknet-text);
+}
+.shrecknet.theme-terminal button {
+  min-height: 2.25rem;
+  border-radius: .4rem;
+  font: inherit;
+}
+.shrecknet.theme-terminal button:not(:disabled):hover {
+  border-color: var(--shrecknet-accent);
+  background: var(--shrecknet-surface);
+}
+.shrecknet.theme-terminal button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+.shrecknet.theme-terminal :is(button, input, select, a):focus-visible {
+  outline: 2px solid var(--shrecknet-accent);
+  outline-offset: 2px;
+}
+.shrecknet.theme-terminal input, .shrecknet.theme-terminal select {
+  min-height: 2.25rem;
+  padding: .4rem .6rem;
+  border: 1px solid var(--shrecknet-border);
+  border-radius: .4rem;
 }
 .shrecknet-tabs { display: flex; gap: .25rem; margin: .75rem 0; border-bottom: 1px solid var(--shrecknet-border); }
 .shrecknet-tabs .is-active { color: var(--shrecknet-accent); background: var(--shrecknet-panel); }
@@ -27,3 +54,36 @@
 .shrecknet-page-scene-list { display: grid; gap: .45rem; margin: .75rem 0; }.shrecknet-page-scene-row { width: 100%; margin: 0; padding: .75rem; border: 1px solid var(--shrecknet-border); }.shrecknet-page-scene-row small { display: block; margin-top: .3rem; color: var(--shrecknet-muted); }
 .shrecknet-scene-links { margin: 1rem 0; }.shrecknet-scene-links h3 { margin-bottom: .35rem; }.shrecknet-scene-links .shrecknet-page-scene-row { width: 100%; }
 .shrecknet-timeline { border-left: 1px solid var(--shrecknet-border); margin: 1.5rem 0; padding-left: 1.25rem; }.shrecknet-timeline article { position: relative; padding: 0 0 1.25rem; overflow: hidden; }.shrecknet-timeline-marker { position: absolute; left: -1.67rem; color: var(--shrecknet-accent); }.shrecknet-timeline h4 { margin: 0 0 .3rem; }.shrecknet-timeline .shrecknet-related-grid { margin-top: .75rem; }.shrecknet-perspectives { color: var(--shrecknet-muted); }
+.shrecknet-folder, .shrecknet-page-card, .shrecknet-page-scene-row, .shrecknet-source-page { border-radius: .5rem; }
+.shrecknet-folder, .shrecknet-page-card, .shrecknet-page-scene-row, .shrecknet-source-page, .shrecknet-scene-group {
+  border-color: var(--shrecknet-border);
+  background: var(--shrecknet-panel);
+  color: var(--shrecknet-text);
+}
+.shrecknet-folder:hover, .shrecknet-page-card:hover, .shrecknet-page-scene-row:hover {
+  border-color: var(--shrecknet-accent);
+}
+.shrecknet-document-text { color: var(--shrecknet-text); line-height: 1.7; }
+.shrecknet-record { border-color: var(--shrecknet-border); }
+.shrecknet-properties div { border-left-color: var(--shrecknet-accent); border-radius: .25rem; }
+.shrecknet-notice { border-color: var(--shrecknet-danger); color: var(--shrecknet-danger); }
+.shrecknet-scene-collection header p, .shrecknet-scene-dossier header p {
+  color: var(--shrecknet-accent);
+  font-family: var(--shrecknet-font-ui);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+.shrecknet-scene-collection header form { margin: .75rem 0 1.25rem; }
+.shrecknet-scene-group { border-radius: .5rem; overflow: hidden; }
+.shrecknet-scene-group summary::before { color: var(--shrecknet-accent); }
+.shrecknet-scene-rows { max-height: min(50vh, 32rem); }
+.shrecknet-scene-row { padding: .85rem 1rem; border-color: var(--shrecknet-border); background: transparent; color: var(--shrecknet-text); }
+.shrecknet-scene-row:hover { background: var(--shrecknet-surface); }
+.shrecknet-scene-row span, .shrecknet-scene-row small { color: var(--shrecknet-muted); }
+.shrecknet-sidebar-link { cursor: pointer; }
+.shrecknet-empty { padding: .5rem 1rem; }
+@media (max-width: 700px) {
+  .shrecknet-scenes-entry, .shrecknet-source-page { width: calc(100% - 1rem); margin: .5rem; }
+  .shrecknet-scene-collection, .shrecknet-scene-dossier { padding: .5rem; }
+}

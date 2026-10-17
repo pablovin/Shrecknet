@@ -12,7 +12,13 @@
         {{#if connection.checkedAt}}<dt>Last checked</dt><dd>{{connection.checkedAt}}</dd>{{/if}}
       </dl>
       <button type="button" data-action="checkConnection">Check connection now</button>
-      <p class="shrecknet-help">A connected GM refreshes this status automatically every five minutes. The service key was used only during setup and is not stored in Foundry.</p>
+      <form class="shrecknet-form shrecknet-service-settings" data-shrecknet-submit="saveServiceUrls">
+        <h3>Connected services</h3>
+        <label>ShreckWorld API URL <input name="shreckWorldUrl" type="url" value="{{shreckWorldUrl}}" required></label>
+        <label>ShreckRPG API URL <input name="shreckRpgUrl" type="url" value="{{shreckRpgUrl}}" required></label>
+        <button type="submit">Save service URLs</button>
+      </form>
+      <p class="shrecknet-help">The browser connects directly to these APIs. Configure CORS to allow the Foundry origin. The service key was used only during setup and is not stored in Foundry.</p>
     </section>
   {{else if hasWorldChoices}}
     <form class="shrecknet-form">
@@ -25,7 +31,14 @@
           {{#each worldChoices}}<option value="{{id}}">{{name}}</option>{{/each}}
         </select>
       </label>
+      <label>ShreckWorld API URL
+        <input name="shreckWorldUrl" type="url" value="{{shreckWorldUrl}}" placeholder="https://example.com/shreckworld-api" required>
+      </label>
+      <label>ShreckRPG API URL
+        <input name="shreckRpgUrl" type="url" value="{{shreckRpgUrl}}" placeholder="https://example.com/api/shreckrpg" required>
+      </label>
       <button type="button" data-action="saveConnection">Enable connection</button>
+      <p class="shrecknet-help">Use browser-reachable HTTPS API base URLs. Each API must allow requests from this Foundry origin.</p>
     </form>
   {{else}}
     <form class="shrecknet-form">

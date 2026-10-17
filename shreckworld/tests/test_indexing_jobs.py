@@ -90,6 +90,8 @@ def test_live_progress_structural_chunks_and_final_metrics(api, runtime, monkeyp
     assert metrics["parent_chunks"] == 1 and metrics["blocks"] == 2
     assert metrics["empty_pages"] == 1 and metrics["text_pages"] == 1
     assert metrics["embedding_backend"] == "sentence_transformers"
+    assert metrics["parser_cache_hit"] is False and metrics["parser_seconds"] == {}
+    assert metrics["embedding_batch_size"] == runtime.settings.embedding_batch_size
     assert metrics["embedding_fingerprint"] == runtime.fingerprint
     assert set(metrics["phase_seconds"]) == {"validating_model", "parsing", "chunking", "embedding", "storing"}
     with session_factory()() as session:

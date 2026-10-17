@@ -13,6 +13,7 @@ import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from uuid import NAMESPACE_URL, uuid5
@@ -100,11 +101,11 @@ def _stable_id(kind: str, ingestion_id: str, value: str) -> str:
     return str(uuid5(NAMESPACE_URL, f"shrecknet:{kind}:{ingestion_id}:{value}"))
 
 
-def _atomic_json(path: Path, value: Any) -> None:
+def _atomic_json(path: Path, value: Any, *, indent: int | None = 2) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2, default=str),
+        json.dumps(value, ensure_ascii=False, indent=indent, default=str),
         encoding="utf-8",
     )
     temp.replace(path)
@@ -231,11 +232,18 @@ def _page_label_map(pdf_path: Path, page_count: int) -> dict[int, str | None]:
 class DoclingAdapter:
     """Own all interaction with Docling and return primitive/local models."""
 
-    def __init__(self, artifacts_path: str | None = None, *, device: str | None = None, log_prefix: str = "[LIBRARIAN_EMBED]", require_complete: bool = False) -> None:
+    def __init__(self, artifacts_path: str | None = None, *, device: str | None = None, log_prefix: str = "[LIBRARIAN_EMBED]", require_complete: bool = False,
+                 num_threads: int | None = None, layout_batch_size: int | None = None,
+                 table_batch_size: int | None = None, export_markdown: bool = True) -> None:
         self.artifacts_path = artifacts_path or os.getenv("DOCLING_ARTIFACTS_PATH")
         self.device = device
         self.log_prefix = log_prefix
         self.require_complete = require_complete
+        self.num_threads = num_threads
+        self.layout_batch_size = layout_batch_size
+        self.table_batch_size = table_batch_size
+        self.export_markdown = export_markdown
+        self.phase_seconds: dict[str, float] = {}
 
     def parse(self, pdf_path: Path, output_dir: Path) -> tuple[Any, dict[str, Any], str, list[dict[str, Any]], list[str]]:
         try:
@@ -250,9 +258,12 @@ class DoclingAdapter:
             raise RuntimeError("Docling is required for structured document ingestion") from exc
 
         accelerator = {}
-        if self.device is not None:
+        if self.device is not None or self.num_threads is not None:
             from docling.datamodel.accelerator_options import AcceleratorOptions
-            accelerator["accelerator_options"] = AcceleratorOptions(device=self.device)
+            accelerator["accelerator_options"] = AcceleratorOptions(**{
+                **({"device": self.device} if self.device is not None else {}),
+                **({"num_threads": self.num_threads} if self.num_threads is not None else {}),
+            })
         options = PdfPipelineOptions(
             **accelerator,
             artifacts_path=self.artifacts_path,
@@ -270,6 +281,12 @@ class DoclingAdapter:
             generate_page_images=False,
             generate_picture_images=False,
         )
+        for name in ("layout_batch_size", "table_batch_size"):
+            value = getattr(self, name)
+            if value is not None:
+                if name not in type(options).model_fields:
+                    raise RuntimeError(f"Installed Docling does not support {name}")
+                setattr(options, name, value)
         if hasattr(options.table_structure_options, "mode"):
             options.table_structure_options.mode = TableFormerMode.ACCURATE
         hierarchy = getattr(options, "heading_hierarchy_options", None)
@@ -285,6 +302,7 @@ class DoclingAdapter:
         )
         export_started = time.monotonic()
         result = converter.convert(str(pdf_path))
+        self.phase_seconds["conversion"] = time.monotonic() - export_started
         status = str(getattr(getattr(result, "status", None), "value", getattr(result, "status", "success")))
         if self.require_complete and status != "success":
             raise RuntimeError(f"Docling conversion did not succeed: {status}")
@@ -293,32 +311,19 @@ class DoclingAdapter:
             f"{self.log_prefix} step=docling_convert_complete file={pdf_path.name} "
             f"next=export_canonical_artifacts elapsed_s={time.monotonic() - export_started:.2f}"
         )
-        json_path = output_dir / "docling_document.json"
-        json_temp = output_dir / "docling_document.json.tmp"
-        document.save_as_json(
-            json_temp,
-            image_mode=ImageRefMode.PLACEHOLDER,
-            indent=2,
-        )
-        json_temp.replace(json_path)
-        print(
-            f"{self.log_prefix} step=canonical_json_written file={pdf_path.name} "
-            f"elapsed_s={time.monotonic() - export_started:.2f}"
-        )
-        canonical = json.loads(json_path.read_text(encoding="utf-8"))
-        markdown_path = output_dir / "document.md"
-        markdown_temp = output_dir / "document.md.tmp"
-        document.save_as_markdown(
-            markdown_temp,
-            image_mode=ImageRefMode.PLACEHOLDER,
-        )
-        markdown_temp.replace(markdown_path)
-        markdown = markdown_path.read_text(encoding="utf-8")
-        print(
-            f"{self.log_prefix} step=debug_markdown_written file={pdf_path.name} "
-            f"next=normalize_structured_blocks elapsed_s={time.monotonic() - export_started:.2f}"
-        )
+        started = time.monotonic()
+        canonical = document.export_to_dict()
+        _atomic_json(output_dir / "docling_document.json", canonical, indent=None)
+        self.phase_seconds["canonical_export"] = time.monotonic() - started
+        markdown = ""
+        if self.export_markdown:
+            started = time.monotonic()
+            markdown = document.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)
+            _atomic_text(output_dir / "document.md", markdown)
+            self.phase_seconds["markdown_export"] = time.monotonic() - started
+        started = time.monotonic()
         primitives = self._items_to_primitives(document)
+        self.phase_seconds["primitive_extraction"] = time.monotonic() - started
         diagnostics = self._conversion_diagnostics(result)
         print(
             f"{self.log_prefix} step=docling_artifact_export_complete file={pdf_path.name} "
@@ -512,7 +517,20 @@ def build_embedding_text(chunk: NormalizedChunk) -> str:
     return "\n".join(parts).strip()
 
 
+class TokenCountingTokenizer:
+    """Job-local, bounded counts for exact text; encode/decode remain authoritative."""
+
+    def __init__(self, tokenizer: Any, maxsize: int = 4096) -> None:
+        self.tokenizer = tokenizer
+        self.count_tokens = lru_cache(maxsize=maxsize)(lambda text: _token_count(tokenizer, text))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.tokenizer, name)
+
+
 def _token_count(tokenizer: Any, text: str) -> int:
+    if isinstance(tokenizer, TokenCountingTokenizer):
+        return tokenizer.count_tokens(text)
     try:
         encoded = tokenizer(
             text,

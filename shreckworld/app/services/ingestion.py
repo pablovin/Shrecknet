@@ -9,7 +9,7 @@ from time import monotonic
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from shreckdoc.pipeline import EMBEDDING_VERSION, _atomic_json, _sha256, _token_count, build_chunks
+from shreckdoc.pipeline import EMBEDDING_VERSION, TokenCountingTokenizer, _atomic_json, _sha256, _token_count, build_chunks
 
 from app.models import ShreckWorld, ShreckWorldDocument, ShreckWorldDocumentChunk, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem
 from app.repositories.documents import activate_document
@@ -78,6 +78,8 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         normalized = parsed.document
         metrics.parser_name, metrics.parser_version = parsed.parser_name, parsed.parser_version
         metrics.parse_quality = parsed.quality
+        metrics.parser_cache_hit = parsed.cache_hit
+        metrics.parser_seconds = parsed.phase_seconds
         metrics.warnings.extend(parsed.diagnostics)
         metrics.processed_pages = metrics.total_pages = len(normalized.pages)
         text_pages = {number for block in normalized.blocks if block.display_text.strip() and block.block_type not in {"page_header", "page_footer", "heading"} for number in block.page_numbers}
@@ -89,10 +91,11 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         scope_id, book_title, system_name = item.shreckworld_id, item.title, world.name if world else ""
         ingestion_id, source_item_id = job.id, item.id
         phase("chunking", 35, "Building structural parents and tokenizer-bounded E5 children", indeterminate=True)
+        tokenizer = TokenCountingTokenizer(embedder.tokenizer)
         chunks = with_heartbeat(lambda: build_chunks(
             document=normalized, ingestion_id=ingestion_id, library_item_id=source_item_id,
             ontology_id=scope_id, book_title=book_title, rpg_system=system_name,
-            tokenizer=embedder.tokenizer, max_embedding_tokens=embedder.token_limit,
+            tokenizer=tokenizer, max_embedding_tokens=embedder.token_limit,
         ), lambda: checkpoint(force=True))
         children = [chunk for chunk in chunks if chunk.chunk_role == "child"]
         parents = {chunk.chunk_id for chunk in chunks if chunk.chunk_role == "parent"}
@@ -111,11 +114,13 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
                     and block.block_type not in {"page_header", "page_footer", "heading"}}
         if required - represented:
             raise ValueError(f"Tokenizer context excluded {len(required - represented)} text blocks; refusing an incomplete activation")
+        token_counts = {child.chunk_id: _token_count(tokenizer, child.embedding_text) for child in children}
         metrics.parent_chunks, metrics.total_chunks = len(parents), len(children)
         item.index_status = "embedding"
         phase("embedding", 50, "Encoding contextual E5 children")
         vectors: dict[str, list[float]] = {}
         batch_size = embedder.settings.embedding_batch_size
+        metrics.embedding_batch_size = batch_size
         for offset in range(0, len(children), batch_size):
             batch = children[offset:offset + batch_size]
             # The encoder checks token length and every vector immediately before
@@ -136,7 +141,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
             section_id=chunk.parent_section_id, content_type=chunk.content_type,
             embedding_text=chunk.embedding_text, heading_path=chunk.heading_path,
             source_block_ids=chunk.source_block_ids, page_numbers=chunk.physical_page_numbers,
-            token_count=_token_count(embedder.tokenizer, chunk.embedding_text) if chunk.embedding_eligible else None,
+            token_count=token_counts.get(chunk.chunk_id),
         ) for chunk in chunks]
         document = ShreckWorldDocument(id=job.id, library_item_id=item.id,
             source_sha256=item.source_sha256, parser_name=parsed.parser_name, parser_version=parsed.parser_version,

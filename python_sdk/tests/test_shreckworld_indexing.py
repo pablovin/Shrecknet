@@ -22,7 +22,8 @@ def test_indexing_polling_and_readiness_preserve_model_diagnostics_and_auth():
                     "created_at": "2026-10-15T12:00:00Z", "processing_seconds": 12.5,
                     "metrics": {"phase": "completed", "embedding_backend": "sentence_transformers",
                                 "embedding_fingerprint": "a" * 64, "parent_chunks": 4, "total_chunks": 10,
-                                "phase_seconds": {"parsing": 10.0, "embedding": 2.5}}})
+                                "parser_cache_hit": True, "parser_seconds": {"cache_lookup": 0.1},
+                                "embedding_batch_size": 32, "phase_seconds": {"parsing": 10.0, "embedding": 2.5}}})
             await sdk.shreckworld._transport._client.aclose()
             sdk.shreckworld._transport._client = httpx.AsyncClient(base_url="http://world.test", transport=httpx.MockTransport(handler))
             assert (await sdk.shreckworld.readiness()).embedding.dimension == 384
@@ -30,6 +31,9 @@ def test_indexing_polling_and_readiness_preserve_model_diagnostics_and_auth():
             result = await sdk.shreckworld.indexing_job("world/a", "book/a", job_id=job.id)
             assert result.metrics.embedding_fingerprint == "a" * 64
             assert result.processing_seconds == 12.5 and result.metrics.parent_chunks == 4
+            assert result.metrics.parser_cache_hit is True
+            assert result.metrics.parser_seconds == {"cache_lookup": 0.1}
+            assert result.metrics.embedding_batch_size == 32
             assert "/world%2Fa/library-items/book%2Fa/index-jobs/job%2Fa" in calls[-1]
             await sdk.shreckworld.indexing_job("world/a", "book/a")
             assert calls[-1].endswith("/index-status")

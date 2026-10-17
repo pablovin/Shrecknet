@@ -1,16 +1,22 @@
 # Shrecknet Foundry Module
 
-Read-only Shrecknet World browsing for Foundry VTT 14 and later. This directory
-is self-contained so it can become its own repository without imports from the
-Shrecknet backend repository.
+Shrecknet Atlas, Elder, ShreckWorld, and Chronicle workspaces for Foundry VTT 14
+and later. The resizable ShreckOS-style workspace keeps its navigation available
+while browsing. This directory is self-contained so it can become its own
+repository without imports from the Shrecknet backend repository.
 
 ## Connect a World
 
 1. Create an integration key on Shrecknet with `POST /config/integrations/foundry`.
 2. As a Foundry GM, open **Game Settings → Configure Settings → Shrecknet Connection**.
-3. Enter the Shrecknet API base URL (for the production proxy, `https://shrecknet.club/backend_api`) and key, then test the connection. The verified state presents the permitted Shrecknet Worlds directly in this panel. Select one and choose **Enable connection**.
+3. Enter the Shrecknet API base URL (for the production proxy, `https://shrecknet.club/backend_api`) and key, then test the connection. The verified state presents the permitted Shrecknet Worlds directly in this panel. Select one and configure the browser-reachable ShreckWorld and ShreckRPG API base URLs before choosing **Enable connection**.
 4. The enabled connection is checked immediately and every five minutes while a GM is connected; the panel shows its shared online/offline status and permits a manual check.
 5. Each Foundry player opens **Shrecknet Worlds** using the Worlds-globe control and signs in with their own Shrecknet account. Their sign-in persists on that browser until they use **Sign out**, the token expires, or it is revoked.
+The service URL defaults use the Shrecknet API host at `/shreckworld-api` and
+`/api/shreckrpg`; a GM can change them later.
+
+After changing service URLs, close and reopen the Shrecknet workspace so its
+client uses the updated world settings.
 
 The setup key is deliberately never written to a Foundry setting. It is used
 only to validate the server and list Worlds during the GM setup action. User
@@ -19,12 +25,21 @@ other Foundry users. A player remains signed in after closing or reloading the
 Foundry table until they choose **Sign out**, their token expires, or it is
 revoked.
 
+ShreckWorld and ShreckRPG calls use the signed-in player's Shrecknet bearer
+token. The module does not store or use a shared service token. Configure both
+services to allow the Foundry browser origin and the necessary authorization,
+content-type, GET, POST, PUT, DELETE, and OPTIONS requests.
+
 ## Architecture
 
 - `scripts/api/` is the only HTTP client and calls existing Shrecknet routes.
 - `scripts/apps/` owns Foundry UI state.
 - `scripts/navigation/` owns Back/Forward/Home state.
 - `templates/` owns markup; `themes/` and `styles/` own visual presentation.
+- The workspace provides persistent Atlas and Narrative Scenes navigation,
+  search, browser history, and an independently scrollable content area. Its
+  layout adapts to narrow Foundry windows and uses system UI typography,
+  restrained ShreckOS colors, and visible keyboard focus.
 
 The only new Shrecknet routes are the Foundry setup-key endpoints. Content routes
 are intentionally reused rather than mirrored.
@@ -57,9 +72,59 @@ Scene details present their source, related records, and milestone relations as
 image cards. When a scene has an adjacent scene in its source-page ordering, the
 detail view provides direct Previous scene and Next scene links.
 
-## v0.1 limits
+## Connected workspaces
 
-The module is read-only. It does not create Foundry Actors, Items, Journals, or
-Canvas Scenes, does not sync content, and does not implement Companion or
-Character Agent interaction. "Narrative Scene" always means a Shrecknet
-narrative resource, not a Foundry Canvas Scene.
+- **Elder** lists Elders assigned to the connected Atlas ontologies. It can
+  include the currently viewed Atlas record or Narrative Scene as context.
+  Conversations are private to the signed-in Shrecknet user and display returned
+  history and citations.
+- **ShreckWorld** lists accessible knowledge worlds and source metadata. Queries
+  search all sources or one selected source. Results show the backend answer and
+  extractive citations; evidence is not presented as an Elder-generated answer.
+- **Chronicles** supports reading, creating, editing, sharing, and deleting
+  documents according to the signed-in user's ShreckRPG permissions. Sharing
+  controls appear only when the backend grants the `share` capability. Saves use
+  `revision` for optimistic conflict detection. Chronicle `game_id` is not
+  mapped to Foundry.
+- Chronicle images are fetched with the authorized player session. A GM reveal
+  or chat share uploads protected images to Foundry-managed storage first; a
+  protected ShreckRPG asset URL or bearer token is never broadcast through the
+  Foundry socket.
+
+## API routes used
+
+All routes below use the base URL configured for their service. The ShreckWorld
+base defaults to `/shreckworld-api`; the ShreckRPG base defaults to
+`/api/shreckrpg`.
+
+- Atlas Elder: `GET /ontologies/{ontology_id}/elders`,
+  `GET /jobs/elder/chats/?agent_id={agent_id}&limit=100&offset=0`,
+  `GET /jobs/elder/chats/{chat_id}?include_history=true`,
+  `POST /jobs/elder/chats/`, and `POST /jobs/elder/{agent_id}/query` with
+  `query`, `mode`, `include_trace`, `chat_id`, and the optional contextual
+  `instance_id`.
+- ShreckWorld: `GET /shreckworlds`,
+  `GET /shreckworlds/{shreckworld_id}/library-items`,
+  `GET /shreckworlds/{shreckworld_id}/library-items/{library_item_id}/cover`,
+  and `POST /shreckworlds/{shreckworld_id}/query` with the optional
+  `library_item_id` source scope.
+- Chronicles: `GET` and `POST /chronicles`,
+  `GET`, `PUT`, and `DELETE /chronicles/{chronicle_id}`,
+  `GET /chronicles/recipients`,
+  `POST /chronicles/{chronicle_id}/assets`, and the protected asset `GET`
+  using the URL returned by the upload route. Chronicle updates send
+  `expected_revision` and, when permitted, `share_user_ids`.
+
+## Current limits
+
+The module does not create Foundry Actors, Items, Journals, or Canvas Scenes and
+does not synchronize Atlas data. ShreckWorld visibility follows the service's
+authenticated API policy; Foundry does not add a per-world access-control layer.
+Companion and Character Agent interaction are not implemented. "Narrative
+Scene" always means a Shrecknet narrative resource, not a Foundry Canvas Scene.
+
+## Module checks
+
+From this directory, run `node --test tests/api-client.test.mjs` to exercise the
+service URL, authorization, Elder pagination, ShreckWorld query, and Chronicle
+revision/asset request contracts.

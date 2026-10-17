@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import time
+from pathlib import Path
 
 import httpx
 
@@ -18,6 +19,7 @@ def main() -> None:
     parser.add_argument("--item-id", required=True)
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--timeout", type=float, default=600, help="Polling deadline in seconds")
+    parser.add_argument("--result-file", type=Path, help="Save the terminal job JSON for timing comparisons")
     args = parser.parse_args()
     path = f"/admin/shreckworlds/{args.world_id}/library-items/{args.item_id}/index-jobs/{args.job_id}"
     deadline = time.monotonic() + args.timeout
@@ -30,6 +32,8 @@ def main() -> None:
             response.raise_for_status()
             job = response.json()
             print(json.dumps(job), flush=True)
+            if job["status"] in {"failed", "completed"} and args.result_file:
+                args.result_file.write_text(json.dumps(job, indent=2) + "\n", encoding="utf-8")
             if job["status"] == "failed":
                 raise SystemExit(job["detail"] or "Indexing failed")
             if job["status"] == "completed":

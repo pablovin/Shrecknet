@@ -127,6 +127,9 @@ class KnowledgeJobMetrics(BaseModel):
     embedding_model: str | None = None
     warnings: list[str] = Field(default_factory=list)
     phase_seconds: dict[str, float] = Field(default_factory=dict)
+    parser_cache_hit: bool | None = None
+    parser_seconds: dict[str, float] = Field(default_factory=dict)
+    embedding_batch_size: int | None = None
 
 
 class KnowledgeIndexingJob(BaseModel):

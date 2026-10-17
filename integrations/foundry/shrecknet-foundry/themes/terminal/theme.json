@@ -1,6 +1,6 @@
 {
   "id": "terminal",
-  "name": "Shrecknet Terminal",
+  "name": "ShreckOS",
   "css": "themes/terminal/theme.css",
   "icons": "themes/terminal/icons/"
 }

@@ -476,7 +476,11 @@ def _load_settings_from_db(conn: sqlite3.Connection) -> dict[str, Any]:
 
 def _seed_defaults_if_needed(conn: sqlite3.Connection) -> dict[str, Any]:
     defaults = _default_settings_dict()
-    existing = _load_settings_from_db(conn)
+    existing = {
+        key: value
+        for key, value in _load_settings_from_db(conn).items()
+        if key not in BOOTSTRAP_ENV_FIELDS
+    }
     if LEGACY_VALIDATION_RETRIES in existing:
         normalized = normalize_validation_retry_settings(existing)
         # Validate before persisting and before seeding the canonical default.

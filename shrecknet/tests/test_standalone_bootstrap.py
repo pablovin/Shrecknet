@@ -178,6 +178,45 @@ def test_config_store_overrides_non_bootstrap_env_but_not_bootstrap_env(
     assert reloaded.database_url == env_db_url
 
 
+def test_persisted_bootstrap_keys_do_not_override_runtime_secret_files(
+    monkeypatch, tmp_path
+) -> None:
+    from app.core.runtime_secrets import provision_runtime_secrets
+
+    monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SHRECKNET_RUNTIME_SECRETS_DIR", str(tmp_path / "runtime-secrets"))
+    for name in (
+        "SHRECKNET_BROWSER_SECRET",
+        "SHRECKNET_JWT_PRIVATE_KEY_PEM",
+        "SHRECKNET_JWT_PUBLIC_KEY_PEM",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    _reset_runtime_state()
+
+    provision_runtime_secrets()
+    expected_private_key = (tmp_path / "runtime-secrets" / "jwt_private_key.pem").read_text()
+    expected_public_key = (tmp_path / "runtime-secrets" / "jwt_public_key.pem").read_text()
+
+    conn = config_store._connect()
+    try:
+        config_store._ensure_schema(conn)
+        conn.executemany(
+            f"INSERT INTO {config_store.CONFIG_TABLE} (key, value, updated_at) VALUES (?, ?, ?)",
+            [
+                ("jwt_private_key_pem", config_store._serialize_value(""), config_store._current_timestamp()),
+                ("jwt_public_key_pem", config_store._serialize_value(""), config_store._current_timestamp()),
+            ],
+        )
+        conn.commit()
+
+        settings = config_store._seed_defaults_if_needed(conn)
+    finally:
+        conn.close()
+
+    assert settings["jwt_private_key_pem"] == expected_private_key
+    assert settings["jwt_public_key_pem"] == expected_public_key
+
+
 def test_config_store_rejects_legacy_string_model_updates(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path))
     _reset_runtime_state()

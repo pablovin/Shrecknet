@@ -90,6 +90,7 @@ async def test_scene_source_does_not_fall_back_to_owning_container():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('path', [
+    '/ontologies/7/world-web',
     '/ontologies/7/scene-sources',
     '/ontologies/7/scenes',
     '/ontologies/7/scenes/secret/source',
@@ -164,3 +165,29 @@ async def test_elder_cards_are_active_world_filtered_and_omit_configuration(sess
         assert [card.id for card in cards] == ['elder-z']
         assert set(cards[0].model_dump()) == {'id', 'name', 'description', 'avatar_url'}
         assert [card.id for card in await AgentService(session).world_elder_cards(world.id, skip=1)] == ['elder-a']
+
+
+@pytest.mark.asyncio
+async def test_world_web_compact_projection_and_no_cross_world_edges():
+    graph = Graph([
+        dict(key='neo-a', id='entity:a', kind='source', name='Source', page_id='page'),
+        dict(key='neo-b', id='scene:b', kind='scene', name='Scene', page_id='container'),
+    ], [dict(source='neo-a', target='neo-b', label='DERIVED_FROM')])
+    web = await AtlasDiscoveryService(graph).world_web(ontology_id=7)
+    assert web.ontology_id == 7 and not web.truncated
+    assert web.edges[0].source == 'entity:a'
+    assert 'key' not in web.nodes[0].model_dump()
+    assert len(graph.calls) == 2
+    assert graph.calls[1][1]['membership'] == {'neo-a': True, 'neo-b': True}
+    assert 'owner.ontology_id IN' in graph.calls[0][0]
+    assert 'ScenePerspective' not in graph.calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_world_web_empty_and_explicit_payload_limit():
+    empty = Graph([])
+    assert not (await AtlasDiscoveryService(empty).world_web(ontology_id=7)).nodes
+    assert len(empty.calls) == 1
+    rows = [dict(key=str(i), id=f'entity:{i}', kind='entity', name='Node', page_id='page') for i in range(20001)]
+    web = await AtlasDiscoveryService(Graph(rows, [])).world_web(ontology_id=7)
+    assert len(web.nodes) == 20000 and web.truncated

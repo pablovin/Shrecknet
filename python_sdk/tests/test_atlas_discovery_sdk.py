@@ -96,3 +96,11 @@ async def test_folio_reads_preserve_page_identity_and_return_typed_contracts():
         "limit": 30,
         "entity_id": "node-1",
     }
+
+
+@pytest.mark.asyncio
+async def test_world_web_is_typed_and_preserves_truncation():
+    request = AsyncMock(return_value={"ontology_id": 7, "nodes": [{"id": "entity:1", "name": "A", "kind": "entity", "page_id": "page"}], "edges": [], "truncated": True})
+    web = await OntologiesAPI(SimpleNamespace(raw_request=request)).world_web(7)
+    assert web.nodes[0].page_id == 'page' and web.truncated
+    request.assert_awaited_once_with('GET', '/ontologies/7/world-web')

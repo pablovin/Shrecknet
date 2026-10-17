@@ -194,3 +194,12 @@ Performance is bounded by result size and fixed request counts, but aggregation,
 filtering, and count still depend on world size. Representative production p95
 latency and query-plan measurements remain rollout checks; local timings alone
 are not a service-level guarantee.
+
+
+## Compact World Web
+
+`GET /ontologies/{ontology_id}/world-web` uses the existing authenticated Atlas world-read policy (403 denied, 404 missing). Returns `{ontology_id, nodes, edges, truncated}`. Nodes contain `id`, `kind` (`source`, `entity`, `scene`, `milestone`), `name`, and owning `page_id`; edges contain `source`, `target`, and `label`. IDs are namespaced graph identities. Scene/milestone page links target their owning container. No narrative, embedding or private perspective fields are read.
+
+The service makes at most two Neo4j projections: world-owned entity/scene/milestone metadata and edges between admitted nodes. Edge targets must belong to that same admitted world set. Only DERIVED_FROM, CONTAINS, RELATES_TO and FOLLOWED_BY are included; reverse timeline duplicates are omitted. Responses stop at 20,000 nodes and 60,000 edges with one-row lookahead and `truncated=true` when either cap is exceeded. No global response cache or persistence migration is introduced. Startup creates the additive `ontology_instance_world_idx` on `OntologyInstance.ontology_id`; existing scene indexes are reused. Wait for the index to become ONLINE before load testing. Rollback can leave this non-destructive index in place. Profile actual production query plans and network latency before assigning a latency SLO.
+
+Python SDK: `await client.ontologies.world_web(ontology_id)` returns `AtlasWorldWeb`. Deploy backend before clients that require this additive route; rollback leaves existing scene contracts unchanged.

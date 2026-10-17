@@ -2,7 +2,7 @@
 from neo4j import AsyncSession
 
 from app.schemas.ontology_instance import SceneGraphSourcePageReference
-from app.schemas.atlas import AtlasScenePage, AtlasSceneRow, AtlasSourceCard, AtlasSourcePage
+from app.schemas.atlas import AtlasWorldWeb, AtlasScenePage, AtlasSceneRow, AtlasSourceCard, AtlasSourcePage
 
 
 # Match mixed historical string/integer world IDs without wrapping indexed properties.
@@ -132,3 +132,57 @@ class AtlasDiscoveryService:
                 "source_page": row.get("source_page"), "perspective_count": row["perspective_count"],
             }))
         return AtlasScenePage(results=rows, total=total, skip=skip, limit=limit, related_only=related_only)
+
+
+    async def world_web(self, *, ontology_id: int) -> AtlasWorldWeb:
+        """Two compact projections, no narratives, embeddings or private perspectives.
+
+        Bound payloads with lookahead; graph membership is established from world
+        owners rather than trusting endpoint properties on cross-world edges.
+        """
+        result = await self.graph_session.run("""
+            CALL {
+                MATCH (owner:OntologyInstance)-[:HAS_ENTITY]->(node:EntityInstance)
+                WHERE owner.ontology_id IN [$ontology_id, toString($ontology_id)]
+                RETURN node, owner.instance_id AS page_id,
+                       coalesce(node.name, owner.name, '') AS name,
+                       CASE WHEN EXISTS { MATCH (source:Scene)-[:DERIVED_FROM]->(node)
+                            WHERE source.ontology_id IN [$ontology_id, toString($ontology_id)] }
+                            THEN 'source' ELSE 'entity' END AS kind
+                UNION
+                MATCH (owner:OntologyInstance)-[:HAS_SCENE]->(node:Scene)
+                WHERE owner.ontology_id IN [$ontology_id, toString($ontology_id)]
+                  AND node.ontology_id IN [$ontology_id, toString($ontology_id)]
+                RETURN node, owner.instance_id AS page_id, coalesce(node.name, '') AS name, 'scene' AS kind
+                UNION
+                MATCH (owner:OntologyInstance)-[:HAS_SCENE]->(scene:Scene)-[:CONTAINS]->(node:Milestone)
+                WHERE owner.ontology_id IN [$ontology_id, toString($ontology_id)]
+                  AND scene.ontology_id IN [$ontology_id, toString($ontology_id)]
+                RETURN node, owner.instance_id AS page_id, coalesce(node.name, '') AS name, 'milestone' AS kind
+            }
+            RETURN DISTINCT elementId(node) AS key, page_id, name, kind,
+                   CASE kind WHEN 'scene' THEN 'scene:' + node.id
+                             WHEN 'milestone' THEN 'milestone:' + node.id
+                             ELSE 'entity:' + node.entity_instance_id END AS id
+            ORDER BY kind, id LIMIT 20001
+        """, ontology_id=ontology_id)
+        rows = await result.data()
+        truncated = len(rows) > 20000
+        rows = rows[:20000]
+        identities = {row['key']: row['id'] for row in rows}
+        edges = []
+        if rows:
+            result = await self.graph_session.run("""
+                UNWIND $keys AS key
+                MATCH (source) WHERE elementId(source) = key
+                MATCH (source)-[edge:DERIVED_FROM|CONTAINS|RELATES_TO|FOLLOWED_BY]->(target)
+                WHERE $membership[elementId(target)] = true
+                RETURN elementId(source) AS source, elementId(target) AS target,
+                       coalesce(edge.label, type(edge)) AS label
+                LIMIT 60001
+            """, keys=list(identities), membership={key: True for key in identities})
+            edge_rows = await result.data()
+            truncated = truncated or len(edge_rows) > 60000
+            edges = [dict(source=identities[row['source']], target=identities[row['target']], label=row['label'])
+                     for row in edge_rows[:60000]]
+        return AtlasWorldWeb(ontology_id=ontology_id, nodes=rows, edges=edges, truncated=truncated)

@@ -51,7 +51,7 @@ from app.schemas.ontology_instance import (
 )
 from app.services.audit_service import AuditService
 from app.services.background_job_service import BackgroundJobService
-from app.schemas.atlas import AtlasFolioDetailRead, AtlasSourcePage, AtlasScenePage, AtlasAuthor, AtlasRelationshipPage
+from app.schemas.atlas import AtlasWorldWeb, AtlasFolioDetailRead, AtlasSourcePage, AtlasScenePage, AtlasAuthor, AtlasRelationshipPage
 from app.services.atlas_folio_service import AtlasFolioService
 from app.schemas.agent import AgentSummary
 from app.services.agent_service import AgentService
@@ -132,6 +132,15 @@ async def get_world_elder_cards(
 ) -> list[AgentSummary]:
     """Authorized, world-filtered portraits; ordered newest first with a stable ID tie-breaker."""
     return await AgentService(service.sql_session).world_elder_cards(ontology_id, skip, limit)
+
+
+@router.get("/{ontology_id}/world-web", response_model=AtlasWorldWeb)
+async def get_world_web(
+    ontology_id: int = Path(..., ge=1),
+    reader: AtlasDiscoveryService = Depends(_atlas_reader),
+) -> AtlasWorldWeb:
+    """Compact authorized world topology, with explicit payload limits."""
+    return await reader.world_web(ontology_id=ontology_id)
 
 
 @router.get("/{ontology_id}/scene-sources", response_model=AtlasSourcePage)

@@ -141,3 +141,23 @@ class AtlasElderCard(BaseModel):
     name: str
     avatar_url: str | None = None
     description: str | None = None
+
+
+class AtlasWebNode(BaseModel):
+    id: str
+    kind: Literal["entity", "source", "scene", "milestone"]
+    name: str
+    page_id: str
+
+
+class AtlasWebEdge(BaseModel):
+    source: str
+    target: str
+    label: str
+
+
+class AtlasWorldWeb(BaseModel):
+    ontology_id: int
+    nodes: list[AtlasWebNode]
+    edges: list[AtlasWebEdge]
+    truncated: bool

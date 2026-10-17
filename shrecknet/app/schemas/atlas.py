@@ -97,3 +97,23 @@ class AtlasRelationshipPage(BaseModel):
     total: int = Field(ge=0)
     skip: int = Field(ge=0)
     limit: int = Field(ge=1, le=100)
+
+
+class AtlasWebNode(BaseModel):
+    id: str
+    kind: Literal["entity", "source", "scene", "milestone"]
+    name: str
+    page_id: str
+
+
+class AtlasWebEdge(BaseModel):
+    source: str
+    target: str
+    label: str
+
+
+class AtlasWorldWeb(BaseModel):
+    ontology_id: int
+    nodes: list[AtlasWebNode]
+    edges: list[AtlasWebEdge]
+    truncated: bool

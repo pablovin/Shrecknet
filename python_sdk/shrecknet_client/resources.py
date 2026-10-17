@@ -10,6 +10,7 @@ import httpx
 
 from .client import AsyncShrecknetClient
 from .atlas import (
+    AtlasWorldWeb,
     AtlasAuthor,
     AtlasElderCard,
     AtlasFolioDetail,
@@ -189,6 +190,11 @@ class OntologiesAPI:
             params["ontology_ids"] = ",".join(str(x) for x in ontology_ids)
         data = await self._client.raw_request("GET", "/ontologies/world-stats", params=params)
         return OntologyWorldStatsResponse.model_validate(data)
+
+    async def world_web(self, ontology_id: int) -> AtlasWorldWeb:
+        """Read compact world topology (up to 20,000 nodes and 60,000 edges)."""
+        data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/world-web")
+        return AtlasWorldWeb.model_validate(data)
 
     async def scene_sources(self, ontology_id: int, *, skip: int = 0, limit: int = 10) -> AtlasSourcePage:
         """Read distinct source cards without fetching scene or narrative bodies."""

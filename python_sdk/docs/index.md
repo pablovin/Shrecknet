@@ -9,6 +9,8 @@ Official documentation for the async Shrecknet Python SDK.
 
 ## Core Workflows
 
+- [Compact World Web](./world_web.md)
+
 - [Public user profile summaries](./core_workflows/public-user-summaries.md)
 
 - [Worlds and Ontologies](./core_workflows/worlds-and-ontologies.md)

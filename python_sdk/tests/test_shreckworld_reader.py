@@ -23,6 +23,51 @@ def test_shreckworld_reads_current_identity_and_encodes_world_scope():
     asyncio.run(scenario())
 
 
+def test_shreckworld_query_supports_multi_source_and_grounded_answer_mode():
+    async def scenario():
+        async with Shrecknet(token='token') as sdk:
+            async def handler(request):
+                import json
+                payload = json.loads(request.content)
+                assert payload['library_item_ids'] == ['book-a', 'book-b']
+                assert payload['mode'] == 'answer'
+                return httpx.Response(200, json={
+                    'shreckworld_id': 'world',
+                    'query': 'Explain',
+                    'answer': 'The source establishes this. [source-1]',
+                    'citations': [],
+                    'mode': 'answer',
+                    'answer_status': 'complete',
+                    'claims': [{
+                        'text': 'The source establishes this.',
+                        'citation_ids': ['source-1'],
+                        'kind': 'fact',
+                    }],
+                    'missing_information': [],
+                    'conflicts': [],
+                    'source_coverage': {
+                        'requested_source_count': 2,
+                        'searched_source_count': 2,
+                        'sources_without_ready_index': 0,
+                        'sources_requiring_reindex': 0,
+                    },
+                })
+            await sdk.shreckworld._transport._client.aclose()
+            sdk.shreckworld._transport._client = httpx.AsyncClient(base_url='http://world.test', transport=httpx.MockTransport(handler))
+            answer = await sdk.shreckworld.query(
+                'world', 'Explain', library_item_ids=['book-a', 'book-b'], mode='answer',
+            )
+            assert answer.answer_status == 'complete'
+            assert answer.claims[0].citation_ids == ['source-1']
+            assert answer.source_coverage is not None
+            assert answer.source_coverage.searched_source_count == 2
+            with pytest.raises(ValueError, match='either library_item_id'):
+                await sdk.shreckworld.query(
+                    'world', 'Explain', library_item_id='book-a', library_item_ids=['book-b'],
+                )
+    asyncio.run(scenario())
+
+
 def test_rule_review_retains_ambiguity_and_missing_facts():
     async def scenario():
         async with Shrecknet(token='token') as sdk:

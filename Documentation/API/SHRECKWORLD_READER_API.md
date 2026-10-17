@@ -24,14 +24,15 @@ PDF.js receives original PDFs. DOCX/Markdown/text remain original downloads; thi
 
 ## Evidence questions and selected passages
 
-`POST /shreckworlds/{world_id}/query` accepts the existing `query`, `top_k` (1–20, default 6), and `include_trace`, plus optional source scope and selection:
+`POST /shreckworlds/{world_id}/query` accepts the existing `query`, `top_k` (1–20, default 6), and `include_trace`, plus optional source scope, response mode, and selection:
 
 ```json
 {
   "query": "Which skill applies here?",
-  "library_item_id": "SOURCE_ID",
+  "library_item_ids": ["SOURCE_ID_A", "SOURCE_ID_B"],
+  "mode": "answer",
   "selection": {
-    "library_item_id": "SOURCE_ID",
+    "library_item_id": "SOURCE_ID_A",
     "source_sha256": "64-character-source-sha256",
     "page_number": 12,
     "text": "The passage selected by the reader."
@@ -39,7 +40,13 @@ PDF.js receives original PDFs. DOCX/Markdown/text remain original downloads; thi
 }
 ```
 
-Omit `library_item_id` for whole-world retrieval. Selection text is limited to 4,000 characters, the physical page number must be positive, and the selection revision must match the current source. A selected source must belong to the requested world and, when scoped to a book, to that book. Selection is untrusted retrieval context, not a model instruction or verified authoritative quote. No generated conversational synthesis is promised: the endpoint returns retrieved original passages with server-produced citations. The semantic encoder can reject queries exceeding its actual token budget; do not silently truncate quoted evidence or invent a result.
+Omit both source-scope fields for whole-world retrieval. `library_item_id` remains supported for existing callers; new callers can pass `library_item_ids` to select 1–100 distinct sources. They are mutually exclusive. Every ID must belong to the requested ShreckWorld. When a source scope is present, a selected passage must belong to that scope. Selection text is limited to 4,000 characters, the physical page number must be positive, and the selection revision must match the current source. Selection is untrusted retrieval context, not a model instruction or verified authoritative quote.
+
+`mode` is `evidence` (default, backward-compatible) or `answer`. Evidence mode performs no synthesis and retains the current extractive response. Answer mode sends the retrieved evidence to the configured ShreckLLM synthesis model and returns `answer_status` (`complete`, `partial`, or `unsupported`), structured `claims`, `missing_information`, and `conflicts`. Each claim/conflict must cite source IDs returned with the response; invalid or unknown citation IDs fail the request rather than being silently removed. The server validates output structure and citation membership, but semantic entailment of every claim is not independently proven by a second model call. Answers are marked partial and disclose coverage gaps when requested sources lack compatible indexes or retrieved passages are omitted by the evidence budget. Rule priority is not treated as proof of applicability or precedence. Synthesis does not execute game actions.
+
+`source_coverage` is always returned, including in evidence mode. Its counts distinguish requested sources, sources with retrievable active chunks, sources without a ready index, and ready sources that require reindexing for the active embedding fingerprint. Only indexed compatible sources are searched. A source may be omitted from results because it has no ready index or needs reindexing; `include_trace` adds retrieval diagnostics (`retrieval_ms`, `synthesis_ms` when answer synthesis runs, and `total_ms`) but does not change scope. Timings are request-level observations, not latency guarantees.
+
+The response also contains citations with original passages and server-produced provenance. The semantic encoder can reject queries exceeding its actual token budget; do not silently truncate quoted evidence or invent a result.
 
 Citations retain `source_id`, `library_item_id`, `title`, `page_number`, `chunk_id`, score, excerpt and authority metadata. Additive fields include `source_sha256`, document/parent IDs, printed `page_label`, page ranges, headings, `parent_excerpt`, evidence text, and provenance. When reliable page dimensions/coordinate origin are available, `rectangles` supplies `{page_number,left,top,width,height}` in top-left percentages (0–100). Rotation is applied by the reader's viewport transform. Missing or ambiguous geometry must not be represented as an exact match; old page-only citations still navigate. Changing the source revision invalidates old highlight anchors. There is no historical-file archive.
 
@@ -64,8 +71,13 @@ Rule review never executes game actions, rolls dice, or mutates character/game d
 - `409`: selected document revision changed; reopen the source.
 - `422`: invalid payload, cross-book selection, or encoder token budget exceeded.
 - `503`: semantic inference unavailable. Original-file reading remains available.
+- `503`: ShreckLLM unavailable or synthesis deadline exceeded in `mode="answer"`.
+- `502`: synthesis returned malformed structured output or invalid citation references.
+- `422`: no complete passage fits the configured synthesis evidence budget.
 
 Deploy this service API before enabling the reader frontend. These additive reader endpoints and fields need no database migration. Independent structured-ingestion/model changes may require reindexing; see the architecture/indexing guides. Rolling back the frontend or these reader routes preserves uploaded source files and management data. Unit tests use explicit model doubles and do not download model artifacts; real retrieval quality and mobile large-book performance require representative acceptance datasets/devices.
+
+For answer mode, configure `SHRECKWORLD_SHRECKLLM_BASE_URL`, `SHRECKWORLD_SYNTHESIS_PROVIDER`, and `SHRECKWORLD_SYNTHESIS_MODEL`. `SHRECKWORLD_SYNTHESIS_TIMEOUT_SECONDS` controls the job deadline, `SHRECKWORLD_SYNTHESIS_POLL_INTERVAL_SECONDS` controls status polling, and `SHRECKWORLD_SYNTHESIS_EVIDENCE_TOKEN_BUDGET` caps complete evidence passages supplied to synthesis (estimated at four characters per token). The optional `SHRECKLLM_INTERNAL_SERVICE_TOKEN` is forwarded as a bearer token for installations that protect internal ShreckLLM calls. Defaults are `http://shreckllm:8110`, `openai`, `gpt-5-nano`, 25 seconds, 0.5 seconds, and 8,000 estimated evidence tokens respectively. The default deadline fits within the Python SDK's 30-second request timeout; when increasing the server deadline, increase the SDK `Shrecknet(timeout=...)` value accordingly. Evidence mode and source reading do not require ShreckLLM availability.
 
 ## Structured semantic generations
 

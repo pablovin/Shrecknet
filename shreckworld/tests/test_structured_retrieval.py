@@ -78,6 +78,74 @@ def test_sql_semantic_fallback_is_explicit_and_book_filter_is_enforced(api, runt
     assert result["trace"]["embedding_backend"] == "sentence_transformers"
 
 
+def test_multiple_source_scope_and_query_coverage(api, runtime, monkeypatch):
+    _, one_id, one_job = queued_job(api, monkeypatch, title="One", content=b"Mounted combat uses Horsemanship.")
+    run(one_id, one_job)
+    _, two_id, two_job = queued_job(api, monkeypatch, title="Two", content=b"Mounted combat uses Riding.")
+    run(two_id, two_job)
+    _, third_id, _ = queued_job(api, monkeypatch, title="Not indexed")
+
+    result = query(api, library_item_ids=[one_id, two_id, third_id]).json()
+    assert {citation["library_item_id"] for citation in result["citations"]} == {one_id, two_id}
+    assert result["trace"]["retrieval_ms"] >= 0
+    assert result["trace"]["total_ms"] >= result["trace"]["retrieval_ms"]
+    assert result["source_coverage"] == {
+        "requested_source_count": 3,
+        "searched_source_count": 2,
+        "sources_without_ready_index": 1,
+        "sources_requiring_reindex": 0,
+    }
+
+    one_source = query(api, library_item_ids=[one_id]).json()
+    assert {citation["library_item_id"] for citation in one_source["citations"]} == {one_id}
+
+    client, headers, world_id = api
+    duplicate = client.post(
+        f"/shreckworlds/{world_id}/query", headers=headers,
+        json={"query": "Combat", "library_item_ids": [one_id, one_id]},
+    )
+    assert duplicate.status_code == 422
+    both_scope_forms = client.post(
+        f"/shreckworlds/{world_id}/query", headers=headers,
+        json={"query": "Combat", "library_item_id": one_id, "library_item_ids": [two_id]},
+    )
+    assert both_scope_forms.status_code == 422
+
+
+def test_grounded_answer_mode_returns_validated_claims_and_explicit_model_failure(api, runtime, monkeypatch):
+    _, item_id, job_id = queued_job(api, monkeypatch, content=b"Mounted combat uses Horsemanship.")
+    run(item_id, job_id)
+    _, unindexed_id, _ = queued_job(api, monkeypatch, title="Unindexed")
+    citation_id = "source-1"
+    monkeypatch.setattr(
+        "app.api.routers.shreckworlds.synthesize_grounded_answer",
+        lambda **kwargs: (
+            "Mounted combat uses Horsemanship. [source-1]",
+            "complete",
+            [{"text": "Mounted combat uses Horsemanship.", "citation_ids": [citation_id], "kind": "rule"}],
+            [],
+            [],
+            0,
+        ),
+    )
+    result = query(api, library_item_ids=[item_id, unindexed_id], mode="answer").json()
+    assert result["mode"] == "answer"
+    assert result["answer_status"] == "partial"
+    assert result["claims"][0]["citation_ids"] == [citation_id]
+    assert result["source_coverage"]["searched_source_count"] == 1
+    assert result["source_coverage"]["sources_without_ready_index"] == 1
+    assert "were not searched" in result["answer"]
+    assert result["trace"]["synthesis_ms"] >= 0
+
+    from app.services.grounded_answer import GroundedAnswerUnavailable
+    def unavailable(**kwargs):
+        raise GroundedAnswerUnavailable("ShreckLLM timeout")
+    monkeypatch.setattr("app.api.routers.shreckworlds.synthesize_grounded_answer", unavailable)
+    failed = query(api, library_item_ids=[item_id, unindexed_id], mode="answer")
+    assert failed.status_code == 503
+    assert failed.json()["detail"] == "Grounded answer synthesis is unavailable"
+
+
 def test_real_qdrant_projection_search_counts_and_retired_cleanup(api, runtime, monkeypatch):
     from app.services.retrieval_index import upsert_item_chunks, delete_document_chunks
     client = QdrantClient(":memory:")

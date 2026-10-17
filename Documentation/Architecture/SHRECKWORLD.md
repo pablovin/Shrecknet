@@ -133,8 +133,12 @@ quoted/named terms. The shared Librarian RRF merges rank positions rather than
 adding incomparable raw scores. A local cross-encoder refines up to 25 candidates;
 its optional failure preserves deterministic RRF order and is visible in trace.
 The shared diversity selector prefers distinct semantic parents/sources. Query
-`library_item_id` filtering, selected-passage revision validation, and read-only
-rule review remain supported through this same retrieval entry point.
+`library_item_id` remains available for compatibility; `library_item_ids` scopes
+retrieval to multiple sources. Omitting both searches every eligible source in
+the requested ShreckWorld. SQL activation and world membership constrain every
+retrieval branch, including Qdrant fallback. `source_coverage` distinguishes
+requested sources, indexed sources actually searched, sources without a ready
+index, and sources requiring a compatible reindex.
 
 If Qdrant is temporarily unavailable, retrieval can rank the same verified E5
 vectors from canonical SQL and reports `qdrant_fallback=true`. It never generates
@@ -146,10 +150,28 @@ identify source blocks; they do not certify exact word-level quote alignment.
 Unknown coordinate origins/dimensions produce no invented rectangles. See the
 [reader contract](../API/SHRECKWORLD_READER_API.md) for viewer behavior and errors.
 
-The endpoint currently returns extractive evidence, not an LLM-generated answer.
-Retrieval relevance and model readiness do not prove rule applicability or factual
-correctness. Rule review remains conservative and does not mutate game state.
-Web-search policy is persisted but no web provider is called.
+The query endpoint defaults to evidence mode and returns extractive evidence for
+existing clients. Answer mode sends a bounded package of complete retrieved
+passages to ShreckLLM and receives structured claims, missing information, and
+source conflicts. ShreckWorld checks the response schema and requires every claim
+and conflict to cite an ID supplied to the model; the API rejects malformed
+outputs and invalid IDs. This citation-membership check does not independently
+prove semantic entailment. Retrieval relevance and model readiness do not prove
+rule applicability or factual correctness. Rule review remains conservative and
+does not mutate game state. Web-search policy is persisted but no web provider is
+called.
+
+Synthesis uses the separately configured ShreckLLM endpoint, provider, and model.
+It does not require LLM availability for evidence mode or original-source reading.
+The evidence budget is configurable and estimated at four characters per token;
+complete passages are included or omitted as units, never truncated for synthesis.
+Timeouts, malformed model output, and oversized evidence are surfaced as explicit
+HTTP errors. Answer mode reports `partial` and describes coverage gaps when
+requested sources or retrieved passages are omitted. Optional query trace reports
+retrieval, synthesis, and total request timings for workload-specific
+measurement; these metrics are not latency guarantees. See the
+[reader API contract](../API/SHRECKWORLD_READER_API.md) for request/response
+fields, configuration, and error behavior.
 
 ## Model readiness and operation
 

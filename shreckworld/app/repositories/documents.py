@@ -15,12 +15,17 @@ from app.models import (
 )
 
 
-def active_documents(session: Session, world_id: str, fingerprint: str, library_item_id: str | None = None) -> list[ShreckWorldDocument]:
+def active_documents(
+    session: Session, world_id: str, fingerprint: str, library_item_id: str | None = None,
+    library_item_ids: list[str] | None = None,
+) -> list[ShreckWorldDocument]:
     statement = select(ShreckWorldDocument).join(ShreckWorldLibraryItem).where(
         ShreckWorldLibraryItem.shreckworld_id == world_id, ShreckWorldDocument.is_active.is_(True),
         ShreckWorldDocument.embedding_fingerprint == fingerprint)
     if library_item_id is not None:
         statement = statement.where(ShreckWorldLibraryItem.id == library_item_id)
+    elif library_item_ids is not None:
+        statement = statement.where(ShreckWorldLibraryItem.id.in_(library_item_ids))
     return list(session.scalars(statement))
 
 

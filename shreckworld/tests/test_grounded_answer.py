@@ -1,0 +1,178 @@
+from types import SimpleNamespace
+
+import pytest
+
+from app.schemas.shreckworld import ShreckWorldCitation
+from app.services.grounded_answer import (
+    EvidenceBudgetExceeded,
+    GroundedAnswerInvalid,
+    synthesize_grounded_answer,
+)
+
+
+def citation():
+    return ShreckWorldCitation(
+        source_id="source-1",
+        library_item_id="book-1",
+        title="Core Rules",
+        page_number=12,
+        chunk_id="chunk-1",
+        score=0.9,
+        excerpt="The rule excerpt.",
+        authority_tier="core_rules",
+        authority_priority=10,
+        evidence_text="The complete rule section.",
+        source_sha256="a" * 64,
+    )
+
+
+def test_grounded_answer_renders_only_claims_citing_supplied_evidence(monkeypatch):
+    from app.services import grounded_answer
+
+    monkeypatch.setattr(
+        grounded_answer,
+        "get_settings",
+        lambda: SimpleNamespace(synthesis_evidence_token_budget=8000),
+    )
+    monkeypatch.setattr(
+        grounded_answer,
+        "generate_grounded_answer",
+        lambda **kwargs: (
+            '{"status":"complete","claims":[{"text":"The rule applies.",'
+            '"citation_ids":["source-1"],"kind":"rule"}],'
+            '"missing_information":[],"conflicts":[]}'
+        ),
+    )
+
+    answer, status, claims, missing, conflicts, omitted = synthesize_grounded_answer(
+        query="What is the rule?", citations=[citation()]
+    )
+    assert answer == "The rule applies. [source-1]"
+    assert status == "complete"
+    assert claims[0].citation_ids == ["source-1"]
+    assert missing == [] and conflicts == []
+    assert omitted == 0
+
+
+def test_grounded_answer_rejects_citations_not_in_evidence(monkeypatch):
+    from app.services import grounded_answer
+
+    monkeypatch.setattr(
+        grounded_answer,
+        "get_settings",
+        lambda: SimpleNamespace(synthesis_evidence_token_budget=8000),
+    )
+    monkeypatch.setattr(
+        grounded_answer,
+        "generate_grounded_answer",
+        lambda **kwargs: (
+            '{"status":"complete","claims":[{"text":"Unsupported claim.",'
+            '"citation_ids":["source-99"],"kind":"fact"}],'
+            '"missing_information":[],"conflicts":[]}'
+        ),
+    )
+
+    with pytest.raises(GroundedAnswerInvalid, match="not supplied"):
+        synthesize_grounded_answer(query="What is the rule?", citations=[citation()])
+
+
+def test_grounded_answer_does_not_truncate_passages_to_fit_budget(monkeypatch):
+    from app.services import grounded_answer
+
+    monkeypatch.setattr(
+        grounded_answer,
+        "get_settings",
+        lambda: SimpleNamespace(synthesis_evidence_token_budget=1),
+    )
+    with pytest.raises(EvidenceBudgetExceeded, match="complete evidence passage"):
+        synthesize_grounded_answer(query="What is the rule?", citations=[citation()])
+
+
+def test_grounded_answer_reports_passages_omitted_by_budget(monkeypatch):
+    from app.services import grounded_answer
+
+    second = citation().model_copy(update={
+        "source_id": "source-2",
+        "library_item_id": "book-2",
+        "title": "Supplement",
+        "chunk_id": "chunk-2",
+        "evidence_text": "x" * 5000,
+    })
+    monkeypatch.setattr(
+        grounded_answer,
+        "get_settings",
+        lambda: SimpleNamespace(synthesis_evidence_token_budget=1000),
+    )
+    monkeypatch.setattr(
+        grounded_answer,
+        "generate_grounded_answer",
+        lambda **kwargs: (
+            '{"status":"complete","claims":[{"text":"The rule applies.",'
+            '"citation_ids":["source-1"],"kind":"rule"}],'
+            '"missing_information":[],"conflicts":[]}'
+        ),
+    )
+
+    *_, omitted = synthesize_grounded_answer(
+        query="What is the rule?", citations=[citation(), second]
+    )
+    assert omitted == 1
+
+
+def test_shreckllm_adapter_submits_and_polls_structured_job(monkeypatch):
+    from app.integrations import shreckllm
+
+    class Response:
+        def __init__(self, value):
+            self.value = value
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.value
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.headers = kwargs["headers"]
+            self.payload = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, *, json, timeout):
+            assert path == "/chat/jobs"
+            self.payload = json
+            return Response({"job_id": "job-1"})
+
+        def get(self, path, *, timeout):
+            if path == "/chat/jobs/job-1":
+                return Response({"status": "succeeded"})
+            assert path == "/chat/jobs/job-1/result"
+            return Response({"text": '{"status":"unsupported"}'})
+
+    clients = []
+
+    def make_client(**kwargs):
+        client = Client(**kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(shreckllm, "get_settings", lambda: SimpleNamespace(
+        synthesis_provider="openai", synthesis_model="gpt-5-nano",
+        shreckllm_base_url="http://llm.test", synthesis_timeout_seconds=5,
+        synthesis_poll_interval_seconds=0.1,
+    ))
+    monkeypatch.setattr(shreckllm.httpx, "Client", make_client)
+    monkeypatch.setenv("SHRECKLLM_INTERNAL_SERVICE_TOKEN", "internal-token")
+
+    result = shreckllm.generate_grounded_answer(query="Explain", evidence=[{"citation_id": "source-1"}])
+    client = clients[0]
+    assert result == '{"status":"unsupported"}'
+    assert client.headers == {"Authorization": "Bearer internal-token"}
+    assert client.payload["provider_id"] == "openai"
+    assert client.payload["model"] == "gpt-5-nano"
+    assert client.payload["response_format"] == shreckllm.GROUNDING_RESPONSE_FORMAT

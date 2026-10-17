@@ -184,7 +184,25 @@ class ShreckWorldQueryRequest(BaseModel):
     top_k: int = Field(default=6, ge=1, le=20)
     include_trace: bool = False
     library_item_id: str | None = Field(default=None, max_length=64)
+    library_item_ids: list[str] | None = Field(default=None, min_length=1, max_length=100)
+    mode: Literal["evidence", "answer"] = "evidence"
     selection: PassageContext | None = None
+
+    @field_validator("library_item_ids")
+    @classmethod
+    def unique_library_item_ids(cls, values: list[str] | None) -> list[str] | None:
+        if values is not None and (
+            any(not value or len(value) > 64 for value in values)
+            or len(set(values)) != len(values)
+        ):
+            raise ValueError("library_item_ids must contain unique, non-empty IDs of at most 64 characters")
+        return values
+
+    @model_validator(mode="after")
+    def validate_source_scope(self) -> "ShreckWorldQueryRequest":
+        if self.library_item_id is not None and self.library_item_ids is not None:
+            raise ValueError("Specify either library_item_id or library_item_ids, not both")
+        return self
 
 
 class PdfBoundingBox(BaseModel):
@@ -237,12 +255,36 @@ class ShreckWorldCitation(BaseModel):
     rectangles: list[CitationRectangle] = Field(default_factory=list)
 
 
+class GroundedClaim(BaseModel):
+    text: str = Field(min_length=1)
+    citation_ids: list[str] = Field(min_length=1)
+    kind: Literal["fact", "rule", "condition", "exception", "interpretation"]
+
+
+class GroundedConflict(BaseModel):
+    description: str = Field(min_length=1)
+    citation_ids: list[str] = Field(min_length=1)
+
+
+class QuerySourceCoverage(BaseModel):
+    requested_source_count: int = Field(ge=0)
+    searched_source_count: int = Field(ge=0)
+    sources_without_ready_index: int = Field(ge=0)
+    sources_requiring_reindex: int = Field(ge=0)
+
+
 class ShreckWorldQueryResponse(BaseModel):
     shreckworld_id: str
     query: str
     answer: str
     citations: list[ShreckWorldCitation]
     trace: dict[str, int | str | bool | float] | None = None
+    mode: Literal["evidence", "answer"] = "evidence"
+    answer_status: Literal["complete", "partial", "unsupported"] | None = None
+    claims: list[GroundedClaim] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    conflicts: list[GroundedConflict] = Field(default_factory=list)
+    source_coverage: QuerySourceCoverage
 
 
 class ActionResolutionRequest(BaseModel):

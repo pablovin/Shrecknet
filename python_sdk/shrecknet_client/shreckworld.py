@@ -85,12 +85,36 @@ class KnowledgeCitation(BaseModel):
     rectangles: list[KnowledgeRectangle] = Field(default_factory=list)
 
 
+class KnowledgeClaim(BaseModel):
+    text: str
+    citation_ids: list[str]
+    kind: Literal["fact", "rule", "condition", "exception", "interpretation"]
+
+
+class KnowledgeConflict(BaseModel):
+    description: str
+    citation_ids: list[str]
+
+
+class KnowledgeSourceCoverage(BaseModel):
+    requested_source_count: int
+    searched_source_count: int
+    sources_without_ready_index: int
+    sources_requiring_reindex: int
+
+
 class KnowledgeAnswer(BaseModel):
     shreckworld_id: str
     query: str
     answer: str
     citations: list[KnowledgeCitation]
     trace: dict[str, int | str | float | bool] | None = None
+    mode: Literal["evidence", "answer"] = "evidence"
+    answer_status: Literal["complete", "partial", "unsupported"] | None = None
+    claims: list[KnowledgeClaim] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    conflicts: list[KnowledgeConflict] = Field(default_factory=list)
+    source_coverage: KnowledgeSourceCoverage | None = None
 
 
 class RuleReview(BaseModel):
@@ -187,10 +211,19 @@ class ShreckWorldAPI:
         return [KnowledgeSource.model_validate(value) for value in values]
 
     async def query(self, world_id: str, question: str, *, library_item_id: str | None = None,
-                    selection: SelectedPassage | None = None, top_k: int = 6, include_trace: bool = False) -> KnowledgeAnswer:
+                    library_item_ids: list[str] | None = None,
+                    selection: SelectedPassage | None = None, top_k: int = 6,
+                    include_trace: bool = False,
+                    mode: Literal["evidence", "answer"] = "evidence") -> KnowledgeAnswer:
+        if library_item_id is not None and library_item_ids is not None:
+            raise ValueError("Specify either library_item_id or library_item_ids, not both")
         payload = {'query': question, 'top_k': top_k, 'include_trace': include_trace}
         if library_item_id is not None:
             payload['library_item_id'] = library_item_id
+        if library_item_ids is not None:
+            payload['library_item_ids'] = library_item_ids
+        if mode != "evidence":
+            payload['mode'] = mode
         if selection is not None:
             payload['selection'] = selection.model_dump()
         value = await self._request('POST', f'/shreckworlds/{quote(world_id, safe="")}/query', json=payload)

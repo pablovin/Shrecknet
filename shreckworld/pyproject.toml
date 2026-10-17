@@ -16,6 +16,7 @@ dependencies = [
   "PyPDF2>=3.0,<4",
   "PyMuPDF>=1.24,<2",
   "python-jose[cryptography]>=3.3,<4",
+  "httpx>=0.27,<0.29",
   "qdrant-client>=1.12,<1.13",
   "sentence-transformers>=3.4,<4",
   "docling>=2.81,<3",

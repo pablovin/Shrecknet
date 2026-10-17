@@ -36,9 +36,19 @@ uvicorn app.main:app --reload --port 8120
 ```
 
 Authenticated Shrecknet users can discover/read sources, ask evidence questions,
-and request read-only rule review. `admin` and `world_builder` manage sources and
-indexing. There is no separate password/admin token. `/health` checks liveness;
+and request read-only rule review. Query requests can select one, several, or all
+sources; evidence mode is the default, while grounded answer mode uses the
+configured ShreckLLM provider/model. `admin` and `world_builder` manage sources
+and indexing. There is no separate password/admin token. `/health` checks liveness;
 `/ready` verifies actual E5 inference and local parser-artifact presence.
+
+Answer-mode defaults are `SHRECKWORLD_SHRECKLLM_BASE_URL=http://shreckllm:8110`,
+`SHRECKWORLD_SYNTHESIS_PROVIDER=openai`, `SHRECKWORLD_SYNTHESIS_MODEL=gpt-5-nano`,
+and a 25-second synthesis deadline with an 8,000 estimated-token evidence budget. Set these environment variables to
+match the configured ShreckLLM deployment. The optional
+`SHRECKLLM_INTERNAL_SERVICE_TOKEN` is forwarded for deployments using internal
+service authentication. Evidence retrieval and original-source reading remain
+available when ShreckLLM is unavailable.
 
 Canonical contracts:
 

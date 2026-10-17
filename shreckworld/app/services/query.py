@@ -7,6 +7,7 @@ PDF reading remains independent of vector readiness.
 from __future__ import annotations
 
 import json
+import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,26 +23,42 @@ from app.integrations.reranker import get_reranker
 
 
 def query_shreckworld(session: Session, *, shreckworld_id: str, query: str, top_k: int,
-                      library_item_id: str | None = None) -> tuple[list[ShreckWorldCitation], dict]:
+                      library_item_id: str | None = None,
+                      library_item_ids: list[str] | None = None) -> tuple[list[ShreckWorldCitation], dict]:
+    if library_item_id is not None and library_item_ids is not None:
+        raise ValueError("Specify either library_item_id or library_item_ids, not both")
+    started = time.perf_counter()
     embedder = get_embedder()
     health = embedder.ensure_ready()
     fingerprint = str(health["fingerprint"])
-    documents = active_documents(session, shreckworld_id, fingerprint, library_item_id)
+    documents = active_documents(session, shreckworld_id, fingerprint, library_item_id, library_item_ids)
     document_ids = [document.id for document in documents]
     rows = child_rows(session, document_ids)
     by_id = {chunk.id: (chunk, item) for chunk, item in rows}
     eligible_items = {document.library_item_id for document in documents}
-    inventory = select(ShreckWorldLibraryItem.id).where(
-        ShreckWorldLibraryItem.shreckworld_id == shreckworld_id, ShreckWorldLibraryItem.embedding_status == "ready")
+    scope = select(ShreckWorldLibraryItem.id).where(ShreckWorldLibraryItem.shreckworld_id == shreckworld_id)
     if library_item_id is not None:
-        inventory = inventory.where(ShreckWorldLibraryItem.id == library_item_id)
-    ready_items = set(session.scalars(inventory))
+        scope = scope.where(ShreckWorldLibraryItem.id == library_item_id)
+    elif library_item_ids is not None:
+        scope = scope.where(ShreckWorldLibraryItem.id.in_(library_item_ids))
+    scoped_items = set(session.scalars(scope))
+    ready_items = set(session.scalars(
+        select(ShreckWorldLibraryItem.id).where(
+            ShreckWorldLibraryItem.id.in_(scoped_items),
+            ShreckWorldLibraryItem.embedding_status == "ready",
+        )
+    )) if scoped_items else set()
+    searched_items = {item.id for _, item in rows}
     trace = {"embedded_chunks_considered": len(rows), "returned_citations": 0, "web_search": "not_implemented",
              "pipeline": "e5_qdrant_contextual_fts_exact_rrf_cross_encoder_parent_v2",
              "embedding_backend": "sentence_transformers", "embedding_model": embedder.settings.embedding_model_id,
              "embedding_fingerprint": fingerprint, "sources_requiring_reindex": len(ready_items - eligible_items),
+             "sources_without_ready_index": len(scoped_items - ready_items),
+             "requested_sources": len(scoped_items),
+             "sources_searched": len(searched_items),
              "qdrant_fallback": False, "reranker_fallback": False}
     if not rows:
+        trace["retrieval_ms"] = round((time.perf_counter() - started) * 1000, 2)
         return [], trace
     vector = embedder.embed(query, query=True)
     try:
@@ -110,4 +127,5 @@ def query_shreckworld(session: Session, *, shreckworld_id: str, query: str, top_
         ))
     trace.update(returned_citations=len(citations), vector_candidates=len(branches["vector"]),
                  fulltext_candidates=len(branches["contextual_fts"]), exact_candidates=len(branches["exact"]))
+    trace["retrieval_ms"] = round((time.perf_counter() - started) * 1000, 2)
     return citations, trace

@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import shutil
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request, Response, status
 from fastapi.responses import FileResponse
@@ -18,14 +20,21 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import ShreckWorld, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem
 from app.schemas.shreckworld import (
-    AuthorityTier, EmbeddingJobRead, ShreckWorldCreate, ShreckWorldLibraryItemRead,
+    AuthorityTier, EmbeddingJobRead, GroundedClaim, GroundedConflict, ShreckWorldCreate, ShreckWorldLibraryItemRead,
     ShreckWorldLibraryItemUpdate, ShreckWorldQueryRequest, ShreckWorldQueryResponse,
     ShreckWorldRead, ShreckWorldUpdate, ActionResolutionRequest, ActionResolutionResponse,
+    QuerySourceCoverage,
 )
 from app.services.query import query_shreckworld
 from app.services.rule_resolution import resolve_action
 from app.services.embedding import EmbeddingInputError, EmbeddingUnavailable, get_embedder
 from app.services.document_metadata import resolve_upload_metadata
+from app.services.grounded_answer import (
+    EvidenceBudgetExceeded,
+    GroundedAnswerInvalid,
+    GroundedAnswerUnavailable,
+    synthesize_grounded_answer,
+)
 from app.services.source_lifecycle import delete_source, delete_world
 
 admin_router = APIRouter(prefix="/admin/shreckworlds", tags=["ShreckWorld admin"])
@@ -259,27 +268,91 @@ def get_indexing_job(shreckworld_id: str, item_id: str, job_id: str, session: Se
 
 @query_router.post("/{shreckworld_id}/query", response_model=ShreckWorldQueryResponse, dependencies=[Depends(get_current_user)])
 def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Session = Depends(get_db)) -> ShreckWorldQueryResponse:
+    started = time.perf_counter()
     _world_or_404(session, shreckworld_id)
     if payload.library_item_id:
         _item_or_404(session, shreckworld_id, payload.library_item_id)
+    if payload.library_item_ids is not None:
+        for item_id in payload.library_item_ids:
+            _item_or_404(session, shreckworld_id, item_id)
     if payload.selection:
         selected = _item_or_404(session, shreckworld_id, payload.selection.library_item_id)
         if selected.source_sha256 != payload.selection.source_sha256:
             raise HTTPException(status_code=409, detail="The selected document has changed. Reopen it before asking.")
         if payload.library_item_id and payload.selection.library_item_id != payload.library_item_id:
             raise HTTPException(status_code=422, detail="Selection must belong to the requested book")
+        if payload.library_item_ids is not None and payload.selection.library_item_id not in payload.library_item_ids:
+            raise HTTPException(status_code=422, detail="Selection must belong to one of the requested books")
     # Selection supplies untrusted retrieval context, never model instructions.
     retrieval_query = payload.query + (" " + payload.selection.text if payload.selection else "")
     with _semantic_errors():
         citations, trace = query_shreckworld(session, shreckworld_id=shreckworld_id, query=retrieval_query,
-                                           top_k=payload.top_k, library_item_id=payload.library_item_id)
+                                           top_k=payload.top_k, library_item_id=payload.library_item_id,
+                                           library_item_ids=payload.library_item_ids)
+    answer_status: Literal["complete", "partial", "unsupported"] | None = None
+    claims: list[GroundedClaim] = []
+    missing_information: list[str] = []
+    conflicts: list[GroundedConflict] = []
+    omitted_citations = 0
     if citations:
         answer = "Relevant ShreckWorld evidence was found: " + " ".join(f"[{citation.source_id}] {citation.excerpt}" for citation in citations)
     elif trace.get("sources_requiring_reindex"):
         answer = "Sources require reindexing with the verified semantic model before they can be searched."
     else:
         answer = "No embedded source in this ShreckWorld contains enough evidence to answer that question."
-    return ShreckWorldQueryResponse(shreckworld_id=shreckworld_id, query=payload.query, answer=answer, citations=citations, trace=trace if payload.include_trace else None)
+    if payload.mode == "answer":
+        if not citations:
+            answer_status = "unsupported"
+            missing_information = ["No compatible indexed passage was retrieved for this query."]
+            if trace["sources_without_ready_index"]:
+                missing_information.append(
+                    f"{trace['sources_without_ready_index']} requested source(s) have no ready index."
+                )
+            if trace["sources_requiring_reindex"]:
+                missing_information.append(
+                    f"{trace['sources_requiring_reindex']} requested source(s) require reindexing."
+                )
+        else:
+            synthesis_started = time.perf_counter()
+            try:
+                answer, answer_status, claims, missing_information, conflicts, omitted_citations = synthesize_grounded_answer(
+                    query=payload.query, citations=citations
+                )
+            except EvidenceBudgetExceeded as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except GroundedAnswerUnavailable as exc:
+                raise HTTPException(status_code=503, detail="Grounded answer synthesis is unavailable") from exc
+            except GroundedAnswerInvalid as exc:
+                raise HTTPException(status_code=502, detail="Grounded answer synthesis returned invalid evidence references") from exc
+            trace["synthesis_ms"] = round((time.perf_counter() - synthesis_started) * 1000, 2)
+            unavailable_sources = int(trace["sources_without_ready_index"]) + int(trace["sources_requiring_reindex"])
+            if unavailable_sources or omitted_citations:
+                if answer_status == "complete":
+                    answer_status = "partial"
+                gaps = []
+                if unavailable_sources:
+                    gaps.append(
+                        f"{unavailable_sources} requested source(s) were not searched because their indexes are unavailable or incompatible"
+                    )
+                if omitted_citations:
+                    gaps.append(
+                        f"{omitted_citations} retrieved passage(s) were omitted to fit the synthesis evidence budget"
+                    )
+                gap_text = "; ".join(gaps)
+                missing_information.append(gap_text + ".")
+                answer += "\n\nNot established by the available sources: " + gap_text + "."
+    trace["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
+    return ShreckWorldQueryResponse(
+        shreckworld_id=shreckworld_id, query=payload.query, answer=answer, citations=citations,
+        trace=trace if payload.include_trace else None, mode=payload.mode, answer_status=answer_status,
+        claims=claims, missing_information=missing_information, conflicts=conflicts,
+        source_coverage=QuerySourceCoverage(
+            requested_source_count=int(trace["requested_sources"]),
+            searched_source_count=int(trace["sources_searched"]),
+            sources_without_ready_index=int(trace["sources_without_ready_index"]),
+            sources_requiring_reindex=int(trace["sources_requiring_reindex"]),
+        ),
+    )
 
 
 @query_router.post("/{shreckworld_id}/resolve-action", response_model=ActionResolutionResponse, dependencies=[Depends(get_current_user)])

@@ -67,11 +67,7 @@ Narrative generation agent for converting notes/session material into polished s
 
 ### 2. Review first-start config
 
-Initial configuration lives in the root `configs/` folder. Browser login uses one website-address setting, `SHRECKNET_PUBLIC_ORIGIN`. It defaults to `http://localhost` for local ShreckOS on port 80; change it to your exact HTTPS domain for a public deployment. For a new install, copy `shrecknet.env.example` first; for an existing `.env`, add or update only this setting:
-
-```dotenv
-SHRECKNET_PUBLIC_ORIGIN=https://shrecknet.club
-```
+Initial configuration lives in the root `configs/` folder. Shrecknet and ShreckOS use separate Compose projects and separate environment files. Copy this repository's `shrecknet.env.example` to its root `.env` for the backend. It defaults to `http://localhost`; set its own `SHRECKNET_PUBLIC_ORIGIN` to the public HTTPS origin when deploying. ShreckOS has its own `.env.shreckos` in ShrecknetFrontend. For browser authentication to work, both files must name the same website origin, but neither Compose command loads the other repository's env file.
 
 The root Compose stack generates and persists browser-auth secrets, derives the allowed origin and secure-cookie mode from this address, and enables browser authentication automatically. Use no path or trailing slash. Initial service configuration lives in:
 

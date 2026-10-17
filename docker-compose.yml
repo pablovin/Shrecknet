@@ -10,6 +10,7 @@ x-shrecknet-image: &shrecknet-image
 
 x-shrecknet-env: &shrecknet-env
   PYTHONUNBUFFERED: "1"
+  SHRECKNET_PUBLIC_ORIGIN: ${SHRECKNET_PUBLIC_ORIGIN:-http://localhost}
   SHRECKNET_EMBEDDING_DEVICE: ${SHRECKNET_EMBEDDING_DEVICE:-cpu}
   HF_HOME: /hf-cache
   SENTENCE_TRANSFORMERS_HOME: /hf-cache/sentence_transformers
@@ -347,7 +348,8 @@ services:
     environment:
       <<: *shrecknet-env
       SHRECKNET_BROWSER_ENABLED: ${SHRECKNET_BROWSER_ENABLED:-true}
-      SHRECKNET_PUBLIC_ORIGIN: ${SHRECKNET_PUBLIC_ORIGIN:-http://localhost}
+      SHRECKNET_BROWSER_ALLOWED_ORIGINS: ""
+      SHRECKNET_BROWSER_SECURE_COOKIES: ""
     env_file:
       - ./configs/compose.env
       - ./configs/neo4j.env

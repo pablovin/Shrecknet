@@ -88,7 +88,10 @@ by source ID.
 
 Parameters: `query` (optional, up to 500 characters), `related_entity_id`,
 `source_entity_id` (optional, up to 250 characters each), `has_perspectives`
-(default false), `skip` (default 0), and `limit` (default 30, 1–100).
+(default false), `related_only` (default false), `skip` (default 0), and `limit`
+(default 30, 1–100). `related_only=true` requires `related_entity_id` and matches
+only `RELATES_TO` edges on the scene or its milestones; it excludes provenance
+`DERIVED_FROM` edges. The default related filter continues to match either edge.
 
 Returns `{results, total, skip, limit}`. Each result has:
 
@@ -134,6 +137,39 @@ world authorization precede listing. Agent chat/query authorization remains
 service-owned. Existing `DELETE /jobs/elder/chats/{chat_id}` deletes only the
 caller's chat and messages, returning `204`; inaccessible/missing chats return
 `404`.
+
+## Living Folio page reads
+
+The following authenticated reads use the same world graph-access policy above.
+Their `page_id` is an ontology-instance page ID, never an entity-instance ID.
+Unavailable pages return `404` after world authorization.
+
+### `GET /ontologies/{ontology_id}/pages/{page_id}/folio`
+
+Returns the page identity and its bounded entity/narrative content using the
+existing `OntologyInstanceRead` fields, plus
+`folio_projection: {"scenes": "omitted", "relationships": "omitted"}`.
+`scenes` and each entity's `relationships` are empty in this projection; the
+marker distinguishes omitted data from an actually empty collection. Fetch
+relationships from the dedicated endpoint and scenes from the scene index.
+
+### `GET /ontologies/{ontology_id}/pages/{page_id}/authors`
+
+Returns distinct public `{id, type, display_name, avatar_url}` author summaries
+for the page. Missing author profiles are not exposed as identity data.
+
+### `GET /ontologies/{ontology_id}/pages/{page_id}/relationships`
+
+Parameters: `entity_id` (optional focus entity ID), `query` (optional, up to 500
+characters), `group` (optional relationship group key), `skip` (default 0), and
+`limit` (default 30, 1–100). Returns `{results, groups, total, skip, limit}`.
+Rows preserve relationship direction and focus entity, and their `target.page_id`
+identifies the target's owning page separately from `target.entity_id`.
+
+These endpoints are additive. They do not change existing full instance reads.
+The Folio detail projection does not include scene bodies or relationship
+collections; relationship reads return only the requested page and never a
+full-world graph.
 
 ## Discovery operations and compatibility
 

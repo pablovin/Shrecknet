@@ -24,8 +24,10 @@ job is started. Its rules are:
 
 - PDF: read `Title`, `Author`, and `Subject`, with XMP `dc:title`, `dc:creator`,
   and `dc:description` as fallbacks. Multiple XMP creators are joined with commas.
-- PDF image: render the first page as PNG, at most 1200 pixels on its longest
-  side. This is a cover preview, not an image stored in document metadata.
+- PDF image: render the first page as PNG; the shared image processor stores it
+  within the 640 × 480 maximum while preserving aspect ratio. This is a cover
+  preview, not an image stored in document metadata. See the
+  [image upload policy](./MEDIA_UPLOADS.md).
 - DOCX: read `dc:title`, `dc:creator`, and `dc:description` from
   `docProps/core.xml`. No DOCX cover rendering is performed.
 - Markdown and text: no embedded metadata extraction or cover rendering.

@@ -1095,7 +1095,9 @@ class OntologyInstanceService:
         # This will be implemented in a future update
         return []
 
-    async def get_instance(self, instance_id: str) -> OntologyInstanceRead:
+    async def get_instance(
+        self, instance_id: str, *, include_scenes: bool = True, include_relationships: bool = True,
+    ) -> OntologyInstanceRead:
         record = await self.graph_session.run(
             """
             MATCH (i:OntologyInstance {instance_id: $instance_id})
@@ -1169,40 +1171,41 @@ class OntologyInstanceService:
                 entity_data["agent_id"] = None
                 entity_data["agent_name"] = None
 
-        relationships_result = await self.graph_session.run(
-            """
-            MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(source:EntityInstance)
-            OPTIONAL MATCH (source)-[r]->(target:EntityInstance)
-            WHERE type(r) = 'RELATES_TO'
-            RETURN source.entity_instance_id AS source_id,
-                   properties(r)['relationship_instance_id'] AS relationship_instance_id,
-                   properties(r)['relationship_definition_id'] AS definition_id,
-                   properties(r)['destiny_entity_definition_id'] AS destiny_definition_id,
-                   properties(r)['data'] AS rel_data,
-                   target.entity_instance_id AS target_id
-            """,
-            instance_id=instance_id,
-        )
-        rel_records = await relationships_result.data()
-        for record in rel_records:
-            relationship_instance_id = record.get("relationship_instance_id")
-            if relationship_instance_id is None:
-                continue
-            source_id = record["source_id"]
-            target_id = record.get("target_id")
-            if source_id not in entities_map or target_id is None:
-                continue
-            entities_map[source_id]["relationships"].append(
-                {
-                    "relationship_instance_id": relationship_instance_id,
-                    "definition_id": record.get("definition_id"),
-                    "target_entity_id": target_id,
-                    "destiny_entity_definition_id": record.get("destiny_definition_id"),
-                    "data": json.loads(record.get("rel_data") or "{}"),
-                }
+        if include_relationships:
+            relationships_result = await self.graph_session.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(source:EntityInstance)
+                OPTIONAL MATCH (source)-[r]->(target:EntityInstance)
+                WHERE type(r) = 'RELATES_TO'
+                RETURN source.entity_instance_id AS source_id,
+                       properties(r)['relationship_instance_id'] AS relationship_instance_id,
+                       properties(r)['relationship_definition_id'] AS definition_id,
+                       properties(r)['destiny_entity_definition_id'] AS destiny_definition_id,
+                       properties(r)['data'] AS rel_data,
+                       target.entity_instance_id AS target_id
+                """,
+                instance_id=instance_id,
             )
+            rel_records = await relationships_result.data()
+            for record in rel_records:
+                relationship_instance_id = record.get("relationship_instance_id")
+                if relationship_instance_id is None:
+                    continue
+                source_id = record["source_id"]
+                target_id = record.get("target_id")
+                if source_id not in entities_map or target_id is None:
+                    continue
+                entities_map[source_id]["relationships"].append(
+                    {
+                        "relationship_instance_id": relationship_instance_id,
+                        "definition_id": record.get("definition_id"),
+                        "target_entity_id": target_id,
+                        "destiny_entity_definition_id": record.get("destiny_definition_id"),
+                        "data": json.loads(record.get("rel_data") or "{}"),
+                    }
+                )
 
-        scenes = await self.list_scenes(instance_id)
+        scenes = await self.list_scenes(instance_id) if include_scenes else []
 
         return OntologyInstanceRead(
             instance_id=instance_node["instance_id"],

@@ -426,7 +426,7 @@ class LibraryService:
                 content_type="library",
                 content_id=f"{ontology_id}/{item_id}",
                 is_main=True,
-                resize=(800, 1200),  # Max dimensions for cover
+                resize=(640, 480),
             )
 
             return cover_url

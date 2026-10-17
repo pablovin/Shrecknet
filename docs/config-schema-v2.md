@@ -21,6 +21,7 @@
 - `id`: `media_uploads`
 - `property`: `runtime`
 - `fields`: `media_root`, `media_base_url`, `media_public_url`, `max_image_upload_bytes`, `image_max_width`, `image_max_height`, `max_pdf_upload_bytes`, `library_max_pdf_bytes`
+- New installations default to a 5 MiB incoming image upload limit and a 640 × 480 maximum stored-image box. Resizing preserves aspect ratio; smaller images are not enlarged. A 640 × 480 hard ceiling applies even if an existing persisted setting or a flow-specific override specifies larger dimensions. Values below that ceiling may be set through `PUT /config`.
 
 ### Background Workers
 - `id`: `background_workers`

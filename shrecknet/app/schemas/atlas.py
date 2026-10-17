@@ -1,7 +1,9 @@
 """Bounded, card-ready Atlas discovery projections; canonical graph data stays upstream."""
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
-from app.schemas.ontology_instance import SceneGraphSourcePageReference, SceneLocalOrder
+from app.schemas.ontology_instance import OntologyInstanceRead, SceneGraphSourcePageReference, SceneLocalOrder
 
 
 class AtlasSourceCard(SceneGraphSourcePageReference):
@@ -42,8 +44,56 @@ class AtlasSceneRow(BaseModel):
 
 
 class AtlasScenePage(BaseModel):
+    related_only: bool = False
     results: list[AtlasSceneRow]
     total: int = Field(ge=0)
     skip: int = Field(ge=0)
     limit: int = Field(ge=1, le=100)
 
+
+class AtlasFolioProjectionRead(BaseModel):
+    scenes: Literal["omitted"]
+    relationships: Literal["omitted"]
+
+
+class AtlasFolioDetailRead(OntologyInstanceRead):
+    folio_projection: AtlasFolioProjectionRead
+
+
+class AtlasAuthor(BaseModel):
+    id: str
+    type: Literal["human", "agent"]
+    display_name: str
+    avatar_url: str | None = None
+
+
+class AtlasRelationshipTarget(BaseModel):
+    entity_id: str
+    page_id: str
+    definition_id: int
+    title: str
+    avatar_url: str | None = None
+
+
+class AtlasRelationshipRow(BaseModel):
+    id: str
+    definition_id: int
+    direction: Literal["incoming", "outgoing"]
+    focus_entity_id: str
+    target: AtlasRelationshipTarget
+
+
+class AtlasRelationshipGroup(BaseModel):
+    key: str
+    definition_id: int
+    direction: Literal["incoming", "outgoing"]
+    label: str | None = None
+    total: int = Field(ge=0)
+
+
+class AtlasRelationshipPage(BaseModel):
+    results: list[AtlasRelationshipRow]
+    groups: list[AtlasRelationshipGroup]
+    total: int = Field(ge=0)
+    skip: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)

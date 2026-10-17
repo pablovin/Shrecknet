@@ -16,11 +16,13 @@ _FILTERS = """
 AND ($scene_query IS NULL OR toLower(coalesce(scene.name, '')) CONTAINS $scene_query
      OR toLower(coalesce(scene.description, '')) CONTAINS $scene_query)
 AND ($related_entity_id IS NULL OR EXISTS {
-    MATCH (scene)-[:DERIVED_FROM|RELATES_TO]->(target:EntityInstance)
+    MATCH (scene)-[membership:DERIVED_FROM|RELATES_TO]->(target:EntityInstance)
     WHERE target.entity_instance_id = $related_entity_id
+      AND (NOT $related_only OR type(membership) = 'RELATES_TO')
 } OR EXISTS {
-    MATCH (scene)-[:CONTAINS]->(:Milestone)-[:DERIVED_FROM|RELATES_TO]->(target:EntityInstance)
+    MATCH (scene)-[:CONTAINS]->(:Milestone)-[membership:DERIVED_FROM|RELATES_TO]->(target:EntityInstance)
     WHERE target.entity_instance_id = $related_entity_id
+      AND (NOT $related_only OR type(membership) = 'RELATES_TO')
 })
 AND ($source_entity_id IS NULL OR EXISTS {
     MATCH (scene)-[:DERIVED_FROM]->(source:EntityInstance)
@@ -74,17 +76,17 @@ class AtlasDiscoveryService:
 
     async def scenes(self, *, ontology_id: int, query: str | None = None,
                      related_entity_id: str | None = None, source_entity_id: str | None = None,
-                     has_perspectives: bool = False, include_private: bool = False,
+                     has_perspectives: bool = False, include_private: bool = False, related_only: bool = False,
                      skip: int = 0, limit: int = 30) -> AtlasScenePage:
         arguments = dict(ontology_id=ontology_id, scene_query=(query or '').strip().lower() or None,
                          related_entity_id=related_entity_id, source_entity_id=source_entity_id,
-                         has_perspectives=has_perspectives, include_private=include_private)
+                         has_perspectives=has_perspectives, include_private=include_private, related_only=related_only)
         count = await self.graph_session.run(
             _SCENES + _FILTERS + ' RETURN count(DISTINCT scene) AS total', **arguments,
         )
         total = int((await count.single())["total"])
         if not total or skip >= total:
-            return AtlasScenePage(results=[], total=total, skip=skip, limit=limit)
+            return AtlasScenePage(results=[], total=total, skip=skip, limit=limit, related_only=related_only)
         result = await self.graph_session.run(
             _SCENES + _FILTERS + """
             WITH DISTINCT scene, owner
@@ -129,4 +131,4 @@ class AtlasDiscoveryService:
                 "instance": {"instance_id": row["instance_id"], "name": row["instance_name"]},
                 "source_page": row.get("source_page"), "perspective_count": row["perspective_count"],
             }))
-        return AtlasScenePage(results=rows, total=total, skip=skip, limit=limit)
+        return AtlasScenePage(results=rows, total=total, skip=skip, limit=limit, related_only=related_only)

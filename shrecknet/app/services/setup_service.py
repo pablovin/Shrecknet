@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
 import os
 from pathlib import Path
 
-from app.core.config_store import get_settings
+from fastapi import UploadFile
+
 from app.models.ontology import AuthorType
 from app.schemas.setup import (
     DefaultWorldEntityResult,
@@ -225,33 +227,25 @@ class SetupService:
         if not source_path.exists():
             return None
 
-        settings = get_settings()
-        dest_root = Path(settings.media_root) / "entity" / str(entity_id)
-        dest_root.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_root / "file.png"
-
-        dest_path.write_bytes(source_path.read_bytes())
-        base_url = (
-            settings.media_public_url.rstrip("/")
-            if settings.media_public_url
-            else settings.media_base_url.rstrip("/")
-        )
-        return f"{base_url}/entity/{entity_id}/file.png"
+        return await self._save_default_image(source_path, "entity", str(entity_id))
 
     async def _copy_ontology_image(self, ontology_id: int) -> str | None:
         source_path = self.default_images_root / "World.png"
         if not source_path.exists():
             return None
 
-        settings = get_settings()
-        dest_root = Path(settings.media_root) / "ontology" / str(ontology_id)
-        dest_root.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_root / "file.png"
+        return await self._save_default_image(source_path, "ontology", str(ontology_id))
 
-        dest_path.write_bytes(source_path.read_bytes())
-        base_url = (
-            settings.media_public_url.rstrip("/")
-            if settings.media_public_url
-            else settings.media_base_url.rstrip("/")
+    async def _save_default_image(
+        self, source_path: Path, content_type: str, content_id: str
+    ) -> str:
+        upload = UploadFile(
+            file=BytesIO(source_path.read_bytes()),
+            filename=source_path.name,
         )
-        return f"{base_url}/ontology/{ontology_id}/file.png"
+        return await self.media_service.save_content_image(
+            upload,
+            content_type=content_type,
+            content_id=content_id,
+            is_main=True,
+        )

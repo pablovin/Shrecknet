@@ -16,6 +16,7 @@ Official documentation for the async Shrecknet Python SDK.
 - [Ontology Content Creation](./core_workflows/ontology-content-creation.md)
 - [Search and Listing](./core_workflows/search-and-listing.md)
 - [Resolve Entities and Scene Counts](./core_workflows/resolve-entities-and-scene-counts.md)
+- [Read a Living Folio example](../examples/02_ontology_management/03_read_living_folio.py)
 
 ## Configuration
 

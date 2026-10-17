@@ -9,7 +9,15 @@ import time
 import httpx
 
 from .client import AsyncShrecknetClient
-from .atlas import AtlasSourcePage, AtlasScenePage, AtlasSourceReference, AtlasElderCard
+from .atlas import (
+    AtlasAuthor,
+    AtlasElderCard,
+    AtlasFolioDetail,
+    AtlasRelationshipPage,
+    AtlasScenePage,
+    AtlasSourcePage,
+    AtlasSourceReference,
+)
 from .errors import ArchitectPreflightError, ConfigurationReadinessError, ElderPreflightError, JobFailedError, JobTimeoutError
 from .models import (
     BackgroundJobRecord,
@@ -187,11 +195,71 @@ class OntologiesAPI:
         data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/scene-sources", params={"skip": skip, "limit": limit})
         return AtlasSourcePage.model_validate(data)
 
+    async def folio_detail(self, ontology_id: int, page_id: str) -> AtlasFolioDetail:
+        """Read bounded Living Folio detail for a page, not an entity node ID."""
+        from urllib.parse import quote
+
+        path_page_id = quote(page_id, safe="")
+        data = await self._client.raw_request(
+            "GET", f"/ontologies/{ontology_id}/pages/{path_page_id}/folio"
+        )
+        return AtlasFolioDetail.model_validate(data)
+
+    async def folio_authors(self, ontology_id: int, page_id: str) -> list[AtlasAuthor]:
+        """Read distinct public author summaries for a Folio page."""
+        from urllib.parse import quote
+
+        path_page_id = quote(page_id, safe="")
+        data = await self._client.raw_request(
+            "GET", f"/ontologies/{ontology_id}/pages/{path_page_id}/authors"
+        )
+        return [AtlasAuthor.model_validate(row) for row in data]
+
+    async def folio_relationships(
+        self,
+        ontology_id: int,
+        page_id: str,
+        *,
+        entity_id: str | None = None,
+        query: str | None = None,
+        group: str | None = None,
+        skip: int = 0,
+        limit: int = 30,
+    ) -> AtlasRelationshipPage:
+        """Read a bounded relationship page, optionally filtered by entity, query, or group."""
+        from urllib.parse import quote
+
+        params: dict[str, Any] = {"skip": skip, "limit": limit}
+        params.update(
+            {
+                key: value
+                for key, value in {
+                    "entity_id": entity_id,
+                    "query": query,
+                    "group": group,
+                }.items()
+                if value is not None
+            }
+        )
+        path_page_id = quote(page_id, safe="")
+        data = await self._client.raw_request(
+            "GET",
+            f"/ontologies/{ontology_id}/pages/{path_page_id}/relationships",
+            params=params,
+        )
+        return AtlasRelationshipPage.model_validate(data)
+
     async def scenes(self, ontology_id: int, *, query: str | None = None, related_entity_id: str | None = None,
                      source_entity_id: str | None = None, has_perspectives: bool = False,
+                     related_only: bool = False,
                      skip: int = 0, limit: int = 30) -> AtlasScenePage:
         """Search before pagination, with canonical provenance and authorized counts."""
-        params = {"skip": skip, "limit": limit, "has_perspectives": has_perspectives}
+        params = {
+            "skip": skip,
+            "limit": limit,
+            "has_perspectives": has_perspectives,
+            "related_only": related_only,
+        }
         params.update({key: value for key, value in {"query": query, "related_entity_id": related_entity_id, "source_entity_id": source_entity_id}.items() if value is not None})
         data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/scenes", params=params)
         return AtlasScenePage.model_validate(data)

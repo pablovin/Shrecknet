@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from app.core import config_store
 from app.core.config_store import update_settings
+from app.services.media_service import MediaService
 from app.services.setup_service import SetupService
 
 
@@ -43,10 +46,12 @@ async def test_copy_default_world_images_writes_expected_media_paths(
     source_root = tmp_path / "defaults"
     source_root.mkdir()
 
-    ontology_bytes = b"ontology-image"
-    entity_bytes = b"entity-image"
-    (source_root / "World.png").write_bytes(ontology_bytes)
-    (source_root / "Adventure.png").write_bytes(entity_bytes)
+    def write_png(path: Path, size: tuple[int, int]) -> None:
+        image = Image.new("RGB", size, color="red")
+        image.save(path, format="PNG")
+
+    write_png(source_root / "World.png", (2500, 1250))
+    write_png(source_root / "Adventure.png", (2500, 1250))
 
     monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("SHRECKNET_MEDIA_BASE_URL", "/media")
@@ -62,7 +67,7 @@ async def test_copy_default_world_images_writes_expected_media_paths(
 
     service = SetupService(
         ontology_service=_DummyOntologyService(),
-        media_service=None,
+        media_service=MediaService(base_path=media_root),
         default_images_root=source_root,
     )
 
@@ -71,7 +76,9 @@ async def test_copy_default_world_images_writes_expected_media_paths(
 
     assert ontology_url == "/media/ontology/42/file.png"
     assert entity_url == "/media/entity/7/file.png"
-    assert (media_root / "ontology" / "42" / "file.png").read_bytes() == ontology_bytes
-    assert (media_root / "entity" / "7" / "file.png").read_bytes() == entity_bytes
+    with Image.open(media_root / "ontology" / "42" / "file.png") as image:
+        assert image.size == (640, 320)
+    with Image.open(media_root / "entity" / "7" / "file.png") as image:
+        assert image.size == (640, 320)
 
     _reset_settings_cache()

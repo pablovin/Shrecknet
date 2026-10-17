@@ -45,12 +45,14 @@ from app.schemas.ontology_instance import (
     ArchitectReviewEntityCatalogPage,
     ArchitectReviewEntityCatalogResolveRequest,
     ArchitectReviewEntityCatalogResolveResponse,
+    OntologyInstanceRead,
     SceneGraphRead,
     SceneGraphSourcePageReference,
 )
 from app.services.audit_service import AuditService
 from app.services.background_job_service import BackgroundJobService
-from app.schemas.atlas import AtlasSourcePage, AtlasScenePage
+from app.schemas.atlas import AtlasFolioDetailRead, AtlasSourcePage, AtlasScenePage, AtlasAuthor, AtlasRelationshipPage
+from app.services.atlas_folio_service import AtlasFolioService
 from app.schemas.agent import AgentSummary
 from app.services.agent_service import AgentService
 from app.services.atlas_discovery_service import AtlasDiscoveryService
@@ -84,6 +86,45 @@ async def _atlas_reader(service: OntologyInstanceService = Depends(_atlas_world)
     return AtlasDiscoveryService(service.graph_session)
 
 
+@router.get("/{ontology_id}/pages/{instance_id}/folio", response_model=AtlasFolioDetailRead)
+async def get_folio_detail(
+    ontology_id: int, instance_id: str,
+    service: OntologyInstanceService = Depends(_atlas_world),
+) -> AtlasFolioDetailRead:
+    try:
+        return await AtlasFolioService(service).detail(ontology_id, instance_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Page unavailable") from exc
+
+
+@router.get("/{ontology_id}/pages/{instance_id}/authors", response_model=list[AtlasAuthor])
+async def get_folio_authors(
+    ontology_id: int, instance_id: str,
+    service: OntologyInstanceService = Depends(_atlas_world),
+) -> list[AtlasAuthor]:
+    try:
+        return await AtlasFolioService(service).authors(ontology_id, instance_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Page unavailable") from exc
+
+
+@router.get("/{ontology_id}/pages/{instance_id}/relationships", response_model=AtlasRelationshipPage)
+async def get_folio_relationships(
+    ontology_id: int, instance_id: str,
+    entity_id: str | None = Query(None, max_length=250), query: str | None = Query(None, max_length=500),
+    group: str | None = Query(None, max_length=100),
+    skip: int = Query(0, ge=0), limit: int = Query(30, ge=1, le=100),
+    service: OntologyInstanceService = Depends(_atlas_world),
+) -> AtlasRelationshipPage:
+    try:
+        return await AtlasFolioService(service).relationships(
+            ontology_id=ontology_id, page_id=instance_id, entity_id=entity_id,
+            query=query, group=group, skip=skip, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Page unavailable") from exc
+
+
 @router.get("/{ontology_id}/elders", response_model=list[AgentSummary])
 async def get_world_elder_cards(
     ontology_id: int = Path(..., ge=1), skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100),
@@ -110,15 +151,18 @@ async def get_scene_index(
     related_entity_id: str | None = Query(None, max_length=250),
     source_entity_id: str | None = Query(None, max_length=250),
     has_perspectives: bool = False,
+    related_only: bool = False,
     skip: int = Query(0, ge=0), limit: int = Query(30, ge=1, le=100),
     actor: User = Depends(get_current_user),
     reader: AtlasDiscoveryService = Depends(_atlas_reader),
 ) -> AtlasScenePage:
     """Filter scenes before pagination and hydrate only authorized card metadata."""
+    if related_only and not related_entity_id:
+        raise HTTPException(status_code=422, detail="related_entity_id is required when related_only is true")
     role = actor.role.value if hasattr(actor.role, "value") else str(actor.role)
     return await reader.scenes(
         ontology_id=ontology_id, query=query, related_entity_id=related_entity_id,
-        source_entity_id=source_entity_id, has_perspectives=has_perspectives,
+        source_entity_id=source_entity_id, has_perspectives=has_perspectives, related_only=related_only,
         include_private=role.lower() == UserRole.ADMIN.value, skip=skip, limit=limit,
     )
 

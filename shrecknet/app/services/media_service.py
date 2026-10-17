@@ -9,9 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import UploadFile
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.core.config_store import get_settings
+
+MAX_STORED_IMAGE_WIDTH = 640
+MAX_STORED_IMAGE_HEIGHT = 480
 
 
 class ImageValidationError(ValueError):
@@ -43,22 +46,7 @@ class MediaService:
         filename: str | None = None,
     ) -> str:
         contents = await self._read_limited(upload)
-        self._validate_format(contents)
-
-        image = Image.open(BytesIO(contents))
-        image = image.convert("RGBA" if image.mode in ("RGBA", "P") else "RGB")
-
-        target_size = resize or (self.max_width, self.max_height)
-        if target_size:
-            max_width, max_height = target_size
-            width, height = image.size
-            if width > max_width or height > max_height:
-                ratio = min(max_width / width, max_height / height)
-                new_size = (int(width * ratio), int(height * ratio))
-                if hasattr(Image, "Resampling"):
-                    image = image.resize(new_size, Image.Resampling.LANCZOS)
-                else:  # pragma: no cover - older Pillow fallback
-                    image = image.resize(new_size, Image.ANTIALIAS)  # type: ignore[attr-defined]
+        image = self._prepare_image(contents, resize)
 
         resolved_filename = (
             self._sanitize_filename(filename)
@@ -81,6 +69,26 @@ class MediaService:
 
         return self._build_url(relative_path)
 
+    def _prepare_image(
+        self,
+        contents: bytes,
+        resize: tuple[int, int] | None,
+    ) -> Image.Image:
+        self._validate_format(contents)
+        with Image.open(BytesIO(contents)) as source:
+            image = ImageOps.exif_transpose(source).convert(
+                "RGBA" if source.mode in ("RGBA", "P") else "RGB"
+            )
+
+        requested_width, requested_height = resize or (self.max_width, self.max_height)
+        max_width = min(requested_width, self.max_width, MAX_STORED_IMAGE_WIDTH)
+        max_height = min(requested_height, self.max_height, MAX_STORED_IMAGE_HEIGHT)
+        width, height = image.size
+        if width > max_width or height > max_height:
+            ratio = min(max_width / width, max_height / height)
+            new_size = (max(1, int(width * ratio)), max(1, int(height * ratio)))
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+        return image
 
     async def _read_limited(self, upload: UploadFile) -> bytes:
         data = await upload.read()
@@ -174,22 +182,7 @@ class MediaService:
             The URL path to the saved image
         """
         contents = await self._read_limited(upload)
-        self._validate_format(contents)
-
-        image = Image.open(BytesIO(contents))
-        image = image.convert("RGBA" if image.mode in ("RGBA", "P") else "RGB")
-
-        target_size = resize or (self.max_width, self.max_height)
-        if target_size:
-            max_width, max_height = target_size
-            width, height = image.size
-            if width > max_width or height > max_height:
-                ratio = min(max_width / width, max_height / height)
-                new_size = (int(width * ratio), int(height * ratio))
-                if hasattr(Image, "Resampling"):
-                    image = image.resize(new_size, Image.Resampling.LANCZOS)
-                else:  # pragma: no cover - older Pillow fallback
-                    image = image.resize(new_size, Image.ANTIALIAS)  # type: ignore[attr-defined]
+        image = self._prepare_image(contents, resize)
 
         # Create directory path: media/content_type/content_id/
         folder_path = self.base_path / content_type / content_id

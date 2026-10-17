@@ -208,8 +208,8 @@ class Settings(BaseSettings):
     media_base_url: str = "/media"
     media_public_url: str | None = None
     max_image_upload_bytes: int = 5 * 1024 * 1024
-    image_max_width: int = 4096
-    image_max_height: int = 4096
+    image_max_width: int = 640
+    image_max_height: int = 480
     max_pdf_upload_bytes: int = 30 * 1024 * 1024
     library_max_pdf_bytes: int = 300 * 1024 * 1024
     old_database_url: str = ""

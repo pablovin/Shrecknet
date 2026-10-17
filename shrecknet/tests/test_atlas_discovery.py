@@ -89,7 +89,15 @@ async def test_scene_source_does_not_fall_back_to_owning_container():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('path', ['/ontologies/7/scene-sources', '/ontologies/7/scenes', '/ontologies/7/scenes/secret/source', '/ontologies/7/elders'])
+@pytest.mark.parametrize('path', [
+    '/ontologies/7/scene-sources',
+    '/ontologies/7/scenes',
+    '/ontologies/7/scenes/secret/source',
+    '/ontologies/7/elders',
+    '/ontologies/7/pages/secret/folio',
+    '/ontologies/7/pages/secret/authors',
+    '/ontologies/7/pages/secret/relationships',
+])
 async def test_world_denial_precedes_graph_reads(path):
     graph = Graph()
     service = SimpleNamespace(graph_session=graph, assert_ontology_graph_read_access=AsyncMock(side_effect=PermissionError('Denied')))
@@ -100,6 +108,20 @@ async def test_world_denial_precedes_graph_reads(path):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
         result = await client.get(path)
     assert result.status_code == 403 and graph.calls == []
+
+
+@pytest.mark.asyncio
+async def test_related_only_requires_a_related_entity_id():
+    graph = Graph()
+    service = SimpleNamespace(graph_session=graph, assert_ontology_graph_read_access=AsyncMock())
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=4, role=UserRole.PLAYER)
+    app.dependency_overrides[get_ontology_instance_service] = lambda: service
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        result = await client.get('/ontologies/7/scenes?related_only=true')
+    assert result.status_code == 422
+    assert graph.calls == []
 
 
 @pytest.mark.asyncio

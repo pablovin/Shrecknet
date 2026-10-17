@@ -139,6 +139,10 @@ Validation error (`400`) for unsupported image input:
 }
 ```
 
+Uploaded avatars are resized before storage using the shared
+[image upload policy](../../API/MEDIA_UPLOADS.md); the response field and URL
+contract are unchanged.
+
 Not found response (`404`) if companion does not exist yet:
 
 ```json

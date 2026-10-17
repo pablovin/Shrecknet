@@ -142,7 +142,7 @@ def extract_metadata(library_item_id: int) -> dict[str, Any]:
                         content_type="library",
                         content_id=f"{item.ontology_id}/{item.id}",
                         is_main=True,
-                        resize=(800, 1200),
+                        resize=(640, 480),
                     )
                     if cover_url:
                         data["cover_url"] = cover_url

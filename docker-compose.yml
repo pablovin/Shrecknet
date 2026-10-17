@@ -1,5 +1,13 @@
 name: Shrecknet
 
+x-shrecknet-image: &shrecknet-image
+  image: shrecknet-api:local
+  build:
+    context: ./shrecknet
+    dockerfile: Dockerfile
+    additional_contexts:
+      shreckdoc: ./shreckdoc
+
 x-shrecknet-env: &shrecknet-env
   PYTHONUNBUFFERED: "1"
   SHRECKNET_EMBEDDING_DEVICE: ${SHRECKNET_EMBEDDING_DEVICE:-cpu}
@@ -34,11 +42,7 @@ x-shreckllm-env: &shreckllm-env
 services:
   # One-shot model prefetch so API/worker do not depend on first-request internet download.
   shrecknet_model_prefetch:
-    build:
-      context: ./shrecknet
-      dockerfile: Dockerfile
-      additional_contexts:
-        shreckdoc: ./shreckdoc
+    <<: *shrecknet-image
     restart: "no"
     init: true
     user: "0:0"
@@ -273,7 +277,27 @@ services:
         chown -R "$$TARGET_UID:$$TARGET_GID" /data /media
         find /data /media -type d -exec chmod 2775 {} +
         find /data /media -type f -exec chmod 664 {} +
+        if [ -d /data/runtime-secrets ]; then
+          chown -R "$$TARGET_UID:$$TARGET_GID" /data/runtime-secrets
+          find /data/runtime-secrets -type d -exec chmod 700 {} +
+          find /data/runtime-secrets -type f -exec chmod 600 {} +
+        fi
     restart: "no"
+
+  shrecknet_runtime_secrets:
+    <<: *shrecknet-image
+    restart: "no"
+    init: true
+    user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
+    env_file:
+      - ./configs/compose.env
+      - ./.env
+    volumes:
+      - ./shrecknet/databases:/data
+    command: python -m app.core.runtime_secrets
+    depends_on:
+      shrecknet_permissions:
+        condition: service_completed_successfully
 
   # Redis broker/backend for Celery jobs
   redis:
@@ -315,24 +339,19 @@ services:
 
   # Main FastAPI service
   shrecknet_api:
-    build:
-      context: ./shrecknet
-      dockerfile: Dockerfile
-      additional_contexts:
-        shreckdoc: ./shreckdoc
+    <<: *shrecknet-image
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8100
     environment:
       <<: *shrecknet-env
-      SHRECKNET_BROWSER_ENABLED: ${SHRECKNET_BROWSER_ENABLED:-false}
-      SHRECKNET_BROWSER_SECRET: ${SHRECKNET_BROWSER_SECRET:-}
-      SHRECKNET_BROWSER_ALLOWED_ORIGINS: ${SHRECKNET_BROWSER_ALLOWED_ORIGINS:-[]}
-      SHRECKNET_BROWSER_SECURE_COOKIES: ${SHRECKNET_BROWSER_SECURE_COOKIES:-true}
+      SHRECKNET_BROWSER_ENABLED: ${SHRECKNET_BROWSER_ENABLED:-true}
+      SHRECKNET_PUBLIC_ORIGIN: ${SHRECKNET_PUBLIC_ORIGIN:-http://localhost}
     env_file:
       - ./configs/compose.env
       - ./configs/neo4j.env
+      - ./.env
     ports:
       - "8100:8100" # API, /docs, /openapi.json, /health
     volumes:
@@ -342,6 +361,8 @@ services:
       - ./configs:/configs:ro
     depends_on:
       shrecknet_permissions:
+        condition: service_completed_successfully
+      shrecknet_runtime_secrets:
         condition: service_completed_successfully
       shrecknet_model_prefetch:
         condition: service_completed_successfully
@@ -355,7 +376,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=5).read()"
+          python -c "import urllib.request; [urllib.request.urlopen('http://127.0.0.1:8100' + path, timeout=5).read() for path in ('/health', '/auth/public')]"
           || exit 1
       interval: 30s
       timeout: 10s
@@ -364,11 +385,7 @@ services:
 
   # Single Celery worker for all background jobs (simpler and easier to operate)
   shrecknet_worker:
-    build:
-      context: ./shrecknet
-      dockerfile: Dockerfile
-      additional_contexts:
-        shreckdoc: ./shreckdoc
+    <<: *shrecknet-image
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
@@ -377,6 +394,7 @@ services:
     env_file:
       - ./configs/compose.env
       - ./configs/neo4j.env
+      - ./.env
     volumes:
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/app/media
@@ -384,6 +402,8 @@ services:
       - ./configs:/configs:ro
     depends_on:
       shrecknet_permissions:
+        condition: service_completed_successfully
+      shrecknet_runtime_secrets:
         condition: service_completed_successfully
       shrecknet_model_prefetch:
         condition: service_completed_successfully
@@ -394,6 +414,29 @@ services:
       shrecknet_api:
         condition: service_started
       shreckllm:
+        condition: service_healthy
+
+  shrecknet_auth_session_cleanup:
+    <<: *shrecknet-image
+    restart: unless-stopped
+    init: true
+    user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
+    env_file:
+      - ./configs/compose.env
+      - ./.env
+    volumes:
+      - ./shrecknet/databases:/data
+      - ./configs:/configs:ro
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        while true; do
+          PYTHONPATH=/app python /app/scripts/cleanup_auth_sessions.py
+          sleep 60
+        done
+    depends_on:
+      shrecknet_api:
         condition: service_healthy
 
   # Standalone LLM gateway service (uses shared Redis + external Ollama)

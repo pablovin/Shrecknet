@@ -11,7 +11,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_password_hash, verify_password, password_needs_upgrade
-from app.core.config_store import UserCreationMode, get_settings
+from app.core.config_store import Settings, UserCreationMode, get_settings
 from app.models.ontology import OntologyEntity
 from app.models.user import User, UserApprovalStatus, UserRole, user_entities
 from app.repositories.user_repository import UserRepository
@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 class EmailServiceUnavailableError(RuntimeError):
     pass
+
+
+def _verification_frontend_url(settings: Settings) -> str:
+    configured_url = settings.email_verification_frontend_url.strip()
+    if configured_url:
+        return configured_url
+    return f"{settings.public_origin.rstrip('/')}/auth/verify-email"
 
 
 class UserService:
@@ -163,8 +170,9 @@ class UserService:
         })
         await self.session.commit()
         settings = get_settings()
-        separator = "&" if "?" in settings.email_verification_frontend_url else "?"
-        url = f"{settings.email_verification_frontend_url}{separator}token={token}"
+        frontend_url = _verification_frontend_url(settings)
+        separator = "&" if "?" in frontend_url else "?"
+        url = f"{frontend_url}{separator}token={token}"
         try:
             await EmailService(settings).send_verification(recipient=user.email, username=user.username, verification_url=url)
             return True

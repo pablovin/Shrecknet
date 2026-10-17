@@ -24,3 +24,16 @@ async def test_enabling_verification_requires_a_ready_smtp_connection(monkeypatc
     monkeypatch.setattr(configurations.EmailService, "verify_connection", failed_connection)
     with pytest.raises(HTTPException, match="SMTP configuration could not be verified"):
         await configurations._put_config_payload({"email_verification_enabled": True})
+
+
+def test_email_verification_url_defaults_from_public_origin(monkeypatch) -> None:
+    settings = configurations.Settings(
+        smtp_host="smtp.example.com",
+        smtp_sender_email="no-reply@example.com",
+        public_origin="https://shrecknet.club",
+    )
+    monkeypatch.setattr(configurations, "get_settings", lambda: settings)
+
+    assert configurations._validate_updates({"email_verification_enabled": True}) == {
+        "email_verification_enabled": True,
+    }

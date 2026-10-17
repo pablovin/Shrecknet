@@ -67,7 +67,14 @@ Narrative generation agent for converting notes/session material into polished s
 
 ### 2. Review first-start config
 
-Initial configuration lives in the root `configs/` folder:
+Initial configuration lives in the root `configs/` folder. Browser login uses one website-address setting, `SHRECKNET_PUBLIC_ORIGIN`. It defaults to `http://localhost` for local ShreckOS on port 80; change it to your exact HTTPS domain for a public deployment. For a new install, copy `shrecknet.env.example` first; for an existing `.env`, add or update only this setting:
+
+```dotenv
+SHRECKNET_PUBLIC_ORIGIN=https://shrecknet.club
+```
+
+The root Compose stack generates and persists browser-auth secrets, derives the allowed origin and secure-cookie mode from this address, and enables browser authentication automatically. Use no path or trailing slash. Initial service configuration lives in:
+
 - [configs/shrecknet.initial.json](configs/shrecknet.initial.json): Shrecknet first-start settings.
 - [configs/shreckllm.initial.json](configs/shreckllm.initial.json): shreckLLM first-start settings.
 - [configs/neo4j.env](configs/neo4j.env): Neo4j startup settings that must exist before the API can boot.
@@ -94,7 +101,7 @@ For existing installs, the shreckLLM runtime config database is the source of tr
 ### 4. Start Shrecknet services
 
 ```bash
-docker compose --env-file configs/compose.env --env-file configs/neo4j.env up --build
+docker compose --env-file configs/compose.env --env-file configs/neo4j.env --env-file .env up --build -d
 ```
 
 Shortcut launchers:
@@ -107,6 +114,7 @@ Shortcut launchers:
 ```bash
 curl -s http://localhost:11434/api/tags
 curl -s http://localhost:8100/health
+curl -s http://localhost:8100/auth/public
 curl -s http://localhost:8100/openapi.json | head
 ```
 

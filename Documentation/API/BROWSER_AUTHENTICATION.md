@@ -1,30 +1,32 @@
 # Browser authentication and sessions
 
-Shrecknet supplies additive cookie-session contracts for the user-facing ShreckOS application. They are opt-in and disabled by default. Shrecknet remains the identity owner; ShreckRPG and ShreckWorld do not store refresh credentials or passwords. Existing `/auth/token`, `/auth/jwks`, `/users/`, and SDK bearer login remain compatible.
+Shrecknet supplies additive cookie-session contracts for the user-facing ShreckOS application. They are disabled by default for direct/non-Compose runs; the root Compose deployment enables them by default. Shrecknet remains the identity owner; ShreckRPG and ShreckWorld do not store refresh credentials or passwords. Existing `/auth/token`, `/auth/jwks`, `/users/`, and SDK bearer login remain compatible.
 
 ## Private configuration and deployment
 
-`app/core/browser_auth.py` reads environment-only `SHRECKNET_BROWSER_` settings. They are not part of the public/global configuration API. Provision these on every identity worker and restart after changes:
+`app/core/browser_auth.py` reads private `SHRECKNET_BROWSER_` settings. They are not part of the public/global configuration API:
 
 | Environment variable | Default / meaning |
 | --- | --- |
-| `SHRECKNET_BROWSER_ENABLED` | `false`; explicitly enable after schema and keys are ready |
-| `SHRECKNET_BROWSER_SECRET` | No default secret; a stable Fernet key generated/provisioned by the operator, identical across workers |
-| `SHRECKNET_BROWSER_ALLOWED_ORIGINS` | JSON list of exact origins, such as `["https://os.example.com"]`; no wildcard or trailing slash |
-| `SHRECKNET_BROWSER_SECURE_COOKIES` | `true`; set false only for explicit localhost/127.0.0.1/::1 HTTP development |
+| `SHRECKNET_BROWSER_ENABLED` | `false` in direct/non-Compose runs; root Compose enables it by default |
+| `SHRECKNET_BROWSER_SECRET` | Optional override; otherwise generated once and persisted for all API/worker containers |
+| `SHRECKNET_BROWSER_ALLOWED_ORIGINS` | Optional JSON list override; otherwise the exact `SHRECKNET_PUBLIC_ORIGIN` |
+| `SHRECKNET_BROWSER_SECURE_COOKIES` | Inferred from `SHRECKNET_PUBLIC_ORIGIN`: `true` for HTTPS, `false` for HTTP. HTTP is still restricted to loopback origins. |
 | `SHRECKNET_BROWSER_ACCESS_MINUTES` | 10, allowed range 1–30 |
 | `SHRECKNET_BROWSER_PERSISTENT_DAYS` | 30, allowed range 1–90 |
 | `SHRECKNET_BROWSER_PERSISTENT_IDLE_DAYS` | 7, allowed range 1–30 |
 | `SHRECKNET_BROWSER_SESSION_HOURS` | 12, allowed range 1–24 |
 | `SHRECKNET_BROWSER_SESSION_IDLE_HOURS` | 2, allowed range 1–12 |
 
-Production secure-cookie routes also require configured persistent `SHRECKNET_JWT_PRIVATE_KEY_PEM` and `SHRECKNET_JWT_PUBLIC_KEY_PEM` key material. Do not rely on process-generated development JWT keys for multiple workers or restart persistence. Retain key overlap/JWKS-cache considerations during signing-key rotation. Do not log or put private keys/Fernet secrets into frontend variables or source control.
+Production secure-cookie routes also require persistent `SHRECKNET_JWT_PRIVATE_KEY_PEM` and `SHRECKNET_JWT_PUBLIC_KEY_PEM` key material. The root Compose stack generates and persists an RSA keypair when these overrides are absent. Its `shrecknet_runtime_secrets` one-shot service writes the Fernet secret and keypair under `shrecknet/databases/runtime-secrets/` with owner-only permissions before the API and worker start. API and worker containers read the same files; generated material is never put in frontend variables or container logs. Keep this directory with the identity database backups. Removing it invalidates existing JWT signing keys and browser-auth ciphertext; do not delete it to troubleshoot startup. Custom key overrides must provide both matching PEM values.
 
-The root Compose stack forwards these four browser-auth settings from the Compose project `.env` file or shell environment to `shrecknet_api`; browser auth remains disabled by default. For local HTTP development, set `SHRECKNET_BROWSER_ENABLED=true`, a stable `SHRECKNET_BROWSER_SECRET` Fernet key, `SHRECKNET_BROWSER_ALLOWED_ORIGINS=["http://localhost:5174"]`, and `SHRECKNET_BROWSER_SECURE_COOKIES=false` in the ignored project-root `.env` file. Generate the Fernet key once with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and retain it there across restarts. Recreate the API after changing these values with `docker compose up -d --no-deps --force-recreate shrecknet_api`. Do not use the local HTTP cookie setting for a non-loopback host.
+For a root Compose deployment, `SHRECKNET_PUBLIC_ORIGIN` is the single website-address setting. It defaults to `http://localhost` so a local ShreckOS Compose deployment on port 80 works without extra auth configuration. To deploy publicly, set it to the exact HTTPS origin, for example `https://shrecknet.club`; include a non-default public port if applicable, but never a path or trailing slash. This same value supplies the browser allowed origin and selects cookie mode (`Secure` for HTTPS; non-Secure cookies are accepted only for loopback HTTP). If a legacy `SHRECKNET_BROWSER_ALLOWED_ORIGINS` or `SHRECKNET_BROWSER_SECURE_COOKIES` override is set, remove it to use the single-origin setting. For a new install, copy `shrecknet.env.example`; for an existing `.env`, add or update only `SHRECKNET_PUBLIC_ORIGIN`. Browser auth is enabled by Compose. The normal API startup creates the additive browser-auth tables through `app/db/init_db.py`; the API Compose healthcheck requires both `/health` and `/auth/public` to succeed before the service is considered ready. Start the stack from this repository with `docker compose --env-file configs/compose.env --env-file configs/neo4j.env --env-file .env up --build -d`. For local non-Compose HTTP development, configure `SHRECKNET_PUBLIC_ORIGIN=http://localhost:5174` or keep the explicit `SHRECKNET_BROWSER_` overrides; never use insecure cookies for a non-loopback host.
+
+If overriding generated secrets, configure them in the root `.env` or `configs/compose.env` so both the one-shot provisioner and every API/worker container receive the same values. Set both JWT PEM variables together. Back up `/data/runtime-secrets` alongside the identity database. Rotating the Fernet secret invalidates pending CSRF/retry ciphertext; rotating JWT keys requires the normal key-overlap/JWKS-cache plan. Do not log or put private keys/Fernet secrets into frontend variables or source control.
 
 Serve the frontend over HTTPS with a same-origin `/api/shrecknet/` reverse proxy. Preserve Origin, Authorization, `X-CSRF-Token`, `X-Request-ID`, and all `Set-Cookie` headers. Disable proxy/CDN/service-worker caching for authentication. Configure trusted ASGI proxies and strip untrusted forwarded headers at ingress so rate-limit addresses reflect the real client. Never forward refresh cookies to RPG, ShreckWorld, or third parties.
 
-Set existing `email_verification_frontend_url` to the ShreckOS host's `/auth/verify-email` route. Existing creation-mode and email-delivery configuration remain authoritative. The new public registration path requires an already-bootstrapped instance; it does not create the first administrator.
+Email verification links use `<SHRECKNET_PUBLIC_ORIGIN>/auth/verify-email` by default. An explicitly configured `email_verification_frontend_url` remains an optional override. SMTP credentials and existing account-creation policy are still configured separately. The public registration path requires an already-bootstrapped instance; it does not create the first administrator.
 
 ## Endpoints
 
@@ -64,7 +66,7 @@ Limits are persisted per client/identifier capability: login 30/IP/minute and 10
 
 Back up the identity database. Apply the additive tables through normal Shrecknet initialization (`app/db/init_db.py` registers these models) before enabling browser auth or running updated password/account mutation flows. Disable the feature while preparing schema and deploy all changed consumers together. Test the exact shared database and multiworker topology in staging; local CAS/unit tests do not prove production locking or load.
 
-Schedule this session cleanup command at least every minute from the `shrecknet/` package. Cleanup is kept off the renewal hot path:
+The root Compose stack runs `shrecknet_auth_session_cleanup` continuously, invoking this session cleanup once per minute off the renewal hot path. For non-Compose deployments, schedule the command at least every minute from the `shrecknet/` package:
 
 ```sh
 PYTHONPATH=. python scripts/cleanup_auth_sessions.py

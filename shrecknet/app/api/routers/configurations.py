@@ -264,7 +264,11 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "smtp_sender_email": {"type": "string", "label": "Sender email"},
     "smtp_sender_name": {"type": "string", "label": "Sender name"},
     "smtp_service_token": {"type": "string", "label": "SMTP service token", "secret": True, "frontend_editable": False, "change_impact": "locked", "help": "Credential used by trusted services to submit email through Shrecknet."},
-    "email_verification_frontend_url": {"type": "string", "label": "Verification page URL"},
+    "email_verification_frontend_url": {
+        "type": "string",
+        "label": "Verification page URL",
+        "help": "Optional override; when blank, uses SHRECKNET_PUBLIC_ORIGIN/auth/verify-email.",
+    },
     "email_verification_subject": {"type": "string", "label": "Verification email subject"},
     "email_verification_text_template": {"type": "string", "label": "Verification text template", "multiline": True},
     "email_verification_html_template": {"type": "string", "label": "Verification HTML template", "multiline": True},
@@ -437,7 +441,7 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail="Invalid embodiment validation retry limit; expected an integer from 0 through 3") from exc
     if merged["email_verification_enabled"]:
-        required = ("smtp_host", "smtp_sender_email", "email_verification_frontend_url")
+        required = ("smtp_host", "smtp_sender_email")
         missing = [field for field in required if not str(merged[field]).strip()]
         if missing:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Email verification requires: {', '.join(missing)}")

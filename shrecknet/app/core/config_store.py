@@ -13,6 +13,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.runtime_secrets import read_runtime_secret, validate_jwt_keypair
+
 DEFAULT_DATABASE_FILENAME = "shrecknet.db"
 DEFAULT_JOBS_DATABASE_FILENAME = "shrecknet_jobs.db"
 CONFIG_DB_FILENAME = "shrecknet_config.db"
@@ -23,6 +25,7 @@ BOOTSTRAP_ENV_FIELDS = frozenset(
     {
         "database_url",
         "jobs_database_url",
+        "public_origin",
         "celery_broker_url",
         "celery_result_backend",
         "shreckllm_request_timeout_s",
@@ -176,7 +179,7 @@ def normalize_validation_retry_settings(values: dict[str, Any]) -> dict[str, Any
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SHRECKNET_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="SHRECKNET_", extra="ignore", env_ignore_empty=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -189,6 +192,16 @@ class Settings(BaseSettings):
             values[LEGACY_VALIDATION_RETRIES] = legacy_env
         return normalize_validation_retry_settings(values)
 
+    @model_validator(mode="after")
+    def validate_jwt_signing_keypair(self) -> "Settings":
+        self.jwt_private_key_pem = self.jwt_private_key_pem.replace("\\n", "\n")
+        self.jwt_public_key_pem = self.jwt_public_key_pem.replace("\\n", "\n")
+        if bool(self.jwt_private_key_pem) != bool(self.jwt_public_key_pem):
+            raise ValueError("Configure both SHRECKNET_JWT_PRIVATE_KEY_PEM and SHRECKNET_JWT_PUBLIC_KEY_PEM")
+        if self.jwt_private_key_pem:
+            validate_jwt_keypair(self.jwt_private_key_pem, self.jwt_public_key_pem)
+        return self
+
     @property
     def character_agent_embodiment_semantic_correction_attempts(self) -> int:
         """Deprecated compatibility accessor; config serialization uses the new name."""
@@ -196,6 +209,7 @@ class Settings(BaseSettings):
 
     app_name: str = "shrecknet"
     debug: bool = False
+    public_origin: str = "http://localhost"
     cors_allow_origins: list[str] = ["http://localhost"]
     cors_allow_origin_regex: str | None = r"https://.*\.lovableproject\.com"
     cors_allow_credentials: bool = True
@@ -353,8 +367,8 @@ class Settings(BaseSettings):
     jwt_audience: str = "shreckrpg"
     jwt_kid: str = "shrecknet-dev-rsa-1"
     jwt_access_token_expiry_minutes: int = 60 * 24 * 365
-    jwt_private_key_pem: str = ""
-    jwt_public_key_pem: str = ""
+    jwt_private_key_pem: str = Field(default_factory=lambda: read_runtime_secret("jwt_private_key.pem"))
+    jwt_public_key_pem: str = Field(default_factory=lambda: read_runtime_secret("jwt_public_key.pem"))
 
 
 class AppConfig(BaseModel):

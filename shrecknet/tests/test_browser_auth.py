@@ -9,7 +9,9 @@ from cryptography.fernet import Fernet
 from sqlalchemy import select
 
 from app.core.browser_auth import BrowserAuthSettings
+from app.core.config_store import Settings
 from app.core.security import decode_access_token, get_password_hash, verify_password
+from app.core.runtime_secrets import provision_runtime_secrets
 from app.models.auth_session import AuthRotation, AuthSession
 from app.models.user import User, UserApprovalStatus, UserRole
 from app.services.auth_sessions import BrowserSessionService, SessionFailure
@@ -144,6 +146,50 @@ def test_secure_cookie_configuration_and_password_hashes():
     hashed = get_password_hash("correct password")
     assert verify_password("correct password", hashed)
     assert not verify_password("wrong password", hashed)
+
+
+def test_compose_auth_settings_load_persisted_secrets(tmp_path, monkeypatch):
+    secrets_dir = tmp_path / "runtime-secrets"
+    monkeypatch.setenv("SHRECKNET_RUNTIME_SECRETS_DIR", str(secrets_dir))
+    monkeypatch.setenv("SHRECKNET_PUBLIC_ORIGIN", "https://os.example")
+    for name in (
+        "SHRECKNET_BROWSER_SECRET",
+        "SHRECKNET_JWT_PRIVATE_KEY_PEM",
+        "SHRECKNET_JWT_PUBLIC_KEY_PEM",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    provision_runtime_secrets()
+
+    browser_settings = BrowserAuthSettings(enabled=True)
+    jwt_settings = Settings()
+    assert browser_settings.allowed_origins == ["https://os.example"]
+    assert browser_settings.secret == (secrets_dir / "browser_auth_secret").read_text()
+    assert jwt_settings.jwt_private_key_pem == (secrets_dir / "jwt_private_key.pem").read_text()
+    assert jwt_settings.jwt_public_key_pem == (secrets_dir / "jwt_public_key.pem").read_text()
+
+
+@pytest.mark.parametrize(
+    ("origin", "expected_secure_cookies"),
+    [
+        ("http://localhost", False),
+        ("https://shrecknet.club", True),
+    ],
+)
+def test_public_origin_supplies_browser_origin_and_cookie_mode(
+    origin,
+    expected_secure_cookies,
+    monkeypatch,
+):
+    monkeypatch.setenv("SHRECKNET_PUBLIC_ORIGIN", origin)
+    monkeypatch.setenv("SHRECKNET_BROWSER_SECRET", Fernet.generate_key().decode())
+    monkeypatch.delenv("SHRECKNET_BROWSER_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("SHRECKNET_BROWSER_SECURE_COOKIES", raising=False)
+
+    settings = BrowserAuthSettings(enabled=True)
+
+    assert settings.allowed_origins == [origin]
+    assert settings.secure_cookies is expected_secure_cookies
 
 
 @pytest.mark.asyncio

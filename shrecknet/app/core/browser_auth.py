@@ -1,18 +1,41 @@
 """Private browser-session configuration, intentionally outside public app config."""
 from functools import lru_cache
+import os
+from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from cryptography.fernet import Fernet
 
+from app.core.runtime_secrets import read_runtime_secret
+
+
+def _default_allowed_origins() -> list[str]:
+    origin = _public_origin()
+    return [origin] if origin else []
+
+
+def _public_origin() -> str:
+    return os.getenv("SHRECKNET_PUBLIC_ORIGIN", "").strip()
+
+
+def _default_secure_cookies() -> bool:
+    origin = _public_origin()
+    return urlsplit(origin).scheme == "https" if origin else True
+
 
 class BrowserAuthSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SHRECKNET_BROWSER_", extra="ignore", hide_input_in_errors=True)
+    model_config = SettingsConfigDict(
+        env_prefix="SHRECKNET_BROWSER_",
+        extra="ignore",
+        hide_input_in_errors=True,
+        env_ignore_empty=True,
+    )
 
     enabled: bool = False
-    secret: str = ""
-    allowed_origins: list[str] = Field(default_factory=list)
-    secure_cookies: bool = True
+    secret: str = Field(default_factory=lambda: read_runtime_secret("browser_auth_secret").strip())
+    allowed_origins: list[str] = Field(default_factory=_default_allowed_origins)
+    secure_cookies: bool = Field(default_factory=_default_secure_cookies)
     access_minutes: int = Field(default=10, ge=1, le=30)
     persistent_days: int = Field(default=30, ge=1, le=90)
     persistent_idle_days: int = Field(default=7, ge=1, le=30)
@@ -25,7 +48,6 @@ class BrowserAuthSettings(BaseSettings):
             Fernet(self.secret.encode())
             if not self.allowed_origins or any(origin.endswith("/") for origin in self.allowed_origins):
                 raise ValueError("Browser auth requires exact origins without trailing slashes")
-            from urllib.parse import urlsplit
             for origin in self.allowed_origins:
                 url = urlsplit(origin)
                 if not url.netloc or url.path or url.query or url.fragment or url.username or "*" in origin:

@@ -6,7 +6,31 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.user import User, UserApprovalStatus, UserRole
-from app.services.user_service import UserService, _token_hash
+from app.services.user_service import UserService, _token_hash, _verification_frontend_url
+
+
+@pytest.mark.parametrize(
+    ("configured_url", "public_origin", "expected_url"),
+    [
+        ("", "https://shrecknet.club", "https://shrecknet.club/auth/verify-email"),
+        (
+            "https://custom.example/verify?source=mail",
+            "https://shrecknet.club",
+            "https://custom.example/verify?source=mail",
+        ),
+    ],
+)
+def test_verification_page_url_uses_shared_public_origin_unless_overridden(
+    configured_url,
+    public_origin,
+    expected_url,
+):
+    settings = SimpleNamespace(
+        email_verification_frontend_url=configured_url,
+        public_origin=public_origin,
+    )
+
+    assert _verification_frontend_url(settings) == expected_url
 
 
 @pytest.mark.asyncio

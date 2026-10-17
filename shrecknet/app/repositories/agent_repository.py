@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.models.agent import Agent
 from app.models.ontology import Ontology
 from app.schemas.agent import AgentCreate, AgentUpdate
+from app.schemas.agent import AgentSummary
 
 
 class AgentRepository:
@@ -84,6 +85,15 @@ class AgentRepository:
 
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_world_elder_cards(self, ontology_id: int, skip: int, limit: int) -> list[AgentSummary]:
+        """One narrow SQL projection; no config, relationship hydration, or unrelated agents."""
+        result = await self.session.execute(
+            select(Agent.id, Agent.name, Agent.description, Agent.avatar_url)
+            .where(Agent.job == "elder", Agent.active.is_(True), Agent.ontologies.any(Ontology.id == ontology_id))
+            .order_by(Agent.created_at.desc(), Agent.id.asc()).offset(skip).limit(limit)
+        )
+        return [AgentSummary.model_validate(dict(row)) for row in result.mappings()]
 
     async def update(self, agent_id: str, agent_data: AgentUpdate) -> Optional[Agent]:
         """Update an agent."""

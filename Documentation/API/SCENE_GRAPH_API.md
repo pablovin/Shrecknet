@@ -53,3 +53,108 @@ Example shape:
   "next_scene": {"id": "scene-9", "name": "The Crossing", "description": "...", "source_page": {"id": "page-8", "display_name": "Chapter Eight", "avatar_url": null}}
 }
 ```
+
+## Atlas discovery
+
+The following authenticated reads share the graph-detail endpoint's world access
+policy. Unauthorized worlds return `403`, unknown worlds return `404`, and invalid
+pagination/filter arguments return `422`. No route bypasses access checks through
+an empty cache or an inferred source identity.
+
+### `GET /ontologies/{ontology_id}/scene-sources`
+
+`skip` defaults to 0 and `limit` to 10 (1–100). Returns
+`{results, skip, limit, has_more}`. Each result is
+`{id, display_name, avatar_url, scene_count, latest_activity}`. IDs address source
+**pages**, not anchor entities or the containers that own a scene.
+
+Sources follow `(scene)-[:DERIVED_FROM]->(entity)<-[:HAS_ENTITY]-(source_page)`
+within the authorized world. Multiple source entities in one page produce one
+card. Missing/unresolvable provenance does not become the owning container.
+Cards sort by the latest source-scene update/creation timestamp descending, then
+source-page ID ascending; this is activity, not fictional chronology. Artwork is
+selected deterministically from non-null source-anchor artwork. Empty worlds
+return an empty page and `has_more: false`.
+
+One graph projection aggregates sources, returns at most `limit + 1` lightweight
+rows for lookahead, and exposes only `limit` cards. It does not fetch full scene,
+entity, narrative, or perspective bodies. All sources are eligible, including those
+whose scenes fall beyond the former first-100 browser-side cutoff. Increment
+`skip` by the returned result count. Pagination is live rather than a snapshot;
+concurrent activity can move a page between requests, so clients should deduplicate
+by source ID.
+
+### `GET /ontologies/{ontology_id}/scenes`
+
+Parameters: `query` (optional, up to 500 characters), `related_entity_id`,
+`source_entity_id` (optional, up to 250 characters each), `has_perspectives`
+(default false), `skip` (default 0), and `limit` (default 30, 1–100).
+
+Returns `{results, total, skip, limit}`. Each result has:
+
+- `scene`: `id`, `name`, nullable `description` and `derived_from`, explicit
+  `local_order`, and `milestone_count`. This is an index projection, not `SceneRead`;
+  fetch graph detail for milestone bodies and other full scene data.
+- `instance`: the owning container's `instance_id` and `name`.
+- `source_page`: nullable `{id, display_name, avatar_url}` resolved from the
+  canonical provenance anchor. It is distinct from `instance`.
+- `perspective_count`: visible perspectives only. Private Character Agent
+  perspectives contribute only for admins, including when filtering by
+  `has_perspectives`.
+
+Text search matches scene names/descriptions case-insensitively before
+pagination. Related-entity filtering matches scene or milestone provenance and
+related edges. Exact `source_entity_id` filtering matches only a scene's own
+`DERIVED_FROM` edge; it is the efficient Scene Track path. Sort order is latest
+update/creation descending with scene ID as tie-breaker, never fictional sequence.
+
+The service performs one indexed world-scoped count and one bounded card
+projection, with pagination before metadata/count hydration. Empty results skip
+the projection. There is no per-record graph or SQL request and no browser
+full-world scan. Count and rows are live reads, not a transactional snapshot.
+
+### `GET /ontologies/{ontology_id}/scenes/{scene_id}/source`
+
+Returns `{id, display_name, avatar_url}` for the scene's canonical provenance
+page in one graph projection. Missing scene/source or out-of-world provenance
+returns `404`, after world authorization. This lightweight evidence-link read
+avoids downloading the full scene graph. It does not change the existing graph
+endpoint's historical owning-instance `source_page` semantics.
+
+### `GET /ontologies/{ontology_id}/elders`
+
+`skip` defaults to 0 and `limit` to 100 (1–100). Returns an array of compact
+`{id, name, description, avatar_url}` cards for active Elder agents assigned to
+this authorized world. Orders by agent creation descending, then ID ascending;
+clients choose the first returned Elder by default. Continue when a page is full.
+
+The Agent repository uses one narrow SQL projection without unrelated agents,
+writing configuration, or ontology relationship hydration. Authentication and
+world authorization precede listing. Agent chat/query authorization remains
+service-owned. Existing `DELETE /jobs/elder/chats/{chat_id}` deletes only the
+caller's chat and messages, returning `204`; inaccessible/missing chats return
+`404`.
+
+## Discovery operations and compatibility
+
+Atlas discovery is additive. Existing instance list, legacy scene summary, scene
+detail, graph-detail, and Elder endpoints keep their contracts. No new store,
+background process, canon write, or cache of private content is introduced.
+`AtlasDiscoveryService` owns graph projections; the Agent service/repository own
+Elder listing; routers own authentication and error mapping. Public Python methods
+and models are documented in
+[OntologiesAPI](../../python_sdk/docs/reference/ontologies.md#atlas-discovery).
+
+Deploy the API before the consuming ShreckOS release. Normal API startup runs the
+idempotent temporal-graph setup, now including the single-property
+`Scene.ontology_id` index (`scene_ontology_idx`), alongside existing scene ID and
+instance indexes. No data backfill is required; historical integer/string world
+IDs are matched without wrapping the indexed property. Rollback can leave this
+non-destructive index in place. Older frontend versions continue to work; the new
+source shelf requires the new discovery endpoints and presents a retryable error
+rather than silently scanning all records against an older API.
+
+Performance is bounded by result size and fixed request counts, but aggregation,
+filtering, and count still depend on world size. Representative production p95
+latency and query-plan measurements remain rollout checks; local timings alone
+are not a service-level guarantee.

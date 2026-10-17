@@ -38,6 +38,15 @@ class AgentUpdate(BaseModel):
     active: Optional[bool] = None
 
 
+class AgentSummary(BaseModel):
+    """Compact public identity without agent configuration or relationship hydration."""
+
+    id: str
+    name: str
+    description: str | None = None
+    avatar_url: str | None = None
+
+
 class AgentRead(AgentBase):
     """Schema for reading an Agent."""
 

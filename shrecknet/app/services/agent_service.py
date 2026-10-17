@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.agent_repository import AgentRepository
 from app.schemas.agent import AgentCreate, AgentRead, AgentUpdate
+from app.schemas.agent import AgentSummary
 
 
 class AgentService:
@@ -15,6 +16,9 @@ class AgentService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = AgentRepository(session)
+
+    async def world_elder_cards(self, ontology_id: int, skip: int = 0, limit: int = 100) -> list[AgentSummary]:
+        return await self.repository.list_world_elder_cards(ontology_id, skip, limit)
 
     async def create_agent(self, agent_data: AgentCreate) -> AgentRead:
         """Create a new agent."""

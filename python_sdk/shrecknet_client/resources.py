@@ -9,6 +9,7 @@ import time
 import httpx
 
 from .client import AsyncShrecknetClient
+from .atlas import AtlasSourcePage, AtlasScenePage, AtlasSourceReference, AtlasElderCard
 from .errors import ArchitectPreflightError, ConfigurationReadinessError, ElderPreflightError, JobFailedError, JobTimeoutError
 from .models import (
     BackgroundJobRecord,
@@ -180,6 +181,31 @@ class OntologiesAPI:
             params["ontology_ids"] = ",".join(str(x) for x in ontology_ids)
         data = await self._client.raw_request("GET", "/ontologies/world-stats", params=params)
         return OntologyWorldStatsResponse.model_validate(data)
+
+    async def scene_sources(self, ontology_id: int, *, skip: int = 0, limit: int = 10) -> AtlasSourcePage:
+        """Read distinct source cards without fetching scene or narrative bodies."""
+        data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/scene-sources", params={"skip": skip, "limit": limit})
+        return AtlasSourcePage.model_validate(data)
+
+    async def scenes(self, ontology_id: int, *, query: str | None = None, related_entity_id: str | None = None,
+                     source_entity_id: str | None = None, has_perspectives: bool = False,
+                     skip: int = 0, limit: int = 30) -> AtlasScenePage:
+        """Search before pagination, with canonical provenance and authorized counts."""
+        params = {"skip": skip, "limit": limit, "has_perspectives": has_perspectives}
+        params.update({key: value for key, value in {"query": query, "related_entity_id": related_entity_id, "source_entity_id": source_entity_id}.items() if value is not None})
+        data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/scenes", params=params)
+        return AtlasScenePage.model_validate(data)
+
+    async def scene_source(self, ontology_id: int, scene_id: str) -> AtlasSourceReference:
+        """Resolve one scene reference to its exact source page."""
+        from urllib.parse import quote
+        data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/scenes/{quote(scene_id, safe='')}/source")
+        return AtlasSourceReference.model_validate(data)
+
+    async def elders(self, ontology_id: int, *, skip: int = 0, limit: int = 100) -> list[AtlasElderCard]:
+        """List compact active Elder portraits assigned to an authorized world."""
+        data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/elders", params={"skip": skip, "limit": limit})
+        return [AtlasElderCard.model_validate(row) for row in data]
 
 
 class OntologyInstancesAPI:

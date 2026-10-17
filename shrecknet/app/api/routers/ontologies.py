@@ -46,9 +46,14 @@ from app.schemas.ontology_instance import (
     ArchitectReviewEntityCatalogResolveRequest,
     ArchitectReviewEntityCatalogResolveResponse,
     SceneGraphRead,
+    SceneGraphSourcePageReference,
 )
 from app.services.audit_service import AuditService
 from app.services.background_job_service import BackgroundJobService
+from app.schemas.atlas import AtlasSourcePage, AtlasScenePage
+from app.schemas.agent import AgentSummary
+from app.services.agent_service import AgentService
+from app.services.atlas_discovery_service import AtlasDiscoveryService
 from app.services.ontology_service import OntologyService
 from app.services.ontology_instance_service import OntologyInstanceService
 from app.tasks.neo4j_embedding import embed_ontology
@@ -61,6 +66,75 @@ _world_stats_cache: dict[
 _world_stats_cache_lock = asyncio.Lock()
 
 
+async def _atlas_world(
+    ontology_id: int = Path(..., ge=1),
+    actor: User = Depends(get_current_user),
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+) -> OntologyInstanceService:
+    try:
+        await service.assert_ontology_graph_read_access(ontology_id=ontology_id, actor=actor)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return service
+
+
+async def _atlas_reader(service: OntologyInstanceService = Depends(_atlas_world)) -> AtlasDiscoveryService:
+    return AtlasDiscoveryService(service.graph_session)
+
+
+@router.get("/{ontology_id}/elders", response_model=list[AgentSummary])
+async def get_world_elder_cards(
+    ontology_id: int = Path(..., ge=1), skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100),
+    service: OntologyInstanceService = Depends(_atlas_world),
+) -> list[AgentSummary]:
+    """Authorized, world-filtered portraits; ordered newest first with a stable ID tie-breaker."""
+    return await AgentService(service.sql_session).world_elder_cards(ontology_id, skip, limit)
+
+
+@router.get("/{ontology_id}/scene-sources", response_model=AtlasSourcePage)
+async def get_scene_sources(
+    ontology_id: int = Path(..., ge=1),
+    skip: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=100),
+    reader: AtlasDiscoveryService = Depends(_atlas_reader),
+) -> AtlasSourcePage:
+    """Distinct provenance-source pages, including artwork, in one bounded projection."""
+    return await reader.sources(ontology_id=ontology_id, skip=skip, limit=limit)
+
+
+@router.get("/{ontology_id}/scenes", response_model=AtlasScenePage)
+async def get_scene_index(
+    ontology_id: int = Path(..., ge=1),
+    query: str | None = Query(None, max_length=500),
+    related_entity_id: str | None = Query(None, max_length=250),
+    source_entity_id: str | None = Query(None, max_length=250),
+    has_perspectives: bool = False,
+    skip: int = Query(0, ge=0), limit: int = Query(30, ge=1, le=100),
+    actor: User = Depends(get_current_user),
+    reader: AtlasDiscoveryService = Depends(_atlas_reader),
+) -> AtlasScenePage:
+    """Filter scenes before pagination and hydrate only authorized card metadata."""
+    role = actor.role.value if hasattr(actor.role, "value") else str(actor.role)
+    return await reader.scenes(
+        ontology_id=ontology_id, query=query, related_entity_id=related_entity_id,
+        source_entity_id=source_entity_id, has_perspectives=has_perspectives,
+        include_private=role.lower() == UserRole.ADMIN.value, skip=skip, limit=limit,
+    )
+
+
+@router.get("/{ontology_id}/scenes/{scene_id}/source", response_model=SceneGraphSourcePageReference)
+async def get_scene_source(
+    ontology_id: int = Path(..., ge=1), scene_id: str = Path(..., min_length=1, max_length=250),
+    reader: AtlasDiscoveryService = Depends(_atlas_reader),
+) -> SceneGraphSourcePageReference:
+    """Resolve scene evidence to the exact provenance page, not its owning container."""
+    try:
+        return await reader.scene_source(ontology_id=ontology_id, scene_id=scene_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get(
     "/{ontology_id}/scenes/{scene_id}/graph",
     response_model=SceneGraphRead,
@@ -70,13 +144,10 @@ async def get_scene_graph(
     ontology_id: int = Path(..., ge=1),
     scene_id: str = Path(..., min_length=1),
     actor: User = Depends(get_current_user),
-    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    service: OntologyInstanceService = Depends(_atlas_world),
 ) -> SceneGraphRead:
     """Return canonical scene data and only perspectives visible to this actor."""
     try:
-        await service.assert_ontology_graph_read_access(
-            ontology_id=ontology_id, actor=actor
-        )
         role = actor.role.value if hasattr(actor.role, "value") else str(actor.role)
         return await service.get_scene_graph(
             ontology_id=ontology_id,

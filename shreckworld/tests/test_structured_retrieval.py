@@ -122,19 +122,30 @@ def test_grounded_answer_mode_returns_validated_claims_and_explicit_model_failur
         lambda **kwargs: (
             "Mounted combat uses Horsemanship. [source-1]",
             "complete",
-            [{"text": "Mounted combat uses Horsemanship.", "citation_ids": [citation_id], "kind": "rule"}],
+            [{
+                "id": "claim-1", "text": "Mounted combat uses Horsemanship.",
+                "citation_ids": [citation_id], "kind": "rule",
+                "support": [{
+                    "evidence_id": citation_id, "quote": "Mounted combat uses Horsemanship.",
+                    "location": {"precision": "section", "page_numbers": [1]},
+                }],
+            }],
             [],
             [],
             0,
+            {"direct_answer": "Mounted combat uses Horsemanship. [source-1]", "sections": []},
+            [],
         ),
     )
     result = query(api, library_item_ids=[item_id, unindexed_id], mode="answer").json()
     assert result["mode"] == "answer"
-    assert result["answer_status"] == "partial"
+    assert result["answer_status"] == "complete"
     assert result["claims"][0]["citation_ids"] == [citation_id]
     assert result["source_coverage"]["searched_source_count"] == 1
     assert result["source_coverage"]["sources_without_ready_index"] == 1
-    assert "were not searched" in result["answer"]
+    assert result["source_warnings"][0]["code"] == "source_not_indexed"
+    assert "were not searched" not in result["answer"]
+    assert result["answer_content"]["direct_answer"].endswith("[source-1]")
     assert result["trace"]["synthesis_ms"] >= 0
 
     from app.services.grounded_answer import GroundedAnswerUnavailable

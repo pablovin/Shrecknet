@@ -46,31 +46,92 @@ PDF.js receives original PDFs. DOCX/Markdown/text remain original downloads; thi
 
 Omit both source-scope fields for whole-world retrieval. `library_item_id` remains supported for existing callers; new callers can pass `library_item_ids` to select 1–100 distinct sources. They are mutually exclusive. Every ID must belong to the requested ShreckWorld. When a source scope is present, a selected passage must belong to that scope. Selection text is limited to 4,000 characters, the physical page number must be positive, and the selection revision must match the current source. Selection is untrusted retrieval context, not a model instruction or verified authoritative quote.
 
-`mode` is `evidence` (default, backward-compatible) or `answer`. Evidence mode performs no synthesis and retains the current extractive response. Answer mode sends the retrieved evidence to the configured ShreckLLM synthesis model and returns `answer_status` (`complete`, `partial`, or `unsupported`), structured `claims`, `missing_information`, and `conflicts`. Each claim/conflict must cite source IDs returned with the response; invalid or unknown citation IDs fail the request rather than being silently removed. The server validates output structure and citation membership, but semantic entailment of every claim is not independently proven by a second model call. Answers are marked partial and disclose coverage gaps when requested sources lack compatible indexes or retrieved passages are omitted by the evidence budget. Rule priority is not treated as proof of applicability or precedence. Synthesis does not execute game actions.
+`mode` is `evidence` (default, backward-compatible) or `answer`. Evidence mode performs no synthesis and retains the current response. Answer mode sends retrieved evidence to the configured ShreckLLM target and returns `answer_status` (`complete`, `partial`, or `unsupported`), structured `claims`, `answer_content`, `evidence`, `missing_information`, and `conflicts`. Every claim contains an ordered `claim-N` ID, source `citation_ids`, and exact-quote `support` records with a source location. `answer_content.direct_answer` and section text include inline `[source-N]` references; each ID maps to the same ID in `citations`, `claims[].support[].evidence_id`, and `evidence[].id`. The server validates structure, citation membership, and exact quote membership in supplied evidence, but semantic entailment of every claim is not independently proven by a second model call. Answers are marked partial when requested sources required for exhaustive, comparison, or multi-need coverage lack compatible indexes. Rule priority is not treated as proof of applicability or precedence. Synthesis does not execute game actions.
 
-`retrieval_strategy` is `single` (default) or `planned`. `single` preserves the established retrieval and answer-mode behavior. `planned` is opt-in and accepts `mode="evidence"` only; combining `planned` with `mode="answer"` returns `422`. Planned retrieval builds a 1–6 need `query_plan`, searches each need against the same authorized active-generation scope, retains evidence by document/section without merging distinct sources, and includes `evidence_coverage`, `evidence_groups`, and optional `v3_trace`. Complex questions can invoke one ShreckLLM planning call; simple definitions use a deterministic single-need plan. An invalid or unavailable planner falls back to a safe deterministic need and is reported in `v3_trace.planner_fallback`.
+`retrieval_strategy` is `single` (default) or `planned`. `single` preserves the established retrieval and answer-mode behavior. `planned` builds a 1–6 need `query_plan`, searches each need against the same authorized active-generation scope, retains evidence by document/section without merging distinct sources, and includes `evidence_coverage`, `evidence_groups`, and optional `v3_trace`. Complex questions can invoke one ShreckLLM planning call; simple definitions use a deterministic single-need plan. An invalid or unavailable planner falls back to a safe deterministic need and is reported in `v3_trace.planner_fallback`. Both `mode="evidence"` and `mode="answer"` are supported; planned answer mode synthesizes once from the evidence selected by this same planned retrieval run, without a second retrieval.
 
 ```json
 {
   "query": "Can psychotherapy and private care be combined?",
   "library_item_ids": ["SOURCE_ID_A", "SOURCE_ID_B"],
-  "mode": "evidence",
+  "mode": "answer",
   "retrieval_strategy": "planned",
+  "response_detail": "concise",
   "include_trace": true
 }
 ```
 
-Planned retrieval does not generate an answer. `answer` explains that the response is an evidence bundle, while `citations` retains the normal source revision, page, geometry, and content URL fields. Coverage distinguishes `covered`, `partial`, `missing`, and `unresolved` per need. Retrieval similarity alone never establishes coverage. When enabled, one batched ShreckLLM review checks direct source quotations; invalid review output is not treated as verification. A single targeted follow-up round may search needs still missing, partial, or unresolved. Exhaustive questions and unsupported interactions are not declared complete merely because results were found. When any requested source is unindexed or incompatible, overall evidence coverage cannot be `adequate`; `source_coverage` distinguishes those unsearched sources from sources actually searched. The configurable budget is approximate (4 characters per token); a logical evidence unit that cannot fit is omitted whole and flagged in `evidence_groups` rather than silently truncated.
+`response_detail` is optional (`concise`, `standard`, or `detailed`) and applies to synthesis; planned mode defaults to `concise`, while legacy single-path answer mode defaults to `standard` for compatibility. Planned evidence mode does not generate an answer, while planned answer mode runs the same retrieval/coverage pipeline and then one grounded synthesis call. If no citation-ready evidence is found, answer mode returns `unsupported` without calling ShreckLLM. Source availability warnings are returned separately in `source_warnings`; they do not become answer claims. For exhaustive, comparison, and multi-need questions, unavailable requested sources prevent an otherwise complete synthesis from being labeled complete.
+
+`citations` retains the normal source revision, page, geometry, and content URL fields. Coverage distinguishes `covered`, `partial`, `missing`, and `unresolved` per need. Retrieval similarity alone never establishes coverage. When enabled, one batched ShreckLLM review checks direct source quotations; invalid review output is not treated as verification. A single targeted follow-up round may search needs still missing, partial, or unresolved. Exhaustive questions and unsupported interactions are not declared complete merely because results were found. When any requested source is unindexed or incompatible, `source_coverage` distinguishes those unsearched sources from sources actually searched. The configurable budget is approximate (4 characters per token); a logical evidence unit that cannot fit is omitted whole and flagged in `evidence_groups` rather than silently truncated.
+
+Example of the structured answer fields (source text and page are illustrative):
+
+```json
+{
+  "mode": "answer",
+  "retrieval_strategy": "planned",
+  "answer_status": "complete",
+  "answer": "Sanity measures a character's mental stability. [source-1]",
+  "answer_content": {
+    "direct_answer": "Sanity measures a character's mental stability. [source-1]",
+    "sections": [],
+    "follow_up_hint": null
+  },
+  "claims": [{
+    "id": "claim-1",
+    "text": "Sanity measures a character's mental stability.",
+    "citation_ids": ["source-1"],
+    "kind": "fact",
+    "support": [{
+      "evidence_id": "source-1",
+      "quote": "Sanity is a measure of mental stability.",
+      "location": {
+        "precision": "block",
+        "page_number": 12,
+        "page_label": "10",
+        "page_numbers": [12],
+        "block_id": "block-abc",
+        "charspan": null,
+        "rectangles": []
+      }
+    }]
+  }],
+  "evidence": [{
+    "id": "source-1",
+    "source": {
+      "library_item_id": "book-123",
+      "title": "Core Rules",
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "authority_tier": "core_rules",
+      "authority_priority": 10,
+      "document_id": "document-456"
+    },
+    "location": {
+      "precision": "block",
+      "page_number": 12,
+      "page_label": "10",
+      "page_numbers": [12],
+      "block_id": "block-abc",
+      "charspan": null,
+      "rectangles": []
+    },
+    "excerpt": "Sanity is a measure of mental stability.",
+    "context_excerpt": null,
+    "content_url": "/shreckworlds/world-1/library-items/book-123/content"
+  }]
+}
+```
 
 Each returned `evidence_groups[].evidence_id` matches its citation's `source_id`. An omitted oversized unit has an `omitted-{chunk_id}` evidence ID, no citation, `incomplete_evidence: true`, and an `omission_reason`; its need association remains visible.
 
 ## ShreckWorld agent jobs
 
-`POST /shreckworlds/{world_id}/agent-jobs` accepts the query fields above, including optional `library_item_id` or `library_item_ids`, `selection`, `top_k`, and `include_trace`. The endpoint always creates a ShreckWorld planned-evidence job; `mode="answer"` is rejected with `422`. The authenticated user's identity is recorded as the job owner. The service validates world/source scope and selected-source revision before queueing, then validates it again when the worker executes.
+`POST /shreckworlds/{world_id}/agent-jobs` accepts the query fields above, including optional `library_item_id` or `library_item_ids`, `selection`, `top_k`, `include_trace`, `mode`, and `response_detail`. It always creates a ShreckWorld planned-query job; `mode="answer"` requests grounded synthesis after the planned evidence stages. The authenticated user's identity is recorded as the job owner. The service validates world/source scope and selected-source revision before queueing, then validates it again when the worker executes.
 
 The response is `202 Accepted` with `id`, `shreckworld_id`, `status`, `stage`, and timestamps. `GET /shreckworlds/{world_id}/agent-jobs/{job_id}` returns the same lifecycle fields, plus `result` when complete or a user-safe `error` when failed. Status is `queued`, `running`, `completed`, or `failed`; stages identify planning, retrieval, coverage assessment, targeted follow-up, reassessment, or completion. Only the job owner or an `admin` may poll it; an inaccessible or mismatched job returns `404`. Jobs are not cancellable. The existing synchronous query endpoint remains available and unchanged by job submission.
 
-The `shreckworld_agent` Celery queue is consumed by the ShreckWorld worker alongside `shreckworld_embedding` with the worker's existing single-task concurrency bound. Jobs persist in `shreckworld_agent_jobs`; startup creates the table for existing installations. Queue-dispatch failures are marked failed and return `503`; execution failures are logged server-side and exposed as a generic retryable job error. The agent does not call Elder or Librarian runtimes and does not run grounded answer synthesis.
+The `shreckworld_agent` Celery queue is consumed by the ShreckWorld worker alongside `shreckworld_embedding` with the worker's existing single-task concurrency bound. Jobs persist in `shreckworld_agent_jobs`; startup creates the table for existing installations. Queue-dispatch failures are marked failed and return `503`; execution failures are logged server-side and exposed as a generic retryable job error. The agent does not call Elder or Librarian runtimes.
 
 `source_coverage` is always returned, including in evidence mode. Its counts distinguish requested sources, sources with retrievable active chunks, sources without a ready index, and ready sources that require reindexing for the active embedding fingerprint. Only indexed compatible sources are searched. A source may be omitted from results because it has no ready index or needs reindexing; `include_trace` adds retrieval diagnostics (`retrieval_ms`, `synthesis_ms` when answer synthesis runs, and `total_ms`) but does not change scope. Timings are request-level observations, not latency guarantees.
 

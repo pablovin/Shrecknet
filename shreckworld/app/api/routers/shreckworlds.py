@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import re
 import shutil
 import time
 from contextlib import contextmanager
@@ -21,7 +22,7 @@ from app.db.session import get_db
 from app.jobs.shreckworld_agent.agent import QueryScopeError, run_shreckworld_agent, validate_query_scope
 from app.models import ShreckWorld, ShreckWorldAgentJob, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem
 from app.schemas.shreckworld import (
-    AuthorityTier, EmbeddingJobRead, GroundedClaim, GroundedConflict, ShreckWorldAgentJobRead,
+    AnswerPresentation, AuthorityTier, EmbeddingJobRead, GroundedClaim, GroundedConflict, ShreckWorldAgentJobRead,
     ShreckWorldCreate, ShreckWorldLibraryItemRead,
     ShreckWorldLibraryItemUpdate, ShreckWorldQueryRequest, ShreckWorldQueryResponse,
     ShreckWorldRead, ShreckWorldUpdate, ActionResolutionRequest, ActionResolutionResponse,
@@ -36,6 +37,7 @@ from app.services.grounded_answer import (
     EvidenceBudgetExceeded,
     GroundedAnswerInvalid,
     GroundedAnswerUnavailable,
+    evidence_item,
     synthesize_grounded_answer,
 )
 from app.services.source_lifecycle import delete_source, delete_world
@@ -72,6 +74,25 @@ def _item_or_404(session: Session, shreckworld_id: str, item_id: str) -> ShreckW
     if item is None or item.shreckworld_id != shreckworld_id:
         raise HTTPException(status_code=404, detail="ShreckWorld library item not found")
     return item
+
+
+def _source_warnings(trace: dict) -> list[dict[str, str | int]]:
+    warnings: list[dict[str, str | int]] = []
+    not_indexed = int(trace.get("sources_without_ready_index", 0))
+    requires_reindex = int(trace.get("sources_requiring_reindex", 0))
+    if not_indexed:
+        warnings.append({
+            "code": "source_not_indexed",
+            "count": not_indexed,
+            "message": f"{not_indexed} requested source(s) have not been indexed; results use available indexed sources.",
+        })
+    if requires_reindex:
+        warnings.append({
+            "code": "source_requires_reindex",
+            "count": requires_reindex,
+            "message": f"{requires_reindex} requested source(s) need reindexing; results use compatible active sources.",
+        })
+    return warnings
 
 
 @settings_router.get(
@@ -304,8 +325,6 @@ def get_indexing_job(shreckworld_id: str, item_id: str, job_id: str, session: Se
 def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Session = Depends(get_db)) -> ShreckWorldQueryResponse:
     started = time.perf_counter()
     if payload.retrieval_strategy == "planned":
-        if payload.mode != "evidence":
-            raise HTTPException(status_code=422, detail="Planned retrieval supports mode='evidence' only")
         try:
             validate_query_scope(session, shreckworld_id=shreckworld_id, payload=payload)
         except QueryScopeError as exc:
@@ -340,6 +359,9 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
     missing_information: list[str] = []
     conflicts: list[GroundedConflict] = []
     omitted_citations = 0
+    answer_content: AnswerPresentation | None = None
+    evidence = [evidence_item(citation) for citation in citations]
+    source_warnings = _source_warnings(trace)
     if citations:
         answer = "Relevant ShreckWorld evidence was found: " + " ".join(f"[{citation.source_id}] {citation.excerpt}" for citation in citations)
     elif trace.get("sources_requiring_reindex"):
@@ -358,13 +380,22 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
                 missing_information.append(
                     f"{trace['sources_requiring_reindex']} requested source(s) require reindexing."
                 )
+            answer_content = AnswerPresentation(
+                direct_answer=answer,
+                follow_up_hint="Try another indexed source or rephrase the question.",
+            )
         else:
             synthesis_started = time.perf_counter()
             try:
-                answer, answer_status, claims, missing_information, conflicts, omitted_citations = synthesize_grounded_answer(
+                (
+                    answer, answer_status, claims, missing_information, conflicts,
+                    omitted_citations, answer_content, evidence,
+                ) = synthesize_grounded_answer(
                     query=payload.query,
                     citations=citations,
                     model_target=get_model_shreckworld_synthesizer(session),
+                    session=session,
+                    response_detail=payload.response_detail or "standard",
                 )
             except EvidenceBudgetExceeded as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -374,11 +405,15 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
                 raise HTTPException(status_code=502, detail="Grounded answer synthesis returned invalid evidence references") from exc
             trace["synthesis_ms"] = round((time.perf_counter() - synthesis_started) * 1000, 2)
             unavailable_sources = int(trace["sources_without_ready_index"]) + int(trace["sources_requiring_reindex"])
-            if unavailable_sources or omitted_citations:
+            requires_full_scope = bool(re.search(
+                r"\b(?:compare|comparison|versus|difference|both|all|every|exhaustive)\b",
+                payload.query.casefold(),
+            ))
+            if (unavailable_sources and requires_full_scope) or omitted_citations:
                 if answer_status == "complete":
                     answer_status = "partial"
                 gaps = []
-                if unavailable_sources:
+                if unavailable_sources and requires_full_scope:
                     gaps.append(
                         f"{unavailable_sources} requested source(s) were not searched because their indexes are unavailable or incompatible"
                     )
@@ -388,12 +423,15 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
                     )
                 gap_text = "; ".join(gaps)
                 missing_information.append(gap_text + ".")
-                answer += "\n\nNot established by the available sources: " + gap_text + "."
+                missing_information.append(
+                    "The result may be incomplete because " + gap_text + "."
+                )
     trace["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
     return ShreckWorldQueryResponse(
         shreckworld_id=shreckworld_id, query=payload.query, answer=answer, citations=citations,
         trace=trace if payload.include_trace else None, mode=payload.mode, answer_status=answer_status,
         claims=claims, missing_information=missing_information, conflicts=conflicts,
+        answer_content=answer_content, evidence=evidence, source_warnings=source_warnings,
         source_coverage=QuerySourceCoverage(
             requested_source_count=int(trace["requested_sources"]),
             searched_source_count=int(trace["sources_searched"]),
@@ -423,8 +461,6 @@ def create_agent_job(
     principal: ShrecknetPrincipal = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> ShreckWorldAgentJobRead:
-    if payload.mode != "evidence":
-        raise HTTPException(status_code=422, detail="ShreckWorld agent jobs support evidence mode only")
     request = payload.model_copy(update={"retrieval_strategy": "planned"})
     try:
         validate_query_scope(session, shreckworld_id=shreckworld_id, payload=request)

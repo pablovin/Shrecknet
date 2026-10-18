@@ -86,9 +86,63 @@ class KnowledgeCitation(BaseModel):
 
 
 class KnowledgeClaim(BaseModel):
+    id: str | None = None
     text: str
     citation_ids: list[str]
     kind: Literal["fact", "rule", "condition", "exception", "interpretation"]
+    support: list["KnowledgeClaimSupport"] = Field(default_factory=list)
+
+
+class KnowledgeCitationLocation(BaseModel):
+    precision: Literal["exact_span", "block", "section"]
+    page_number: int | None = None
+    page_label: str | None = None
+    page_numbers: list[int] = Field(default_factory=list)
+    block_id: str | None = None
+    charspan: tuple[int, int] | None = None
+    rectangles: list[KnowledgeRectangle] = Field(default_factory=list)
+
+
+class KnowledgeClaimSupport(BaseModel):
+    evidence_id: str
+    quote: str
+    location: KnowledgeCitationLocation
+
+
+class KnowledgeAnswerSection(BaseModel):
+    heading: str
+    text: str
+    claim_ids: list[str]
+    citation_ids: list[str]
+
+
+class KnowledgeAnswerPresentation(BaseModel):
+    direct_answer: str
+    sections: list[KnowledgeAnswerSection] = Field(default_factory=list)
+    follow_up_hint: str | None = None
+
+
+class KnowledgeQueryCorrection(BaseModel):
+    original: str
+    replacement: str
+    confidence: float
+    basis: Literal["known_alias", "vocabulary_fuzzy", "context_verified"]
+
+
+class KnowledgeQueryInterpretation(BaseModel):
+    original_query: str
+    interpreted_query: str
+    corrections: list[KnowledgeQueryCorrection] = Field(default_factory=list)
+    ambiguity: list[str] = Field(default_factory=list)
+
+
+class KnowledgeEvidence(BaseModel):
+    id: str
+    source: dict[str, str | int | None]
+    location: KnowledgeCitationLocation
+    excerpt: str
+    context_excerpt: str | None = None
+    content_url: str | None = None
 
 
 class KnowledgeConflict(BaseModel):
@@ -101,6 +155,12 @@ class KnowledgeSourceCoverage(BaseModel):
     searched_source_count: int
     sources_without_ready_index: int
     sources_requiring_reindex: int
+
+
+class KnowledgeSourceWarning(BaseModel):
+    code: Literal["source_not_indexed", "source_requires_reindex"]
+    count: int
+    message: str
 
 
 class KnowledgeNeed(BaseModel):
@@ -147,6 +207,7 @@ class KnowledgeQueryV3Trace(BaseModel):
     planning_ms: float
     retrieval_ms: float
     coverage_ms: float
+    synthesis_ms: float = 0
     followup_rounds: int
     planner_llm_calls: int
     coverage_llm_calls: int
@@ -166,13 +227,17 @@ class KnowledgeAnswer(BaseModel):
     trace: dict[str, int | str | float | bool] | None = None
     mode: Literal["evidence", "answer"] = "evidence"
     answer_status: Literal["complete", "partial", "unsupported"] | None = None
+    answer_content: KnowledgeAnswerPresentation | None = None
     claims: list[KnowledgeClaim] = Field(default_factory=list)
+    evidence: list[KnowledgeEvidence] = Field(default_factory=list)
     missing_information: list[str] = Field(default_factory=list)
     conflicts: list[KnowledgeConflict] = Field(default_factory=list)
+    source_warnings: list[KnowledgeSourceWarning] = Field(default_factory=list)
     source_coverage: KnowledgeSourceCoverage | None = None
     retrieval_strategy: Literal["single", "planned"] = "single"
     query_plan: KnowledgeQueryPlan | None = None
     evidence_coverage: KnowledgeEvidenceCoverage | None = None
+    query_interpretation: KnowledgeQueryInterpretation | None = None
     evidence_groups: list[KnowledgeEvidenceGroup] = Field(default_factory=list)
     v3_trace: KnowledgeQueryV3Trace | None = None
 
@@ -299,12 +364,11 @@ class ShreckWorldAPI:
                     selection: SelectedPassage | None = None, top_k: int = 6,
                     include_trace: bool = False,
                     mode: Literal["evidence", "answer"] = "evidence",
-                    retrieval_strategy: Literal["single", "planned"] = "single") -> KnowledgeAnswer:
-        """Ask for compatible single-path output or opt-in planned evidence (`mode='evidence'`)."""
+                    retrieval_strategy: Literal["single", "planned"] = "single",
+                    response_detail: Literal["concise", "standard", "detailed"] | None = None) -> KnowledgeAnswer:
+        """Ask for single retrieval or opt-in planned evidence/grounded-answer output."""
         if library_item_id is not None and library_item_ids is not None:
             raise ValueError("Specify either library_item_id or library_item_ids, not both")
-        if retrieval_strategy == "planned" and mode != "evidence":
-            raise ValueError("Planned ShreckWorld retrieval supports mode='evidence' only")
         payload = {'query': question, 'top_k': top_k, 'include_trace': include_trace}
         if library_item_id is not None:
             payload['library_item_id'] = library_item_id
@@ -314,6 +378,8 @@ class ShreckWorldAPI:
             payload['mode'] = mode
         if retrieval_strategy != "single":
             payload['retrieval_strategy'] = retrieval_strategy
+        if response_detail is not None:
+            payload["response_detail"] = response_detail
         if selection is not None:
             payload['selection'] = selection.model_dump()
         value = await self._request('POST', f'/shreckworlds/{quote(world_id, safe="")}/query', json=payload)
@@ -323,13 +389,16 @@ class ShreckWorldAPI:
         self, world_id: str, question: str, *, library_item_id: str | None = None,
         library_item_ids: list[str] | None = None, selection: SelectedPassage | None = None,
         top_k: int = 6, include_trace: bool = True,
+        mode: Literal["evidence", "answer"] = "evidence",
+        response_detail: Literal["concise", "standard", "detailed"] = "concise",
     ) -> KnowledgeAgentJob:
-        """Queue a ShreckWorld planned evidence query and return its lifecycle."""
+        """Queue a planned evidence query, optionally with a grounded answer."""
         if library_item_id is not None and library_item_ids is not None:
             raise ValueError("Specify either library_item_id or library_item_ids, not both")
         payload: dict[str, object] = {
             "query": question, "top_k": top_k, "include_trace": include_trace,
-            "retrieval_strategy": "planned", "mode": "evidence",
+            "retrieval_strategy": "planned", "mode": mode,
+            "response_detail": response_detail,
         }
         if library_item_id is not None:
             payload["library_item_id"] = library_item_id

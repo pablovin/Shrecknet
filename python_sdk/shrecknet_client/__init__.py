@@ -3,8 +3,12 @@ from .shreckworld import (
     ShreckWorldAPI, SelectedPassage, KnowledgeWorld, KnowledgeSource, KnowledgeCitation, KnowledgeAnswer,
     KnowledgeAgentJob, KnowledgeEvidenceCoverage, KnowledgeEvidenceGroup, KnowledgeNeed,
     KnowledgeNeedCoverage, KnowledgeQueryPlan, KnowledgeQueryV3Trace,
+    KnowledgeQueryCorrection, KnowledgeQueryInterpretation, KnowledgeSourceCoverage,
+    KnowledgeSourceWarning, KnowledgeClaim,
     RuleReview, KnowledgeIndexingJob, KnowledgeJobMetrics, KnowledgeReadiness,
     KnowledgeModelTarget, KnowledgeModelSettings,
+    KnowledgeAnswerPresentation, KnowledgeAnswerSection, KnowledgeCitationLocation,
+    KnowledgeClaimSupport, KnowledgeEvidence,
 )
 from .client import AsyncShrecknetClient
 from .models import *

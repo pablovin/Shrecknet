@@ -42,17 +42,22 @@ def test_grounded_answer_renders_only_claims_citing_supplied_evidence(monkeypatc
         "generate_grounded_answer",
         lambda **kwargs: (
             '{"status":"complete","claims":[{"text":"The rule applies.",'
-            '"citation_ids":["source-1"],"kind":"rule"}],'
+            '"citation_ids":["source-1"],"kind":"rule","support":[{'
+            '"source_id":"source-1","quote":"The complete rule section."}]}],'
             '"missing_information":[],"conflicts":[]}'
         ),
     )
 
-    answer, status, claims, missing, conflicts, omitted = synthesize_grounded_answer(
+    answer, status, claims, missing, conflicts, omitted, presentation, evidence = synthesize_grounded_answer(
         query="What is the rule?", citations=[citation()], model_target=MODEL_TARGET
     )
     assert answer == "The rule applies. [source-1]"
     assert status == "complete"
     assert claims[0].citation_ids == ["source-1"]
+    assert claims[0].id == "claim-1"
+    assert claims[0].support[0].quote == "The complete rule section."
+    assert presentation.direct_answer == answer
+    assert evidence[0].id == "source-1"
     assert missing == [] and conflicts == []
     assert omitted == 0
 
@@ -70,7 +75,8 @@ def test_grounded_answer_rejects_citations_not_in_evidence(monkeypatch):
         "generate_grounded_answer",
         lambda **kwargs: (
             '{"status":"complete","claims":[{"text":"Unsupported claim.",'
-            '"citation_ids":["source-99"],"kind":"fact"}],'
+            '"citation_ids":["source-99"],"kind":"fact","support":[{'
+            '"source_id":"source-99","quote":"untrusted"}]}],'
             '"missing_information":[],"conflicts":[]}'
         ),
     )
@@ -115,12 +121,13 @@ def test_grounded_answer_reports_passages_omitted_by_budget(monkeypatch):
         "generate_grounded_answer",
         lambda **kwargs: (
             '{"status":"complete","claims":[{"text":"The rule applies.",'
-            '"citation_ids":["source-1"],"kind":"rule"}],'
+            '"citation_ids":["source-1"],"kind":"rule","support":[{'
+            '"source_id":"source-1","quote":"The complete rule section."}]}],'
             '"missing_information":[],"conflicts":[]}'
         ),
     )
 
-    *_, omitted = synthesize_grounded_answer(
+    *_, omitted, _, _ = synthesize_grounded_answer(
         query="What is the rule?", citations=[citation(), second], model_target=MODEL_TARGET
     )
     assert omitted == 1
@@ -182,6 +189,7 @@ def test_shreckllm_adapter_submits_and_polls_structured_job(monkeypatch):
     )
     result = shreckllm.generate_grounded_answer(
         query="Explain", evidence=[{"citation_id": "source-1"}], model_target=target,
+        response_detail="detailed",
     )
     client = clients[0]
     assert result == '{"status":"unsupported"}'
@@ -191,3 +199,4 @@ def test_shreckllm_adapter_submits_and_polls_structured_job(monkeypatch):
     assert client.payload["reasoning"] is True
     assert client.payload["reasoning_effort"] == "high"
     assert client.payload["response_format"] == shreckllm.GROUNDING_RESPONSE_FORMAT
+    assert "Requested response detail: detailed" in client.payload["messages"][1]["content"]

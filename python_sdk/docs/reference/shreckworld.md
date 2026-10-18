@@ -12,13 +12,13 @@ No description.
 
 No description.
 
-### `query(self, world_id, question, *, library_item_id=None, library_item_ids=None, selection=None, top_k=6, include_trace=False, mode='evidence', retrieval_strategy='single')`
+### `query(self, world_id, question, *, library_item_id=None, library_item_ids=None, selection=None, top_k=6, include_trace=False, mode='evidence', retrieval_strategy='single', response_detail=None)`
 
-Ask for compatible single-path output or opt-in planned evidence (`mode='evidence'`).
+Ask for single-path output or opt-in planned evidence/grounded answer output.
 
-### `start_agent_query(self, world_id, question, *, library_item_id=None, library_item_ids=None, selection=None, top_k=6, include_trace=True)`
+### `start_agent_query(self, world_id, question, *, library_item_id=None, library_item_ids=None, selection=None, top_k=6, include_trace=True, mode='evidence', response_detail='concise')`
 
-Queue a ShreckWorld planned evidence query and return its lifecycle.
+Queue a ShreckWorld planned query, optionally with a grounded answer, and return its lifecycle.
 
 ### `agent_job(self, world_id, job_id)`
 

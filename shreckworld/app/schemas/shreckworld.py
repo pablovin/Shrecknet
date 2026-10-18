@@ -5,7 +5,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
-from app.schemas.query_v3 import EvidenceCoverage, EvidenceGroup, QueryPlan, QueryV3Trace
+from app.schemas.query_v3 import (
+    EvidenceCoverage, EvidenceGroup, QueryInterpretation, QueryPlan, QueryV3Trace,
+)
 
 
 WebSearchPolicy = Literal["disabled", "fallback", "supplemental"]
@@ -210,6 +212,7 @@ class ShreckWorldQueryRequest(BaseModel):
     library_item_ids: list[str] | None = Field(default=None, min_length=1, max_length=100)
     mode: Literal["evidence", "answer"] = "evidence"
     retrieval_strategy: Literal["single", "planned"] = "single"
+    response_detail: Literal["concise", "standard", "detailed"] | None = None
     selection: PassageContext | None = None
 
     @field_validator("library_item_ids")
@@ -280,9 +283,55 @@ class ShreckWorldCitation(BaseModel):
 
 
 class GroundedClaim(BaseModel):
+    id: str = Field(pattern=r"^claim-[1-9][0-9]*$")
     text: str = Field(min_length=1)
     citation_ids: list[str] = Field(min_length=1)
     kind: Literal["fact", "rule", "condition", "exception", "interpretation"]
+    support: list["ClaimEvidenceSupport"] = Field(min_length=1)
+
+
+class CitationLocation(BaseModel):
+    precision: Literal["exact_span", "block", "section"]
+    page_number: int | None = Field(default=None, ge=1)
+    page_label: str | None = None
+    page_numbers: list[int] = Field(default_factory=list)
+    block_id: str | None = None
+    charspan: tuple[int, int] | None = None
+    rectangles: list[CitationRectangle] = Field(default_factory=list)
+
+
+class ClaimEvidenceSupport(BaseModel):
+    evidence_id: str = Field(pattern=r"^source-[1-9][0-9]*$")
+    quote: str = Field(min_length=1)
+    location: CitationLocation
+
+
+class AnswerSection(BaseModel):
+    heading: str
+    text: str
+    claim_ids: list[str]
+    citation_ids: list[str]
+
+
+class AnswerPresentation(BaseModel):
+    direct_answer: str
+    sections: list[AnswerSection] = Field(default_factory=list)
+    follow_up_hint: str | None = None
+
+
+class ShreckWorldEvidence(BaseModel):
+    id: str = Field(pattern=r"^source-[1-9][0-9]*$")
+    source: dict[str, str | int | None]
+    location: CitationLocation
+    excerpt: str
+    context_excerpt: str | None = None
+    content_url: str | None = None
+
+
+class SourceWarning(BaseModel):
+    code: Literal["source_not_indexed", "source_requires_reindex"]
+    count: int = Field(ge=1)
+    message: str
 
 
 class GroundedConflict(BaseModel):
@@ -305,12 +354,16 @@ class ShreckWorldQueryResponse(BaseModel):
     trace: dict[str, int | str | bool | float] | None = None
     mode: Literal["evidence", "answer"] = "evidence"
     answer_status: Literal["complete", "partial", "unsupported"] | None = None
+    answer_content: AnswerPresentation | None = None
     claims: list[GroundedClaim] = Field(default_factory=list)
+    evidence: list[ShreckWorldEvidence] = Field(default_factory=list)
     missing_information: list[str] = Field(default_factory=list)
     conflicts: list[GroundedConflict] = Field(default_factory=list)
+    source_warnings: list[SourceWarning] = Field(default_factory=list)
     source_coverage: QuerySourceCoverage
     retrieval_strategy: Literal["single", "planned"] = "single"
     query_plan: QueryPlan | None = None
+    query_interpretation: QueryInterpretation | None = None
     evidence_coverage: EvidenceCoverage | None = None
     evidence_groups: list[EvidenceGroup] = Field(default_factory=list)
     v3_trace: QueryV3Trace | None = None

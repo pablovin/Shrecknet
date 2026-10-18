@@ -6,8 +6,8 @@ The ShreckWorld Agent is an independent, evidence-first query job owned by the
 `shreckworld/` service. It is not an Elder mode or a Librarian extension and does
 not import either runtime. It reuses ShreckWorld's existing indexed sources,
 structured document generations, hybrid retrieval, citations, and ShreckLLM
-service integration. This milestone does not generate a user-facing synthesized
-answer.
+service integration. In answer mode it can synthesize a grounded response from
+the evidence selected by its own planned retrieval pipeline.
 
 ## Pipeline
 
@@ -52,10 +52,18 @@ answer.
    remaining budget. Coverage may be reassessed once after that round.
    Exhaustive requests or unproven interactions are not treated as complete
    because no counterexample was retrieved.
-7. **Return evidence.** The synchronous route and persisted job return the same
-   planned evidence response, including the validated plan, per-need coverage,
-   citations, source coverage, and optional V3 trace. No answer-generation call
-   occurs. Existing `mode="answer"` is available only with `single` retrieval.
+7. **Synthesize when requested.** `mode="answer"` makes one ShreckLLM synthesis
+   call over the citations already selected by planned retrieval; it does not
+   run another search. Every claim must provide an exact supporting quote from
+   its cited evidence. The service validates quotes and citation IDs, resolves
+   the best available page/block location, and renders `[source-N]` inline
+   references. `mode="evidence"` skips synthesis and retains the evidence-only
+   response.
+8. **Return the typed response.** The synchronous route and persisted job share
+   the same response schema: answer status/content, structured claims and
+   supports, evidence entries, citations, source warnings, query interpretation,
+   the validated plan, per-need coverage, source coverage, and optional V3
+   trace. Source/index warnings remain separate from answer claims.
 
 ## Job lifecycle and persistence
 
@@ -94,9 +102,9 @@ back the service does not remove prior query jobs or alter indexed source data.
 - `SHRECKWORLD_QUERY_V3_EVIDENCE_TOKEN_BUDGET` defaults to `8000` and is bounded
   from 1,000 to 32,000. It is estimated at four characters per token, not a
   tokenizer guarantee.
-- Planner and reviewer calls use the configured ShreckLLM base URL, shared
+- Planner, reviewer, and requested synthesis calls use the configured ShreckLLM base URL, shared
   ShreckWorld model target, timeout, poll interval, and optional internal service token.
-  They do not invoke answer synthesis.
+  Synthesis is skipped in evidence mode.
 
 ## API and SDK
 

@@ -51,6 +51,20 @@ class QueryPlan(BaseModel):
         return self
 
 
+class QueryCorrection(BaseModel):
+    original: str
+    replacement: str
+    confidence: float = Field(ge=0, le=1)
+    basis: Literal["known_alias", "vocabulary_fuzzy", "context_verified"]
+
+
+class QueryInterpretation(BaseModel):
+    original_query: str
+    interpreted_query: str
+    corrections: list[QueryCorrection] = Field(default_factory=list)
+    ambiguity: list[str] = Field(default_factory=list)
+
+
 class NeedCoverage(BaseModel):
     need_id: str
     status: NeedCoverageStatus
@@ -79,6 +93,7 @@ class QueryV3Trace(BaseModel):
     planning_ms: float = 0
     retrieval_ms: float = 0
     coverage_ms: float = 0
+    synthesis_ms: float = 0
     followup_rounds: int = 0
     planner_llm_calls: int = 0
     coverage_llm_calls: int = 0

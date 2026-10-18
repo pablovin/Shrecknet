@@ -37,6 +37,36 @@ def test_complex_and_exhaustive_questions_route_to_planner():
     assert _requires_planning("What are all the ways to recover?")
 
 
+def test_query_interpretation_corrects_only_unique_source_scoped_recovery_terms():
+    from app.jobs.shreckworld_agent.interpretation import interpret_query
+    from app.services.query import RetrievalScope
+
+    item = type("Source", (), {"title": "Core Rules", "authors": ""})()
+    chunk = type("Chunk", (), {
+        "text": "Sanity is a measure of stability. Sanity losses affect characters.",
+        "heading_path": [],
+    })()
+    scope = RetrievalScope(
+        session=None, shreckworld_id="world", fingerprint="f" * 64,
+        document_ids=[], rows=[(chunk, item)], by_id={}, trace={},
+    )
+
+    corrected = interpret_query("How do I heal Saniyt?", scope)
+    assert corrected.interpreted_query == "How do I heal Sanity?"
+    assert corrected.corrections[0].basis == "vocabulary_fuzzy"
+    assert interpret_query("Does Saniyt cause a wound?", scope).corrections == []
+
+    ambiguous_chunk = type("Chunk", (), {
+        "text": "Sanity affects the mind. Sanity changes over time. Saniy is another term. Saniy is used here.",
+        "heading_path": [],
+    })()
+    ambiguous_scope = RetrievalScope(
+        session=None, shreckworld_id="world", fingerprint="f" * 64,
+        document_ids=[], rows=[(ambiguous_chunk, item)], by_id={}, trace={},
+    )
+    assert interpret_query("How do I heal Saniyt?", ambiguous_scope).corrections == []
+
+
 def test_coverage_review_requires_verbatim_quote_and_known_citation(monkeypatch):
     plan = _deterministic_plan("What is Sanity?")
     citation = ShreckWorldCitation(
@@ -292,6 +322,19 @@ def test_agent_job_lifecycle_and_owner_isolation(api, monkeypatch):
     assert result["result"]["query_plan"]["needs"][0]["kind"] == "definition"
     assert result["result"]["evidence_coverage"]["needs"][0]["status"] == "missing"
 
+    answer_job = client.post(
+        f"/shreckworlds/{world_id}/agent-jobs", headers=headers,
+        json={"query": "What is Sanity?", "mode": "answer"},
+    )
+    assert answer_job.status_code == 202, answer_job.text
+    run_shreckworld_agent_job.run(answer_job.json()["id"])
+    completed_answer = client.get(
+        f"/shreckworlds/{world_id}/agent-jobs/{answer_job.json()['id']}", headers=headers,
+    ).json()
+    assert completed_answer["result"]["mode"] == "answer"
+    assert completed_answer["result"]["answer_status"] == "unsupported"
+    assert completed_answer["result"]["answer_content"]["direct_answer"]
+
     app.dependency_overrides[get_current_user] = lambda: ShrecknetPrincipal(user_id="another-user", role="player")
     assert client.get(
         f"/shreckworlds/{world_id}/agent-jobs/{queued['id']}", headers=headers,
@@ -351,11 +394,153 @@ def test_synchronous_planned_query_uses_evidence_only_pipeline(api, monkeypatch)
     assert result["evidence_coverage"]["needs"][0]["status"] == "missing"
 
 
-def test_planned_answer_mode_is_rejected(api):
+def test_planned_answer_mode_is_accepted_and_uses_one_planned_run(api, monkeypatch):
     client, headers, world_id = api
+    from app.schemas.shreckworld import (
+        AnswerPresentation, QuerySourceCoverage, ShreckWorldQueryResponse,
+    )
+    calls = []
+    def run(*args, **kwargs):
+        calls.append(kwargs)
+        return ShreckWorldQueryResponse(
+            shreckworld_id=world_id, query="What is Sanity?",
+            answer="Sanity [source-1]", citations=[], mode="answer",
+            answer_status="complete",
+            answer_content=AnswerPresentation(direct_answer="Sanity [source-1]"),
+            source_coverage=QuerySourceCoverage(
+                requested_source_count=0, searched_source_count=0,
+                sources_without_ready_index=0, sources_requiring_reindex=0,
+            ),
+            retrieval_strategy="planned",
+        )
+    monkeypatch.setattr("app.api.routers.shreckworlds.run_shreckworld_agent", run)
     response = client.post(
         f"/shreckworlds/{world_id}/query", headers=headers,
         json={"query": "What is Sanity?", "retrieval_strategy": "planned", "mode": "answer"},
     )
-    assert response.status_code == 422
-    assert "evidence" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json()["mode"] == "answer"
+    assert response.json()["answer_content"]["direct_answer"] == "Sanity [source-1]"
+    assert len(calls) == 1
+
+
+def test_planned_answer_synthesizes_once_from_retrieved_citations(api, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.db.session import session_factory
+    from app.jobs.shreckworld_agent.agent import (
+        RetrievalScope, _ReviewedEvidence, _ReviewedNeed, run_shreckworld_agent,
+    )
+    from app.models import ShreckWorldDocumentChunk, ShreckWorldLibraryItem
+    from app.schemas.shreckworld import (
+        AnswerPresentation, ClaimEvidenceSupport, CitationLocation, GroundedClaim,
+        ShreckWorldCitation, ShreckWorldQueryRequest,
+    )
+    from app.services.grounded_answer import evidence_item
+
+    _, _, world_id = api
+    synthesis_calls = []
+    with session_factory()() as session:
+        item = ShreckWorldLibraryItem(
+            shreckworld_id=world_id, title="Core Rules", authority_tier="core_rules",
+            authority_priority=10, pdf_path="/test.pdf", source_sha256="a" * 64,
+            embedding_status="ready",
+        )
+        session.add(item)
+        session.flush()
+        chunk = ShreckWorldDocumentChunk(
+            library_item_id=item.id, page_number=12, ordinal=1,
+            text="Sanity measures mental stability.", embedding_json="[]",
+        )
+        session.add(chunk)
+        session.commit()
+        session.refresh(item)
+        session.refresh(chunk)
+        scope = RetrievalScope(
+            session=session, shreckworld_id=world_id, fingerprint="f" * 64,
+            document_ids=[], rows=[(chunk, item)], by_id={chunk.id: (chunk, item)},
+            trace={
+                "requested_sources": 1, "sources_searched": 1,
+                "sources_without_ready_index": 0, "sources_requiring_reindex": 0,
+            },
+        )
+        citation = ShreckWorldCitation(
+            source_id="source-1", library_item_id=item.id, title=item.title,
+            page_number=12, chunk_id=chunk.id, score=1,
+            excerpt=chunk.text, evidence_text=chunk.text,
+            authority_tier="core_rules", authority_priority=10,
+            source_sha256=item.source_sha256,
+        )
+
+        monkeypatch.setattr(
+            "app.jobs.shreckworld_agent.agent.resolve_retrieval_scope",
+            lambda *args, **kwargs: scope,
+        )
+        monkeypatch.setattr(
+            "app.jobs.shreckworld_agent.agent.search_candidates",
+            lambda *args, **kwargs: ([{"chunk_id": chunk.id, "rrf_score": 1.0}], {
+                "qdrant_fallback": False, "reranker_fallback": False,
+            }),
+        )
+        monkeypatch.setattr(
+            "app.jobs.shreckworld_agent.agent.hydrate_candidate",
+            lambda *args, **kwargs: citation,
+        )
+        monkeypatch.setattr(
+            "app.jobs.shreckworld_agent.agent.get_settings",
+            lambda: SimpleNamespace(
+                query_v3_planning_enabled=True,
+                query_v3_coverage_review_enabled=True,
+                query_v3_evidence_token_budget=1000,
+            ),
+        )
+        monkeypatch.setattr(
+            "app.jobs.shreckworld_agent.agent._review_evidence",
+            lambda *args, **kwargs: {
+                "need-1": _ReviewedNeed(
+                    need_id="need-1",
+                    supported_requirements=["Direct definition"],
+                    missing_requirements=[],
+                    evidence=[_ReviewedEvidence(
+                        source_id="source-1", quote=chunk.text,
+                    )],
+                    explanation="The passage defines Sanity.",
+                ),
+            },
+        )
+
+        def synthesize(**kwargs):
+            synthesis_calls.append(kwargs)
+            claim = GroundedClaim(
+                id="claim-1", text="Sanity measures mental stability.",
+                citation_ids=["source-1"], kind="fact",
+                support=[ClaimEvidenceSupport(
+                    evidence_id="source-1", quote=chunk.text,
+                    location=CitationLocation(precision="section", page_numbers=[12]),
+                )],
+            )
+            presentation = AnswerPresentation(
+                direct_answer="Sanity measures mental stability. [source-1]",
+            )
+            return (
+                presentation.direct_answer, "complete", [claim], [], [], 0,
+                presentation, [evidence_item(citation)],
+            )
+
+        monkeypatch.setattr(
+            "app.jobs.shreckworld_agent.agent.synthesize_grounded_answer", synthesize,
+        )
+        response = run_shreckworld_agent(
+            session, shreckworld_id=world_id,
+            request=ShreckWorldQueryRequest(
+                query="What is Sanity?", mode="answer", retrieval_strategy="planned",
+            ),
+        )
+
+    assert response.mode == "answer"
+    assert response.answer == "Sanity measures mental stability. [source-1]"
+    assert response.claims[0].support[0].quote == "Sanity measures mental stability."
+    assert response.evidence[0].id == "source-1"
+    assert len(synthesis_calls) == 1
+    assert synthesis_calls[0]["citations"] == [citation]
+    assert synthesis_calls[0]["query"] == "What is Sanity?"

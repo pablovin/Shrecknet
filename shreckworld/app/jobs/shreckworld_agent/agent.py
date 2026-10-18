@@ -17,6 +17,7 @@ from app.integrations.shreckllm import ShreckLLMUnavailable, generate_shreckworl
 from app.jobs.shreckworld_agent.prompts import (
     COVERAGE_REVIEW_SCHEMA, COVERAGE_REVIEW_SYSTEM_PROMPT, QUERY_PLAN_SCHEMA, QUERY_PLANNER_SYSTEM_PROMPT,
 )
+from app.jobs.shreckworld_agent.interpretation import interpret_query
 from app.models import ShreckWorld, ShreckWorldLibraryItem
 from app.schemas.query_v3 import EvidenceCoverage, EvidenceGroup, NeedCoverage, QueryNeed, QueryPlan, QueryV3Trace
 from app.schemas.shreckworld import (
@@ -24,6 +25,10 @@ from app.schemas.shreckworld import (
 )
 from app.services.model_settings import get_model_shreckworld_synthesizer
 from app.services.query import RetrievalScope, hydrate_candidate, resolve_retrieval_scope, search_candidates
+from app.services.grounded_answer import (
+    EvidenceBudgetExceeded, GroundedAnswerInvalid, GroundedAnswerUnavailable,
+    evidence_item, synthesize_grounded_answer,
+)
 
 logger = logging.getLogger(__name__)
 _MAX_CANDIDATES_PER_NEED = 40
@@ -443,7 +448,7 @@ def run_shreckworld_agent(
     session: Session, *, shreckworld_id: str, request: ShreckWorldQueryRequest,
     on_stage: Callable[[str], None] | None = None,
 ) -> ShreckWorldQueryResponse:
-    """Execute the ShreckWorld planned evidence pipeline; never synthesizes answers."""
+    """Execute one planned evidence pipeline, optionally followed by grounded synthesis."""
     world = validate_query_scope(session, shreckworld_id=shreckworld_id, payload=request)
     def stage(name: str) -> None:
         if on_stage is not None:
@@ -452,19 +457,22 @@ def run_shreckworld_agent(
     trace = QueryV3Trace()
     model_target = get_model_shreckworld_synthesizer(session)
     started = time.perf_counter()
+    stage("interpreting")
+    scope = resolve_retrieval_scope(
+        session, shreckworld_id=shreckworld_id,
+        library_item_id=request.library_item_id, library_item_ids=request.library_item_ids,
+    )
+    interpretation = interpret_query(request.query, scope)
+    interpreted_request = request.model_copy(update={"query": interpretation.interpreted_query})
     stage("planning")
     planning_started = time.perf_counter()
     plan, planner_fallback = _plan_query(
-        session, world=world, request=request, trace=trace, model_target=model_target,
+        session, world=world, request=interpreted_request, trace=trace, model_target=model_target,
     )
     trace.planning_ms = round((time.perf_counter() - planning_started) * 1000, 2)
 
     stage("retrieving")
     retrieval_started = time.perf_counter()
-    scope = resolve_retrieval_scope(
-        session, shreckworld_id=shreckworld_id,
-        library_item_id=request.library_item_id, library_item_ids=request.library_item_ids,
-    )
     initial_by_need: dict[str, list[dict[str, Any]]] = {}
     fallback_flags: list[dict[str, int | bool]] = []
     for need in plan.needs:
@@ -517,7 +525,7 @@ def run_shreckworld_agent(
         need_lookup = {need.id: need for need in plan.needs}
         for need_id in followup_needs:
             need = need_lookup[need_id]
-            targeted_query = _targeted_query(request, need, scope, groups)
+            targeted_query = _targeted_query(interpreted_request, need, scope, groups)
             candidates, fallback = search_candidates(scope, targeted_query, limit=_MAX_CANDIDATES_PER_NEED)
             candidates = candidates[:_MAX_CANDIDATES_PER_NEED]
             already_associated = {
@@ -558,12 +566,30 @@ def run_shreckworld_agent(
         int(source_trace["sources_without_ready_index"])
         + int(source_trace["sources_requiring_reindex"])
     )
-    if unavailable_sources:
+    scope_sensitive = (
+        plan.requires_exhaustive_coverage
+        or plan.intent == "comparison"
+        or len([need for need in plan.needs if need.required]) > 1
+    )
+    if unavailable_sources and scope_sensitive:
         coverage.unresolved_questions.append(
             f"{unavailable_sources} requested source(s) were not searched because their indexes are unavailable or incompatible."
         )
         if coverage.status == "adequate":
             coverage.status = "partial"
+    source_warnings = []
+    if int(source_trace["sources_without_ready_index"]):
+        count = int(source_trace["sources_without_ready_index"])
+        source_warnings.append({
+            "code": "source_not_indexed", "count": count,
+            "message": f"{count} requested source(s) have not been indexed; results use available indexed sources.",
+        })
+    if int(source_trace["sources_requiring_reindex"]):
+        count = int(source_trace["sources_requiring_reindex"])
+        source_warnings.append({
+            "code": "source_requires_reindex", "count": count,
+            "message": f"{count} requested source(s) need reindexing; results use compatible active sources.",
+        })
     source_trace["returned_citations"] = len(citations)
     source_trace["retrieval_ms"] = trace.retrieval_ms
     source_trace["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
@@ -572,10 +598,56 @@ def run_shreckworld_agent(
         if citations else
         "No citation-ready evidence was retrieved. No answer synthesis was run; missing results do not prove that a rule is absent."
     )
+    answer_status = None
+    answer_content = None
+    claims = []
+    missing_information: list[str] = []
+    conflicts = []
+    evidence = [evidence_item(citation) for citation in citations]
+    if request.mode == "answer":
+        if citations:
+            stage("synthesizing")
+            synthesis_started = time.perf_counter()
+            try:
+                (
+                    answer, answer_status, claims, missing_information, conflicts, _omitted,
+                    answer_content, evidence,
+                ) = synthesize_grounded_answer(
+                    query=interpretation.interpreted_query,
+                    citations=citations,
+                    model_target=model_target,
+                    session=session,
+                    response_detail=request.response_detail or "concise",
+                )
+            except EvidenceBudgetExceeded as exc:
+                raise QueryScopeError(422, str(exc)) from exc
+            except GroundedAnswerUnavailable as exc:
+                raise QueryScopeError(503, "Grounded answer synthesis is unavailable") from exc
+            except GroundedAnswerInvalid as exc:
+                raise QueryScopeError(
+                    502, "Grounded answer synthesis returned invalid evidence references",
+                ) from exc
+            trace.synthesis_ms = round((time.perf_counter() - synthesis_started) * 1000, 2)
+            if unavailable_sources and scope_sensitive and answer_status == "complete":
+                answer_status = "partial"
+        else:
+            answer_status = "unsupported"
+            missing_information = ["No citation-ready evidence was retrieved for this query."]
+            answer = "The available indexed sources do not establish an answer to this question."
+            from app.schemas.shreckworld import AnswerPresentation
+            answer_content = AnswerPresentation(
+                direct_answer=answer,
+                follow_up_hint="Try another indexed source or rephrase the question.",
+            )
+    source_trace["synthesis_ms"] = trace.synthesis_ms
+    source_trace["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
     stage("completed")
     return ShreckWorldQueryResponse(
         shreckworld_id=shreckworld_id, query=request.query, answer=answer, citations=citations,
-        trace=source_trace if request.include_trace else None, mode="evidence",
+        trace=source_trace if request.include_trace else None, mode=request.mode,
+        answer_status=answer_status, answer_content=answer_content, claims=claims,
+        evidence=evidence, missing_information=missing_information, conflicts=conflicts,
+        source_warnings=source_warnings, query_interpretation=interpretation,
         source_coverage=QuerySourceCoverage(
             requested_source_count=int(source_trace["requested_sources"]),
             searched_source_count=int(source_trace["sources_searched"]),

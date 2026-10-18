@@ -27,17 +27,38 @@ A selected passage can be sent with `selection=SelectedPassage(library_item_id=s
 Answers are extractive evidence, not conversational synthesis. `source-priority-v1` reviews report `ambiguous` when applicability/edition is unmodeled and `unsupported` without evidence; they do not emit executable `resolved` actions. No game state is changed and existing agents are not automatically rewired. Original PDFs remain readable when the semantic model is unavailable.
 
 For a complex question, opt into `retrieval_strategy="planned"` to get a
-ShreckWorld-owned evidence plan, per-need coverage, and evidence groups. Planned
-retrieval supports evidence mode only; `mode="answer"` with this strategy returns
-`422`. It does not call Elder or Librarian and it does not synthesize an answer.
-Use `include_trace=True` to inspect planning, retrieval, coverage, fallback, and
-bounded follow-up diagnostics.
+ShreckWorld-owned evidence plan, per-need coverage, and evidence groups. Combine
+it with `mode="answer"` to synthesize once from those same retrieved citations:
+
+```python
+answer = await sdk.shreckworld.query(
+    world_id, "Can these two treatments be combined?",
+    retrieval_strategy="planned",
+    mode="answer",
+    response_detail="concise",
+    include_trace=True,
+)
+print(answer.answer_content.direct_answer)
+for item in answer.evidence:
+    print(item.id, item.source["title"], item.location.page_numbers)
+```
+
+Evidence mode skips synthesis. Answer mode includes `answer_content`, grounded
+`claims` with exact-quote `support`, and frontend-oriented `evidence` entries.
+Rendered answer text uses inline `[source-N]` references; those IDs match
+`citations[].source_id`, `claims[].support[].evidence_id`, and `evidence[].id`.
+Index availability is reported separately in `source_warnings`. This pipeline
+belongs to ShreckWorld and does not call Elder or Librarian. Use
+`include_trace=True` to inspect planning, retrieval, coverage, synthesis,
+fallback, and bounded follow-up diagnostics.
 
 For asynchronous execution, `start_agent_query(world_id, question, ...)` returns
 a `KnowledgeAgentJob`; poll it with `agent_job(world_id, job_id)`. Its `status`
 and `stage` expose lifecycle progress, and its `result` contains the same typed
-`KnowledgeAnswer` returned by the synchronous planned path. Only the submitting
-user or an admin can read the job. Jobs cannot currently be cancelled.
+`KnowledgeAnswer` returned by the synchronous planned path. Pass `mode="answer"`
+and optionally `response_detail="standard"` or `"detailed"` to request synthesis
+in the background job. Only the submitting user or an admin can read the job.
+Jobs cannot currently be cancelled.
 
 Admins and world builders can read or change the service-owned ShreckWorld
 provider/model target with `model_settings()` and `update_model_settings(...)`.

@@ -77,7 +77,8 @@ def test_shreckworld_planned_strategy_and_agent_job_lifecycle():
                     import json
                     payload = json.loads(request.content)
                     assert payload["retrieval_strategy"] == "planned"
-                    assert payload["mode"] == "evidence"
+                    assert payload["mode"] == "answer"
+                    assert payload["response_detail"] == "detailed"
                     return httpx.Response(202, json={
                         "id": "job/1", "shreckworld_id": "world/a", "status": "queued",
                         "stage": "queued", "created_at": "2026-10-18T12:00:00Z",
@@ -118,7 +119,9 @@ def test_shreckworld_planned_strategy_and_agent_job_lifecycle():
             sdk.shreckworld._transport._client = httpx.AsyncClient(
                 base_url="http://world.test", transport=httpx.MockTransport(handler),
             )
-            queued = await sdk.shreckworld.start_agent_query("world/a", "What is Sanity?")
+            queued = await sdk.shreckworld.start_agent_query(
+                "world/a", "What is Sanity?", mode="answer", response_detail="detailed",
+            )
             assert queued.status == "queued"
             completed = await sdk.shreckworld.agent_job("world/a", "job/1")
             assert completed.result is not None
@@ -126,18 +129,29 @@ def test_shreckworld_planned_strategy_and_agent_job_lifecycle():
             async def query_handler(request):
                 import json
                 assert request.url.path.endswith("/query")
-                assert json.loads(request.content)["retrieval_strategy"] == "planned"
-                return httpx.Response(200, json=completed.result.model_dump(mode="json"))
+                payload = json.loads(request.content)
+                assert payload["retrieval_strategy"] == "planned"
+                if payload.get("mode", "evidence") == "evidence":
+                    return httpx.Response(200, json=completed.result.model_dump(mode="json"))
+                assert payload["mode"] == "answer"
+                assert payload["response_detail"] == "detailed"
+                return httpx.Response(200, json={
+                    **completed.result.model_dump(mode="json"),
+                    "mode": "answer",
+                    "answer_status": "unsupported",
+                    "answer_content": {"direct_answer": "No evidence."},
+                })
             await sdk.shreckworld._transport._client.aclose()
             sdk.shreckworld._transport._client = httpx.AsyncClient(
                 base_url="http://world.test", transport=httpx.MockTransport(query_handler),
             )
             answer = await sdk.shreckworld.query("world/a", "What is Sanity?", retrieval_strategy="planned")
             assert answer.retrieval_strategy == "planned"
-            with pytest.raises(ValueError, match="mode='evidence'"):
-                await sdk.shreckworld.query(
-                    "world/a", "What is Sanity?", mode="answer", retrieval_strategy="planned",
-                )
+            answer = await sdk.shreckworld.query(
+                "world/a", "What is Sanity?", mode="answer",
+                retrieval_strategy="planned", response_detail="detailed",
+            )
+            assert answer.mode == "answer"
     asyncio.run(scenario())
 
 

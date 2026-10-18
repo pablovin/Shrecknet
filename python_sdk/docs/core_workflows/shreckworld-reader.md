@@ -60,6 +60,12 @@ and optionally `response_detail="standard"` or `"detailed"` to request synthesis
 in the background job. Only the submitting user or an admin can read the job.
 Jobs cannot currently be cancelled.
 
+Grounded synthesis allows up to 4,000 output tokens and the ShreckWorld
+ShreckLLM deadline defaults to 45 seconds. For synchronous SDK queries that
+request answer mode, configure the shared SDK timeout to at least 60 seconds
+(`Shrecknet(timeout=60)`) to allow for network overhead. Prefer agent jobs when
+the calling frontend or proxy has a shorter request timeout.
+
 Admins and world builders can read or change the service-owned ShreckWorld
 provider/model target with `model_settings()` and `update_model_settings(...)`.
 The one `model_shreckworld_synthesizer` target is shared by planner, evidence

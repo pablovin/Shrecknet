@@ -152,7 +152,7 @@ def generate_grounded_answer(
         "temperature": 0,
         "use_conversation_memory": False,
         "metadata": {"usage_tag": "shreckworld.grounded_answer"},
-        "max_tokens": 1600,
+        "max_tokens": 4000,
         "response_format": GROUNDING_RESPONSE_FORMAT,
     }
 

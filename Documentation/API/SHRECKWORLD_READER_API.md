@@ -172,17 +172,19 @@ For ShreckLLM, configure `SHRECKWORLD_SHRECKLLM_BASE_URL`. The ShreckWorld
 model target is managed through the settings API below; the legacy
 `SHRECKWORLD_SYNTHESIS_PROVIDER` and `SHRECKWORLD_SYNTHESIS_MODEL` values only
 provide its initial default before a target is saved.
-`SHRECKWORLD_SYNTHESIS_TIMEOUT_SECONDS` controls the job deadline,
+`SHRECKWORLD_SYNTHESIS_TIMEOUT_SECONDS` controls the ShreckLLM job deadline
+(default 45 seconds),
 `SHRECKWORLD_SYNTHESIS_POLL_INTERVAL_SECONDS` controls status polling, and
 `SHRECKWORLD_SYNTHESIS_EVIDENCE_TOKEN_BUDGET` caps complete evidence passages
 supplied to synthesis (estimated at four characters per token). The optional
 `SHRECKLLM_INTERNAL_SERVICE_TOKEN` is forwarded as a bearer token for
 installations that protect internal ShreckLLM calls. Defaults are
-`http://shreckllm:8110`, `openai`, `gpt-5-nano`, 25 seconds, 0.5 seconds, and
-8,000 estimated evidence tokens respectively. The default deadline fits
-within the Python SDK's 30-second request timeout; when increasing the server
-deadline, increase the SDK `Shrecknet(timeout=...)` value accordingly. Evidence
-mode and source reading do not require ShreckLLM availability.
+`http://shreckllm:8110`, `openai`, `gpt-5-nano`, 45 seconds, 0.5 seconds, and
+8,000 estimated evidence tokens respectively. Grounded answer synthesis allows
+up to 4,000 output tokens. Synchronous SDK callers should configure
+`Shrecknet(timeout=60)` or higher to allow for the ShreckWorld deadline and
+network overhead; use the asynchronous agent-job endpoint when the client
+cannot wait that long. Evidence mode and source reading do not require ShreckLLM availability.
 
 ## ShreckWorld model settings
 

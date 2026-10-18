@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # Legacy bootstrap defaults; the persisted model target takes precedence.
     synthesis_provider: str = Field(default="openai", min_length=1)
     synthesis_model: str = Field(default="gpt-5-nano", min_length=1)
-    synthesis_timeout_seconds: float = Field(default=25, ge=1, le=600)
+    synthesis_timeout_seconds: float = Field(default=45, ge=1, le=600)
     synthesis_poll_interval_seconds: float = Field(default=0.5, ge=0.1, le=5)
     synthesis_evidence_token_budget: int = Field(default=8000, ge=1000, le=32000)
     query_v3_planning_enabled: bool = True

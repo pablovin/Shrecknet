@@ -125,6 +125,6 @@ Scene" always means a Shrecknet narrative resource, not a Foundry Canvas Scene.
 
 ## Module checks
 
-From this directory, run `node --test tests/api-client.test.mjs` to exercise the
+From this directory, run `node --test tests/*.test.mjs` to exercise the
 service URL, authorization, Elder pagination, ShreckWorld query, and Chronicle
-revision/asset request contracts.
+revision/asset request contracts, plus manifest download and packaged-file checks.

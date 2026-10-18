@@ -85,9 +85,23 @@ For a release `X.Y.Z`:
 3. Create and push the `foundry-vX.Y.Z` tag on that commit.
 4. The `Release Foundry module` workflow validates the version and manifest,
    builds a ZIP containing only module-root files, and creates the GitHub
-   Release with `shrecknet-foundry-vX.Y.Z.zip` attached.
-5. Install or update from the stable manifest URL through Foundry's **Install
-   Module** dialog.
+   Release with `shrecknet-foundry-vX.Y.Z.zip` and `module.json` attached.
+   Validation runs the module tests, including checks that every script, style,
+   and README referenced by the manifest exists.
+5. Verify the release ZIP and `module.json` assets are publicly downloadable
+   before installing or updating from the stable manifest URL through Foundry's
+   **Install Module** dialog. The raw manifest tracks `main` and can advertise
+   a version before its release has been published. To install a specific
+   published release, use
+   `https://github.com/pablovin/Shrecknet/releases/download/foundry-vX.Y.Z/module.json`.
+
+A `Not Found` error for the ZIP means the advertised release asset is unavailable.
+A version bump alone does not publish the ZIP: merge the change, push its matching
+tag, and confirm the release workflow succeeds. In particular, validation must
+check the manifest's actual files rather than a removed theme metadata file.
+Version `0.3.1` removes that obsolete release check. No backend migration or
+configuration change is required. To roll back, restore a previously published
+module ZIP; never repoint an existing release tag.
 
 The release tag is immutable. Do not move or recreate it after publishing.
 

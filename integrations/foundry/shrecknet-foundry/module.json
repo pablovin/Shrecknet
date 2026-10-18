@@ -2,7 +2,7 @@
   "id": "shrecknet-foundry",
   "title": "Shrecknet",
   "description": "Explore Shrecknet Atlas, Elder, ShreckWorld, and Chronicles from a compact Foundry workspace.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "compatibility": {
     "minimum": "14",
     "verified": "14"
@@ -24,6 +24,6 @@
   "url": "https://github.com/pablovin/Shrecknet/tree/main/integrations/foundry/shrecknet-foundry",
   "readme": "README.md",
   "manifest": "https://raw.githubusercontent.com/pablovin/Shrecknet/main/integrations/foundry/shrecknet-foundry/module.json",
-  "download": "https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.3.0/shrecknet-foundry-v0.3.0.zip",
+  "download": "https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.3.1/shrecknet-foundry-v0.3.1.zip",
   "bugs": "https://github.com/pablovin/Shrecknet/issues"
 }

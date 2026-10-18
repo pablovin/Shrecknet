@@ -21,3 +21,5 @@ This folder contains release notes by application version.
 - [Unreleased CharacterAgent dispositional personality](unreleased-character-dispositions.md)
 
 - [Unreleased Novelist V5 Narrative Director](unreleased-novelist-director.md)
+
+- [Foundry v0.3.1](./foundry-v0.3.1.md) - Repair release validation and publish installable manifest assets.

@@ -143,7 +143,8 @@ def generate_grounded_answer(
                     "claim and conflict requires at least one citation ID. Every claim must "
                     "also include one or more support objects, each containing a source_id "
                     "matching one of its citation_ids and a nonempty exact quote copied "
-                    "verbatim from that source's supplied evidence text. Keep claims concise "
+                    "verbatim from that source's supplied evidence text. Provide at least "
+                    "one support object for every citation_id on the claim. Keep claims concise "
                     "and combine closely related points. Use no claims when "
                     "the evidence does not support an answer; then set status to unsupported."
                 ),

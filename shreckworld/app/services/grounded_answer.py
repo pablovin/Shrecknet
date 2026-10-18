@@ -33,6 +33,10 @@ class GroundedAnswerUnavailable(GroundedAnswerError):
 class GroundedAnswerInvalid(GroundedAnswerError):
     """The model returned invalid structure or unsupported citation references."""
 
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
 
 class EvidenceBudgetExceeded(GroundedAnswerError):
     """No complete evidence passage fits the configured synthesis budget."""
@@ -81,7 +85,7 @@ def synthesize_grounded_answer(
     try:
         result = _GroundedAnswer.model_validate(json.loads(raw))
     except (json.JSONDecodeError, ValidationError) as exc:
-        raise GroundedAnswerInvalid("ShreckLLM returned invalid grounded-answer structure") from exc
+        raise GroundedAnswerInvalid("invalid_structure") from exc
     _validate_citations(result, supplied_ids, citations)
     by_source = {citation.source_id: citation for citation in citations}
     claims = [
@@ -145,25 +149,31 @@ def _validate_citations(
 ) -> None:
     if result.status == "unsupported":
         if result.claims:
-            raise GroundedAnswerInvalid("Unsupported answers must not contain factual claims")
+            raise GroundedAnswerInvalid("unsupported_with_claims")
     elif not result.claims:
-        raise GroundedAnswerInvalid("Supported answers must contain at least one cited claim")
+        raise GroundedAnswerInvalid("supported_without_claims")
 
     citation_text = {citation.source_id: citation.evidence_text or citation.excerpt for citation in citations}
     for claim in result.claims:
         claim_ids = set(claim.citation_ids)
         support_ids = {support.source_id for support in claim.support}
-        if not claim.text.strip() or not claim_ids <= supplied_ids or support_ids != claim_ids:
-            raise GroundedAnswerInvalid("A claim is empty or cites evidence not supplied to synthesis")
+        if not claim.text.strip():
+            raise GroundedAnswerInvalid("empty_claim")
+        if not claim_ids or not claim_ids <= supplied_ids:
+            raise GroundedAnswerInvalid("unknown_citation")
+        if support_ids != claim_ids:
+            raise GroundedAnswerInvalid("missing_quote_support")
         for support in claim.support:
             source_text = citation_text.get(support.source_id, "")
             if not support.quote.strip() or _canonical(support.quote) not in _canonical(source_text):
-                raise GroundedAnswerInvalid("A claim contains a non-verbatim evidence quote")
+                raise GroundedAnswerInvalid("quote_not_verbatim")
     for conflict in result.conflicts:
-        if not conflict.description.strip() or not set(conflict.citation_ids) <= supplied_ids:
-            raise GroundedAnswerInvalid("A conflict is empty or cites evidence not supplied to synthesis")
+        if not conflict.description.strip():
+            raise GroundedAnswerInvalid("empty_conflict")
+        if not conflict.citation_ids or not set(conflict.citation_ids) <= supplied_ids:
+            raise GroundedAnswerInvalid("unknown_conflict_citation")
     if any(not item.strip() for item in result.missing_information):
-        raise GroundedAnswerInvalid("Missing-information entries must not be empty")
+        raise GroundedAnswerInvalid("empty_missing_information")
 
 
 def _canonical(value: str) -> str:

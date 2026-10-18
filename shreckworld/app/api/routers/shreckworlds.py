@@ -402,7 +402,13 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
             except GroundedAnswerUnavailable as exc:
                 raise HTTPException(status_code=503, detail="Grounded answer synthesis is unavailable") from exc
             except GroundedAnswerInvalid as exc:
-                raise HTTPException(status_code=502, detail="Grounded answer synthesis returned invalid evidence references") from exc
+                logger.warning(
+                    "ShreckWorld grounded answer rejected (reason=%s)", exc.reason,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Grounded answer synthesis returned invalid structured output or evidence references",
+                ) from exc
             trace["synthesis_ms"] = round((time.perf_counter() - synthesis_started) * 1000, 2)
             unavailable_sources = int(trace["sources_without_ready_index"]) + int(trace["sources_requiring_reindex"])
             requires_full_scope = bool(re.search(

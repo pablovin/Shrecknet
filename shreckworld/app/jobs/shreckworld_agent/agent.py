@@ -624,8 +624,12 @@ def run_shreckworld_agent(
             except GroundedAnswerUnavailable as exc:
                 raise QueryScopeError(503, "Grounded answer synthesis is unavailable") from exc
             except GroundedAnswerInvalid as exc:
+                logger.warning(
+                    "ShreckWorld agent grounded answer rejected (reason=%s)", exc.reason,
+                )
                 raise QueryScopeError(
-                    502, "Grounded answer synthesis returned invalid evidence references",
+                    502,
+                    "Grounded answer synthesis returned invalid structured output or evidence references",
                 ) from exc
             trace.synthesis_ms = round((time.perf_counter() - synthesis_started) * 1000, 2)
             if unavailable_sources and scope_sensitive and answer_status == "complete":

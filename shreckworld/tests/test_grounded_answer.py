@@ -81,10 +81,42 @@ def test_grounded_answer_rejects_citations_not_in_evidence(monkeypatch):
         ),
     )
 
-    with pytest.raises(GroundedAnswerInvalid, match="not supplied"):
+    with pytest.raises(GroundedAnswerInvalid) as error:
         synthesize_grounded_answer(
             query="What is the rule?", citations=[citation()], model_target=MODEL_TARGET
         )
+    assert error.value.reason == "unknown_citation"
+
+
+def test_grounded_answer_requires_support_for_every_claim_citation(monkeypatch):
+    from app.services import grounded_answer
+
+    second = citation().model_copy(update={
+        "source_id": "source-2",
+        "library_item_id": "book-2",
+        "chunk_id": "chunk-2",
+        "evidence_text": "A second relevant rule.",
+    })
+    monkeypatch.setattr(
+        grounded_answer, "get_settings",
+        lambda: SimpleNamespace(synthesis_evidence_token_budget=8000),
+    )
+    monkeypatch.setattr(
+        grounded_answer, "generate_grounded_answer",
+        lambda **kwargs: (
+            '{"status":"complete","claims":[{"text":"The rule applies.",'
+            '"citation_ids":["source-1","source-2"],"kind":"rule","support":[{'
+            '"source_id":"source-1","quote":"The complete rule section."}]}],'
+            '"missing_information":[],"conflicts":[]}'
+        ),
+    )
+
+    with pytest.raises(GroundedAnswerInvalid) as error:
+        synthesize_grounded_answer(
+            query="What is the rule?", citations=[citation(), second],
+            model_target=MODEL_TARGET,
+        )
+    assert error.value.reason == "missing_quote_support"
 
 
 def test_grounded_answer_does_not_truncate_passages_to_fit_budget(monkeypatch):

@@ -163,7 +163,7 @@ Rule review never executes game actions, rolls dice, or mutates character/game d
 - `503`: agent-job queue dispatch failed; the persisted job is marked failed.
 - Agent job execution errors are available as a safe `error` on the owner-visible job resource.
 - `503`: ShreckLLM unavailable or synthesis deadline exceeded in `mode="answer"`.
-- `502`: synthesis returned malformed structured output or invalid citation references.
+- `502`: synthesis returned malformed structured output, a citation outside the supplied evidence, or a supporting quote that does not exactly match its cited passage (ignoring whitespace/case).
 - `422`: no complete passage fits the configured synthesis evidence budget.
 
 Deploy this service API before enabling the reader frontend. The service's existing schema initialization creates the new model-settings table automatically; it requires no data backfill. Independent structured-ingestion/model changes may require reindexing; see the architecture/indexing guides. Rolling back the frontend or these reader routes preserves uploaded source files and management data. Unit tests use explicit model doubles and do not download model artifacts; real retrieval quality and mobile large-book performance require representative acceptance datasets/devices.

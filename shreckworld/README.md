@@ -36,23 +36,41 @@ uvicorn app.main:app --reload --port 8120
 ```
 
 Authenticated Shrecknet users can discover/read sources, ask evidence questions,
-and request read-only rule review. Query requests can select one, several, or all
-sources; evidence mode is the default, while grounded answer mode uses the
-configured ShreckLLM provider/model. `admin` and `world_builder` manage sources
-and indexing. There is no separate password/admin token. `/health` checks liveness;
+and request read-only rule review. The backward-compatible `single` retrieval
+strategy remains the query default; opt-in `planned` retrieval and owner-scoped
+asynchronous agent jobs produce structured evidence coverage without answer
+synthesis. Query requests can select one, several, or all sources; grounded
+`mode="answer"` remains available on the single strategy using the configured
+ShreckLLM provider/model. `admin` and `world_builder` manage sources and
+indexing. There is no separate password/admin token. `/health` checks liveness;
 `/ready` verifies actual E5 inference and local parser-artifact presence.
 
-Answer-mode defaults are `SHRECKWORLD_SHRECKLLM_BASE_URL=http://shreckllm:8110`,
-`SHRECKWORLD_SYNTHESIS_PROVIDER=openai`, `SHRECKWORLD_SYNTHESIS_MODEL=gpt-5-nano`,
-and a 25-second synthesis deadline with an 8,000 estimated-token evidence budget. Set these environment variables to
-match the configured ShreckLLM deployment. The optional
+The initial ShreckWorld LLM target defaults to `openai` / `gpt-5-nano` and can
+be read or changed by `admin` and `world_builder` users through
+`GET`/`PUT /admin/settings/model-targets/shreckworld_synthesizer`. It is stored
+in the ShreckWorld database and shared by planner, coverage reviewer, and
+grounded answer mode. Until changed through that API, the legacy
+`SHRECKWORLD_SYNTHESIS_PROVIDER` and `SHRECKWORLD_SYNTHESIS_MODEL` environment
+variables supply the initial target.
+
+`SHRECKWORLD_SHRECKLLM_BASE_URL` defaults to `http://shreckllm:8110`; the
+synthesis deadline defaults to 25 seconds and the evidence budget to 8,000
+estimated tokens. Set the environment variables to match the configured
+ShreckLLM deployment. The optional
 `SHRECKLLM_INTERNAL_SERVICE_TOKEN` is forwarded for deployments using internal
 service authentication. Evidence retrieval and original-source reading remain
 available when ShreckLLM is unavailable.
 
+Planned retrieval has separate controls: `SHRECKWORLD_QUERY_V3_PLANNING_ENABLED`
+and `SHRECKWORLD_QUERY_V3_COVERAGE_REVIEW_ENABLED` default to `true`, and
+`SHRECKWORLD_QUERY_V3_EVIDENCE_TOKEN_BUDGET` defaults to 8,000 estimated tokens.
+The planned agent uses the configured ShreckLLM provider/model, but never runs
+answer synthesis.
+
 Canonical contracts:
 
 - [Architecture](../Documentation/Architecture/SHRECKWORLD.md)
+- [ShreckWorld Agent](../Documentation/Agents/ShreckWorld/ShreckWorld%20Agent.md)
 - [Upload/autofill](../Documentation/API/SHRECKWORLD_UPLOAD_API.md)
 - [Indexing/jobs/readiness](../Documentation/API/SHRECKWORLD_INDEXING_API.md)
 - [Reader/query/rule review](../Documentation/API/SHRECKWORLD_READER_API.md)

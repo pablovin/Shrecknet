@@ -20,7 +20,11 @@ def _engine():
 
 
 def create_schema() -> None:
-    from app.models import ShreckWorld, ShreckWorldDocumentChunk, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem  # noqa: F401
+    from app.models import (  # noqa: F401
+        ShreckWorld, ShreckWorldAgentJob, ShreckWorldDocumentChunk,
+        ShreckWorldEmbeddingJob, ShreckWorldLibraryItem,
+        ShreckWorldSettings,
+    )
     from app.db.base import Base
 
     engine = _engine()

@@ -32,6 +32,10 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [Elder query and retrieval](./Agents/Elder/Elder.md) — current runtime and stable contract
 - [Elder Query V3 implementation plan](./Agents/Elder/ELDER_QUERY_V3_IMPLEMENTATION_PLAN.md) — proposed latency, cost, and answer-quality target with compatibility requirements
 
+## ShreckWorld
+
+- [ShreckWorld Agent](./Agents/ShreckWorld/ShreckWorld%20Agent.md) — independent planned-evidence pipeline, coverage rules, persisted job lifecycle, and operations
+
 ## Novelist
 
 - [Narrative planning and source references plan](./Agents/Novelist/Narrative%20Planning%20and%20Source%20References%20Plan.md) — Narrative Director design, recorded Session 9 baseline, context projection, and pending live evaluation

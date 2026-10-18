@@ -104,3 +104,32 @@ class ShreckWorldEmbeddingJob(Base):
     metrics_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ShreckWorldAgentJob(Base):
+    __tablename__ = "shreckworld_agent_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    shreckworld_id: Mapped[str] = mapped_column(
+        ForeignKey("shreckworlds.id", ondelete="CASCADE"), index=True
+    )
+    owner_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    request_json: Mapped[str] = mapped_column(Text, nullable=False)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ShreckWorldSettings(Base):
+    __tablename__ = "shreckworld_settings"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="default")
+    model_shreckworld_synthesizer: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

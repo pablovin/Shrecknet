@@ -78,7 +78,9 @@ def main(only: set[str] | None = None) -> None:
 
     pages = {
         "shreckworld.md": _class_page("ShreckWorldAPI", _find_class(shreckworld_mod, "ShreckWorldAPI"),
-            ["worlds", "sources", "query", "resolve_action", "readiness", "start_indexing", "indexing_job", "aclose"]),
+            ["worlds", "sources", "query", "start_agent_query", "agent_job", "model_settings",
+             "update_model_settings", "resolve_action", "readiness",
+             "start_indexing", "indexing_job", "aclose"]),
         "character-agents.md": _class_page(
             "CharacterAgentsAPI",
             _find_class(resources_mod, "CharacterAgentsAPI"),

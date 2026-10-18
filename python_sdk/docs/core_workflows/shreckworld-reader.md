@@ -26,7 +26,39 @@ A selected passage can be sent with `selection=SelectedPassage(library_item_id=s
 
 Answers are extractive evidence, not conversational synthesis. `source-priority-v1` reviews report `ambiguous` when applicability/edition is unmodeled and `unsupported` without evidence; they do not emit executable `resolved` actions. No game state is changed and existing agents are not automatically rewired. Original PDFs remain readable when the semantic model is unavailable.
 
+For a complex question, opt into `retrieval_strategy="planned"` to get a
+ShreckWorld-owned evidence plan, per-need coverage, and evidence groups. Planned
+retrieval supports evidence mode only; `mode="answer"` with this strategy returns
+`422`. It does not call Elder or Librarian and it does not synthesize an answer.
+Use `include_trace=True` to inspect planning, retrieval, coverage, fallback, and
+bounded follow-up diagnostics.
+
+For asynchronous execution, `start_agent_query(world_id, question, ...)` returns
+a `KnowledgeAgentJob`; poll it with `agent_job(world_id, job_id)`. Its `status`
+and `stage` expose lifecycle progress, and its `result` contains the same typed
+`KnowledgeAnswer` returned by the synchronous planned path. Only the submitting
+user or an admin can read the job. Jobs cannot currently be cancelled.
+
+Admins and world builders can read or change the service-owned ShreckWorld
+provider/model target with `model_settings()` and `update_model_settings(...)`.
+The one `model_shreckworld_synthesizer` target is shared by planner, evidence
+reviewer, and grounded answer calls:
+
+```python
+from shrecknet_client import KnowledgeModelTarget, Shrecknet
+
+async with Shrecknet(token=admin_token) as sdk:
+    current = await sdk.shreckworld.model_settings()
+    updated = await sdk.shreckworld.update_model_settings(
+        KnowledgeModelTarget(provider="openai", name="gpt-5-nano")
+    )
+```
+
+See the [ShreckWorld model settings API](../../../Documentation/API/SHRECKWORLD_READER_API.md#shreckworld-model-settings)
+for authorization, persistence, and environment-default precedence.
+
 See the [reader API contract](../../../Documentation/API/SHRECKWORLD_READER_API.md) for byte ranges, citation anchors, access rules, rollout and failure states. Run `examples/11_shreckworld/read_world.py --help` for a runnable client example.
+Run `examples/11_shreckworld/run_agent_query.py --help` for the asynchronous planned-evidence job workflow.
 
 Typed citations also include `provenance`, `rectangles`, `heading_path`,
 `page_numbers`, `evidence_text`, and `content_url` for structured semantic

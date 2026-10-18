@@ -103,6 +103,61 @@ class KnowledgeSourceCoverage(BaseModel):
     sources_requiring_reindex: int
 
 
+class KnowledgeNeed(BaseModel):
+    id: str
+    question: str
+    kind: Literal["definition", "mechanic", "procedure", "condition", "comparison", "other"]
+    required: bool
+    coverage_requirement: str
+    priority: int
+
+
+class KnowledgeQueryPlan(BaseModel):
+    plan_version: Literal["query-v3.1"]
+    intent: Literal["simple", "multi_rule", "comparison", "exhaustive"]
+    requires_exhaustive_coverage: bool
+    needs: list[KnowledgeNeed]
+
+
+class KnowledgeNeedCoverage(BaseModel):
+    need_id: str
+    status: Literal["covered", "partial", "missing", "unresolved"]
+    evidence_ids: list[str]
+    supported_requirements: list[str]
+    missing_requirements: list[str]
+    assessment_method: Literal["deterministic", "verified_model", "unverified"]
+    explanation: str
+
+
+class KnowledgeEvidenceCoverage(BaseModel):
+    status: Literal["adequate", "partial", "unresolved"]
+    needs: list[KnowledgeNeedCoverage]
+    unresolved_questions: list[str]
+
+
+class KnowledgeEvidenceGroup(BaseModel):
+    evidence_id: str
+    need_ids: list[str]
+    chunk_ids: list[str]
+    incomplete_evidence: bool = False
+    omission_reason: str | None = None
+
+
+class KnowledgeQueryV3Trace(BaseModel):
+    planning_ms: float
+    retrieval_ms: float
+    coverage_ms: float
+    followup_rounds: int
+    planner_llm_calls: int
+    coverage_llm_calls: int
+    retrieved_candidates: int
+    deduplicated_evidence: int
+    evidence_tokens: int
+    planner_fallback: bool
+    qdrant_fallback: bool
+    reranker_fallback: bool
+
+
 class KnowledgeAnswer(BaseModel):
     shreckworld_id: str
     query: str
@@ -115,6 +170,24 @@ class KnowledgeAnswer(BaseModel):
     missing_information: list[str] = Field(default_factory=list)
     conflicts: list[KnowledgeConflict] = Field(default_factory=list)
     source_coverage: KnowledgeSourceCoverage | None = None
+    retrieval_strategy: Literal["single", "planned"] = "single"
+    query_plan: KnowledgeQueryPlan | None = None
+    evidence_coverage: KnowledgeEvidenceCoverage | None = None
+    evidence_groups: list[KnowledgeEvidenceGroup] = Field(default_factory=list)
+    v3_trace: KnowledgeQueryV3Trace | None = None
+
+
+class KnowledgeAgentJob(BaseModel):
+    id: str
+    shreckworld_id: str
+    status: Literal["queued", "running", "completed", "failed"]
+    stage: str
+    created_at: datetime
+    started_at: datetime | None = None
+    updated_at: datetime | None = None
+    completed_at: datetime | None = None
+    result: KnowledgeAnswer | None = None
+    error: str | None = None
 
 
 class RuleReview(BaseModel):
@@ -189,6 +262,17 @@ class KnowledgeReadiness(BaseModel):
     parser_artifacts_present: bool
 
 
+class KnowledgeModelTarget(BaseModel):
+    provider: str
+    name: str
+    reasoning: bool = False
+    reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+
+
+class KnowledgeModelSettings(BaseModel):
+    model_shreckworld_synthesizer: KnowledgeModelTarget
+
+
 class ShreckWorldAPI:
     """Shares Shrecknet identity; querying/resolution never mutates game state."""
     def __init__(self, identity: AsyncShrecknetClient, base_url: str = 'http://localhost:8121', timeout: float = 30):
@@ -214,9 +298,13 @@ class ShreckWorldAPI:
                     library_item_ids: list[str] | None = None,
                     selection: SelectedPassage | None = None, top_k: int = 6,
                     include_trace: bool = False,
-                    mode: Literal["evidence", "answer"] = "evidence") -> KnowledgeAnswer:
+                    mode: Literal["evidence", "answer"] = "evidence",
+                    retrieval_strategy: Literal["single", "planned"] = "single") -> KnowledgeAnswer:
+        """Ask for compatible single-path output or opt-in planned evidence (`mode='evidence'`)."""
         if library_item_id is not None and library_item_ids is not None:
             raise ValueError("Specify either library_item_id or library_item_ids, not both")
+        if retrieval_strategy == "planned" and mode != "evidence":
+            raise ValueError("Planned ShreckWorld retrieval supports mode='evidence' only")
         payload = {'query': question, 'top_k': top_k, 'include_trace': include_trace}
         if library_item_id is not None:
             payload['library_item_id'] = library_item_id
@@ -224,10 +312,60 @@ class ShreckWorldAPI:
             payload['library_item_ids'] = library_item_ids
         if mode != "evidence":
             payload['mode'] = mode
+        if retrieval_strategy != "single":
+            payload['retrieval_strategy'] = retrieval_strategy
         if selection is not None:
             payload['selection'] = selection.model_dump()
         value = await self._request('POST', f'/shreckworlds/{quote(world_id, safe="")}/query', json=payload)
         return KnowledgeAnswer.model_validate(value)
+
+    async def start_agent_query(
+        self, world_id: str, question: str, *, library_item_id: str | None = None,
+        library_item_ids: list[str] | None = None, selection: SelectedPassage | None = None,
+        top_k: int = 6, include_trace: bool = True,
+    ) -> KnowledgeAgentJob:
+        """Queue a ShreckWorld planned evidence query and return its lifecycle."""
+        if library_item_id is not None and library_item_ids is not None:
+            raise ValueError("Specify either library_item_id or library_item_ids, not both")
+        payload: dict[str, object] = {
+            "query": question, "top_k": top_k, "include_trace": include_trace,
+            "retrieval_strategy": "planned", "mode": "evidence",
+        }
+        if library_item_id is not None:
+            payload["library_item_id"] = library_item_id
+        if library_item_ids is not None:
+            payload["library_item_ids"] = library_item_ids
+        if selection is not None:
+            payload["selection"] = selection.model_dump()
+        value = await self._request(
+            "POST", f"/shreckworlds/{quote(world_id, safe='')}/agent-jobs", json=payload,
+        )
+        return KnowledgeAgentJob.model_validate(value)
+
+    async def agent_job(self, world_id: str, job_id: str) -> KnowledgeAgentJob:
+        """Read a ShreckWorld agent job; only its owner or an admin can poll it."""
+        value = await self._request(
+            "GET", f"/shreckworlds/{quote(world_id, safe='')}/agent-jobs/{quote(job_id, safe='')}",
+        )
+        return KnowledgeAgentJob.model_validate(value)
+
+    async def model_settings(self) -> KnowledgeModelSettings:
+        """Read the ShreckWorld LLM target; requires admin/world_builder access."""
+        value = await self._request(
+            "GET", "/admin/settings/model-targets/shreckworld_synthesizer",
+        )
+        return KnowledgeModelSettings.model_validate(value)
+
+    async def update_model_settings(
+        self, model_shreckworld_synthesizer: KnowledgeModelTarget,
+    ) -> KnowledgeModelSettings:
+        """Set the shared ShreckWorld planner, reviewer, and answer model target."""
+        value = await self._request(
+            "PUT",
+            "/admin/settings/model-targets/shreckworld_synthesizer",
+            json={"model_shreckworld_synthesizer": model_shreckworld_synthesizer.model_dump()},
+        )
+        return KnowledgeModelSettings.model_validate(value)
 
     async def resolve_action(self, world_id: str, action: str, *, facts: list[str] | None = None,
                              library_item_id: str | None = None) -> RuleReview:

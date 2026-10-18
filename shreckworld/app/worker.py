@@ -10,7 +10,10 @@ def main() -> None:
         raise RuntimeError("Docling artifacts are missing; run the model-prefetch service first")
     # Threads avoid forking a prewarmed PyTorch model. One task at a time bounds
     # memory; local model inference and Docling use their configured CPU threads.
-    celery_app.worker_main(["worker", "--pool=threads", "--concurrency=1", "--loglevel=info", "--queues=shreckworld_embedding"])
+    celery_app.worker_main([
+        "worker", "--pool=threads", "--concurrency=1", "--loglevel=info",
+        "--queues=shreckworld_embedding,shreckworld_agent",
+    ])
 
 
 if __name__ == "__main__":

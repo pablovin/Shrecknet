@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from app.core.config import get_settings
 from app.integrations.shreckllm import ShreckLLMUnavailable, generate_grounded_answer
 from app.schemas.shreckworld import GroundedClaim, GroundedConflict, ShreckWorldCitation
+from app.schemas.shreckworld import ShreckWorldModelTarget
 
 
 class GroundedAnswerError(RuntimeError):
@@ -36,7 +37,8 @@ class _GroundedAnswer(BaseModel):
 
 
 def synthesize_grounded_answer(
-    *, query: str, citations: list[ShreckWorldCitation]
+    *, query: str, citations: list[ShreckWorldCitation],
+    model_target: ShreckWorldModelTarget,
 ) -> tuple[str, Literal["complete", "partial", "unsupported"], list[GroundedClaim],
            list[str], list[GroundedConflict], int]:
     evidence, supplied_ids = _evidence_package(citations)
@@ -45,7 +47,9 @@ def synthesize_grounded_answer(
             "No complete evidence passage fits the configured synthesis budget"
         )
     try:
-        raw = generate_grounded_answer(query=query, evidence=evidence)
+        raw = generate_grounded_answer(
+            query=query, evidence=evidence, model_target=model_target
+        )
     except ShreckLLMUnavailable as exc:
         raise GroundedAnswerUnavailable(str(exc)) from exc
     try:

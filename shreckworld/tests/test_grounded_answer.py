@@ -8,6 +8,9 @@ from app.services.grounded_answer import (
     GroundedAnswerInvalid,
     synthesize_grounded_answer,
 )
+from app.schemas.shreckworld import ShreckWorldModelTarget
+
+MODEL_TARGET = ShreckWorldModelTarget(provider="openai", name="gpt-5-nano")
 
 
 def citation():
@@ -45,7 +48,7 @@ def test_grounded_answer_renders_only_claims_citing_supplied_evidence(monkeypatc
     )
 
     answer, status, claims, missing, conflicts, omitted = synthesize_grounded_answer(
-        query="What is the rule?", citations=[citation()]
+        query="What is the rule?", citations=[citation()], model_target=MODEL_TARGET
     )
     assert answer == "The rule applies. [source-1]"
     assert status == "complete"
@@ -73,7 +76,9 @@ def test_grounded_answer_rejects_citations_not_in_evidence(monkeypatch):
     )
 
     with pytest.raises(GroundedAnswerInvalid, match="not supplied"):
-        synthesize_grounded_answer(query="What is the rule?", citations=[citation()])
+        synthesize_grounded_answer(
+            query="What is the rule?", citations=[citation()], model_target=MODEL_TARGET
+        )
 
 
 def test_grounded_answer_does_not_truncate_passages_to_fit_budget(monkeypatch):
@@ -85,7 +90,9 @@ def test_grounded_answer_does_not_truncate_passages_to_fit_budget(monkeypatch):
         lambda: SimpleNamespace(synthesis_evidence_token_budget=1),
     )
     with pytest.raises(EvidenceBudgetExceeded, match="complete evidence passage"):
-        synthesize_grounded_answer(query="What is the rule?", citations=[citation()])
+        synthesize_grounded_answer(
+            query="What is the rule?", citations=[citation()], model_target=MODEL_TARGET
+        )
 
 
 def test_grounded_answer_reports_passages_omitted_by_budget(monkeypatch):
@@ -114,7 +121,7 @@ def test_grounded_answer_reports_passages_omitted_by_budget(monkeypatch):
     )
 
     *_, omitted = synthesize_grounded_answer(
-        query="What is the rule?", citations=[citation(), second]
+        query="What is the rule?", citations=[citation(), second], model_target=MODEL_TARGET
     )
     assert omitted == 1
 
@@ -169,10 +176,18 @@ def test_shreckllm_adapter_submits_and_polls_structured_job(monkeypatch):
     monkeypatch.setattr(shreckllm.httpx, "Client", make_client)
     monkeypatch.setenv("SHRECKLLM_INTERNAL_SERVICE_TOKEN", "internal-token")
 
-    result = shreckllm.generate_grounded_answer(query="Explain", evidence=[{"citation_id": "source-1"}])
+    target = ShreckWorldModelTarget(
+        provider="anthropic", name="claude-sonnet-4",
+        reasoning=True, reasoning_effort="high",
+    )
+    result = shreckllm.generate_grounded_answer(
+        query="Explain", evidence=[{"citation_id": "source-1"}], model_target=target,
+    )
     client = clients[0]
     assert result == '{"status":"unsupported"}'
     assert client.headers == {"Authorization": "Bearer internal-token"}
-    assert client.payload["provider_id"] == "openai"
-    assert client.payload["model"] == "gpt-5-nano"
+    assert client.payload["provider_id"] == "anthropic"
+    assert client.payload["model"] == "claude-sonnet-4"
+    assert client.payload["reasoning"] is True
+    assert client.payload["reasoning_effort"] == "high"
     assert client.payload["response_format"] == shreckllm.GROUNDING_RESPONSE_FORMAT

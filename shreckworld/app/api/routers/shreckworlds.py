@@ -15,15 +15,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.private_files import private_file_response
-from app.api.deps import get_current_user, require_world_manager
+from app.api.deps import ShrecknetPrincipal, get_current_user, require_world_manager
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models import ShreckWorld, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem
+from app.jobs.shreckworld_agent.agent import QueryScopeError, run_shreckworld_agent, validate_query_scope
+from app.models import ShreckWorld, ShreckWorldAgentJob, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem
 from app.schemas.shreckworld import (
-    AuthorityTier, EmbeddingJobRead, GroundedClaim, GroundedConflict, ShreckWorldCreate, ShreckWorldLibraryItemRead,
+    AuthorityTier, EmbeddingJobRead, GroundedClaim, GroundedConflict, ShreckWorldAgentJobRead,
+    ShreckWorldCreate, ShreckWorldLibraryItemRead,
     ShreckWorldLibraryItemUpdate, ShreckWorldQueryRequest, ShreckWorldQueryResponse,
     ShreckWorldRead, ShreckWorldUpdate, ActionResolutionRequest, ActionResolutionResponse,
     QuerySourceCoverage,
+    ShreckWorldModelSettings,
 )
 from app.services.query import query_shreckworld
 from app.services.rule_resolution import resolve_action
@@ -36,8 +39,13 @@ from app.services.grounded_answer import (
     synthesize_grounded_answer,
 )
 from app.services.source_lifecycle import delete_source, delete_world
+from app.services.model_settings import (
+    get_model_shreckworld_synthesizer,
+    save_model_shreckworld_synthesizer,
+)
 
 admin_router = APIRouter(prefix="/admin/shreckworlds", tags=["ShreckWorld admin"])
+settings_router = APIRouter(prefix="/admin/settings", tags=["ShreckWorld settings"])
 query_router = APIRouter(prefix="/shreckworlds", tags=["ShreckWorld query"])
 router = APIRouter()
 
@@ -64,6 +72,32 @@ def _item_or_404(session: Session, shreckworld_id: str, item_id: str) -> ShreckW
     if item is None or item.shreckworld_id != shreckworld_id:
         raise HTTPException(status_code=404, detail="ShreckWorld library item not found")
     return item
+
+
+@settings_router.get(
+    "/model-targets/shreckworld_synthesizer",
+    response_model=ShreckWorldModelSettings,
+    dependencies=[Depends(require_world_manager)],
+)
+def get_model_settings(session: Session = Depends(get_db)) -> ShreckWorldModelSettings:
+    return ShreckWorldModelSettings(
+        model_shreckworld_synthesizer=get_model_shreckworld_synthesizer(session)
+    )
+
+
+@settings_router.put(
+    "/model-targets/shreckworld_synthesizer",
+    response_model=ShreckWorldModelSettings,
+    dependencies=[Depends(require_world_manager)],
+)
+def update_model_settings(
+    payload: ShreckWorldModelSettings,
+    session: Session = Depends(get_db),
+) -> ShreckWorldModelSettings:
+    target = save_model_shreckworld_synthesizer(
+        session, payload.model_shreckworld_synthesizer
+    )
+    return ShreckWorldModelSettings(model_shreckworld_synthesizer=target)
 
 
 @admin_router.post("", response_model=ShreckWorldRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_world_manager)])
@@ -269,6 +303,18 @@ def get_indexing_job(shreckworld_id: str, item_id: str, job_id: str, session: Se
 @query_router.post("/{shreckworld_id}/query", response_model=ShreckWorldQueryResponse, dependencies=[Depends(get_current_user)])
 def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Session = Depends(get_db)) -> ShreckWorldQueryResponse:
     started = time.perf_counter()
+    if payload.retrieval_strategy == "planned":
+        if payload.mode != "evidence":
+            raise HTTPException(status_code=422, detail="Planned retrieval supports mode='evidence' only")
+        try:
+            validate_query_scope(session, shreckworld_id=shreckworld_id, payload=payload)
+        except QueryScopeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        with _semantic_errors():
+            try:
+                return run_shreckworld_agent(session, shreckworld_id=shreckworld_id, request=payload)
+            except QueryScopeError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     _world_or_404(session, shreckworld_id)
     if payload.library_item_id:
         _item_or_404(session, shreckworld_id, payload.library_item_id)
@@ -316,7 +362,9 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
             synthesis_started = time.perf_counter()
             try:
                 answer, answer_status, claims, missing_information, conflicts, omitted_citations = synthesize_grounded_answer(
-                    query=payload.query, citations=citations
+                    query=payload.query,
+                    citations=citations,
+                    model_target=get_model_shreckworld_synthesizer(session),
                 )
             except EvidenceBudgetExceeded as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -355,6 +403,67 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
     )
 
 
+def _agent_job_read(job: ShreckWorldAgentJob) -> ShreckWorldAgentJobRead:
+    return ShreckWorldAgentJobRead(
+        id=job.id, shreckworld_id=job.shreckworld_id, status=job.status, stage=job.stage,
+        created_at=job.created_at, started_at=job.started_at, updated_at=job.updated_at,
+        completed_at=job.completed_at,
+        result=ShreckWorldQueryResponse.model_validate_json(job.result_json) if job.result_json else None,
+        error=job.error,
+    )
+
+
+@query_router.post(
+    "/{shreckworld_id}/agent-jobs", response_model=ShreckWorldAgentJobRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_agent_job(
+    shreckworld_id: str,
+    payload: ShreckWorldQueryRequest,
+    principal: ShrecknetPrincipal = Depends(get_current_user),
+    session: Session = Depends(get_db),
+) -> ShreckWorldAgentJobRead:
+    if payload.mode != "evidence":
+        raise HTTPException(status_code=422, detail="ShreckWorld agent jobs support evidence mode only")
+    request = payload.model_copy(update={"retrieval_strategy": "planned"})
+    try:
+        validate_query_scope(session, shreckworld_id=shreckworld_id, payload=request)
+    except QueryScopeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    job = ShreckWorldAgentJob(
+        shreckworld_id=shreckworld_id, owner_id=principal.user_id,
+        request_json=request.model_dump_json(), created_at=datetime.now(timezone.utc),
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    try:
+        from app.tasks.agent import run_shreckworld_agent_job
+        run_shreckworld_agent_job.delay(job.id)
+    except Exception as exc:
+        job.status, job.stage = "failed", "failed"
+        job.error = "The agent job could not be queued. Please retry."
+        job.completed_at = job.updated_at = datetime.now(timezone.utc)
+        session.commit()
+        raise HTTPException(status_code=503, detail=job.error) from exc
+    session.refresh(job)
+    return _agent_job_read(job)
+
+
+@query_router.get("/{shreckworld_id}/agent-jobs/{job_id}", response_model=ShreckWorldAgentJobRead)
+def get_agent_job(
+    shreckworld_id: str, job_id: str,
+    principal: ShrecknetPrincipal = Depends(get_current_user),
+    session: Session = Depends(get_db),
+) -> ShreckWorldAgentJobRead:
+    job = session.get(ShreckWorldAgentJob, job_id)
+    if job is None or job.shreckworld_id != shreckworld_id:
+        raise HTTPException(status_code=404, detail="ShreckWorld agent job not found")
+    if job.owner_id != principal.user_id and principal.role != "admin":
+        raise HTTPException(status_code=404, detail="ShreckWorld agent job not found")
+    return _agent_job_read(job)
+
+
 @query_router.post("/{shreckworld_id}/resolve-action", response_model=ActionResolutionResponse, dependencies=[Depends(get_current_user)])
 def resolve_world_action(shreckworld_id: str, payload: ActionResolutionRequest, session: Session = Depends(get_db)) -> ActionResolutionResponse:
     _world_or_404(session, shreckworld_id)
@@ -365,4 +474,5 @@ def resolve_world_action(shreckworld_id: str, payload: ActionResolutionRequest, 
 
 
 router.include_router(admin_router)
+router.include_router(settings_router)
 router.include_router(query_router)

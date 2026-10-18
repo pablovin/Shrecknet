@@ -6,6 +6,8 @@ ShreckWorld is a separately deployed world-knowledge service inside the Shreckne
 frontend. It owns its worlds, original sources, structured document generations,
 embeddings, retrieval jobs, and citations. The existing Shrecknet `World` remains
 an ontology-grouping concept; a `ShreckWorld` has a separate persistence boundary.
+It also owns a persisted `model_shreckworld_synthesizer` provider/model target,
+administered through its settings API and shared by ShreckWorld LLM stages.
 
 Librarian and ShreckWorld share **algorithms**, through the local `shreckdoc/`
 package. `shreckdoc.pipeline` owns the Docling adapter, normalized page/section/block
@@ -25,7 +27,7 @@ forwarded bearer token against `/auth/jwks`, including signature, issuer,
 audience, expiry, subject, and role. Every authenticated user can discover worlds,
 read original sources, query evidence, and request conservative rule review.
 There is currently no per-world membership ACL. Only `admin` and `world_builder`
-can manage sources or start/poll indexing jobs.
+can manage sources, start/poll indexing jobs, and update service model settings.
 
 | Purpose | Endpoint |
 | --- | --- |
@@ -38,6 +40,8 @@ can manage sources or start/poll indexing jobs.
 | Start/latest indexing status | `POST .../{item_id}/index`, `GET .../{item_id}/index-status` |
 | Poll a specific attempt | `GET .../{item_id}/index-jobs/{job_id}` |
 | Query/review | `POST /shreckworlds/{world_id}/query`, `POST .../{world_id}/resolve-action` |
+| ShreckWorld agent | `POST /shreckworlds/{world_id}/agent-jobs`, `GET .../{job_id}` |
+| Shared ShreckWorld LLM target | `GET` / `PUT /admin/settings/model-targets/shreckworld_synthesizer` |
 | Liveness/model readiness | `GET /health`, `GET /ready` |
 
 Legacy `/embed` and `/embedding-status` routes remain supported. Upload accepts
@@ -104,6 +108,11 @@ SQLite remains canonical, including a mirror of semantic vectors:
   display/contextual text, page ranges, token counts, and child vectors.
 - `shreckworld_chunk_fts`: SQLite FTS5 contextual index for child title/headings/text.
 - `shreckworld_embedding_jobs`: lifecycle, timestamps, and structured metrics.
+- `shreckworld_agent_jobs`: owner-scoped planned-query request, lifecycle stage,
+  result, and safe failure detail. SQLite startup creates this table for existing
+  service installations; deleting a world cascades its agent-job records.
+- `shreckworld_settings`: service-owned model target. Schema initialization
+  creates the table automatically; the singleton target is shared across worlds.
 
 Original files and private covers remain under
 `media/shreckworlds/{world_id}/{item_id}/`. Each attempt stores
@@ -173,6 +182,27 @@ measurement; these metrics are not latency guarantees. See the
 [reader API contract](../API/SHRECKWORLD_READER_API.md) for request/response
 fields, configuration, and error behavior.
 
+The opt-in `retrieval_strategy="planned"` path is owned by the ShreckWorld agent,
+not Elder or Librarian. Simple queries use a deterministic one-need plan;
+complex queries may use one structured ShreckLLM planning call that sees the
+question and authorized source metadata but no retrieved chunks or source IDs.
+The service resolves authorized active generations once, searches each need
+sequentially through the shared E5/Qdrant, FTS5, exact, RRF, and reranker stack,
+then retains source-distinct logical parent evidence under a complete-unit budget.
+Sequential searches intentionally reuse the request's synchronous SQLAlchemy
+session rather than sharing it across threads. A batched optional coverage review
+must cite exact quotes present in returned evidence; failures remain unverified.
+One targeted follow-up round is bounded to missing/partial/unresolved needs.
+Planned mode never synthesizes an answer; `mode="answer"` is rejected for this
+strategy until a later milestone integrates the existing grounded-answer path.
+
+Asynchronous clients can submit the same planned-evidence operation as a
+ShreckWorld-owned agent job. The job records its authenticated owner and is
+visible only to that owner or an admin. The `shreckworld_agent` Celery queue
+shares the single-task worker with indexing, preserving the existing memory bound.
+Job results contain the same planned evidence contract as the synchronous
+opt-in path. No agent runtime or persistence owned by Elder or Librarian is used.
+
 ## Model readiness and operation
 
 Sentence Transformers and Docling are required image dependencies. The pinned
@@ -196,8 +226,9 @@ The API logs failed semantic warmup but keeps original-file reading available.
 Celery. Its single-task thread pool avoids forking a warmed PyTorch model and
 bounds memory; parser/model code uses its own configured CPU threads.
 
-The Celery app explicitly includes `app.tasks.embedding`, registering
-`shreckworld.embed.library_item` on `shreckworld_embedding` without API imports.
+The Celery app explicitly includes `app.tasks.embedding` and `app.tasks.agent`,
+registering `shreckworld.embed.library_item` on `shreckworld_embedding` and
+`shreckworld.agent.query` on `shreckworld_agent` without API imports.
 For a confirmed discarded unregistered message, rebuild the corrected worker,
 verify `celery ... inspect registered`, and requeue the original matching item/job
 pair only when both remain queued and no active/reserved/scheduled copy exists:

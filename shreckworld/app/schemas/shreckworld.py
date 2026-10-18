@@ -5,9 +5,32 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
+from app.schemas.query_v3 import EvidenceCoverage, EvidenceGroup, QueryPlan, QueryV3Trace
+
 
 WebSearchPolicy = Literal["disabled", "fallback", "supplemental"]
 AuthorityTier = Literal["house_rules", "core_rules", "supplement", "setting", "errata", "custom"]
+ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
+
+
+class ShreckWorldModelTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=200)
+    reasoning: bool = False
+    reasoning_effort: ReasoningEffort | None = None
+
+    @field_validator("provider", "name")
+    @classmethod
+    def nonblank_target_fields(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Model provider and name must not be blank")
+        return value.strip()
+
+
+class ShreckWorldModelSettings(BaseModel):
+    model_shreckworld_synthesizer: ShreckWorldModelTarget
 
 
 class ShreckWorldCreate(BaseModel):
@@ -186,6 +209,7 @@ class ShreckWorldQueryRequest(BaseModel):
     library_item_id: str | None = Field(default=None, max_length=64)
     library_item_ids: list[str] | None = Field(default=None, min_length=1, max_length=100)
     mode: Literal["evidence", "answer"] = "evidence"
+    retrieval_strategy: Literal["single", "planned"] = "single"
     selection: PassageContext | None = None
 
     @field_validator("library_item_ids")
@@ -285,6 +309,29 @@ class ShreckWorldQueryResponse(BaseModel):
     missing_information: list[str] = Field(default_factory=list)
     conflicts: list[GroundedConflict] = Field(default_factory=list)
     source_coverage: QuerySourceCoverage
+    retrieval_strategy: Literal["single", "planned"] = "single"
+    query_plan: QueryPlan | None = None
+    evidence_coverage: EvidenceCoverage | None = None
+    evidence_groups: list[EvidenceGroup] = Field(default_factory=list)
+    v3_trace: QueryV3Trace | None = None
+
+
+class ShreckWorldAgentJobRead(BaseModel):
+    id: str
+    shreckworld_id: str
+    status: Literal["queued", "running", "completed", "failed"]
+    stage: str
+    created_at: datetime
+    started_at: datetime | None = None
+    updated_at: datetime | None = None
+    completed_at: datetime | None = None
+    result: ShreckWorldQueryResponse | None = None
+    error: str | None = None
+
+    @field_validator("created_at", "started_at", "updated_at", "completed_at")
+    @classmethod
+    def normalize_agent_job_timestamps(cls, value: datetime | None) -> datetime | None:
+        return _utc(value) if value is not None else None
 
 
 class ActionResolutionRequest(BaseModel):

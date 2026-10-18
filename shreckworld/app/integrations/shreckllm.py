@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import get_settings
+from app.schemas.shreckworld import ShreckWorldModelTarget
 
 
 class ShreckLLMUnavailable(RuntimeError):
@@ -77,15 +78,19 @@ GROUNDING_SYSTEM_PROMPT = (
 )
 
 
-def generate_grounded_answer(*, query: str, evidence: list[dict[str, Any]]) -> str:
+def generate_grounded_answer(
+    *, query: str, evidence: list[dict[str, Any]], model_target: ShreckWorldModelTarget
+) -> str:
     settings = get_settings()
     headers = {}
     internal_token = os.getenv("SHRECKLLM_INTERNAL_SERVICE_TOKEN", "").strip()
     if internal_token:
         headers["Authorization"] = f"Bearer {internal_token}"
     payload = {
-        "provider_id": settings.synthesis_provider,
-        "model": settings.synthesis_model,
+        "provider_id": model_target.provider,
+        "model": model_target.name,
+        "reasoning": model_target.reasoning,
+        "reasoning_effort": model_target.reasoning_effort,
         "messages": [
             {"role": "system", "content": GROUNDING_SYSTEM_PROMPT},
             {
@@ -131,7 +136,10 @@ def generate_grounded_answer(*, query: str, evidence: list[dict[str, Any]]) -> s
                 timeout=max(0.1, min(10.0, deadline - time.monotonic())),
             )
             created.raise_for_status()
-            job_id = str(created.json().get("job_id") or "").strip()
+            created_body = created.json()
+            if not isinstance(created_body, dict):
+                raise ShreckLLMUnavailable("ShreckLLM returned an invalid structured-output job response")
+            job_id = str(created_body.get("job_id") or "").strip()
             if not job_id:
                 raise ShreckLLMUnavailable("ShreckLLM returned no synthesis job ID")
             while time.monotonic() < deadline:
@@ -139,13 +147,18 @@ def generate_grounded_answer(*, query: str, evidence: list[dict[str, Any]]) -> s
                 status_response = client.get(f"/chat/jobs/{job_id}", timeout=timeout)
                 status_response.raise_for_status()
                 job_status = status_response.json()
+                if not isinstance(job_status, dict):
+                    raise ShreckLLMUnavailable("ShreckLLM returned an invalid structured-output status")
                 state = str(job_status.get("status") or "").lower()
                 if state == "failed":
                     raise ShreckLLMUnavailable("ShreckLLM synthesis job failed")
                 if state == "succeeded":
                     result = client.get(f"/chat/jobs/{job_id}/result", timeout=timeout)
                     result.raise_for_status()
-                    text = result.json().get("text")
+                    result_body = result.json()
+                    if not isinstance(result_body, dict):
+                        raise ShreckLLMUnavailable("ShreckLLM returned an invalid structured-output result")
+                    text = result_body.get("text")
                     if not isinstance(text, str) or not text.strip():
                         raise ShreckLLMUnavailable("ShreckLLM returned an empty synthesis result")
                     return text
@@ -157,3 +170,66 @@ def generate_grounded_answer(*, query: str, evidence: list[dict[str, Any]]) -> s
 
 def _serialize_evidence(evidence: list[dict[str, Any]]) -> str:
     return json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+
+
+def generate_shreckworld_structured_output(
+    *, usage_tag: str, system_prompt: str, user_content: str,
+    schema_name: str, response_schema: dict[str, Any], max_tokens: int,
+    model_target: ShreckWorldModelTarget,
+) -> str:
+    """Run a bounded ShreckLLM structured-output job for ShreckWorld agent stages."""
+    settings = get_settings()
+    headers = {}
+    internal_token = os.getenv("SHRECKLLM_INTERNAL_SERVICE_TOKEN", "").strip()
+    if internal_token:
+        headers["Authorization"] = "Bearer " + internal_token
+    payload = {
+        "provider_id": model_target.provider,
+        "model": model_target.name,
+        "reasoning": model_target.reasoning,
+        "reasoning_effort": model_target.reasoning_effort,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": 0,
+        "use_conversation_memory": False,
+        "metadata": {"usage_tag": usage_tag},
+        "max_tokens": max_tokens,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": schema_name, "strict": True, "schema": response_schema,
+            },
+        },
+    }
+    deadline = time.monotonic() + settings.synthesis_timeout_seconds
+    try:
+        with httpx.Client(base_url=settings.shreckllm_base_url.rstrip("/"), headers=headers) as client:
+            created = client.post(
+                "/chat/jobs", json=payload,
+                timeout=max(0.1, min(10.0, deadline - time.monotonic())),
+            )
+            created.raise_for_status()
+            job_id = str(created.json().get("job_id") or "").strip()
+            if not job_id:
+                raise ShreckLLMUnavailable("ShreckLLM returned no structured-output job ID")
+            while time.monotonic() < deadline:
+                timeout = max(0.1, min(10.0, deadline - time.monotonic()))
+                status_response = client.get(f"/chat/jobs/{job_id}", timeout=timeout)
+                status_response.raise_for_status()
+                job_status = status_response.json()
+                state = str(job_status.get("status") or "").lower()
+                if state == "failed":
+                    raise ShreckLLMUnavailable("ShreckLLM structured-output job failed")
+                if state == "succeeded":
+                    result = client.get(f"/chat/jobs/{job_id}/result", timeout=timeout)
+                    result.raise_for_status()
+                    text = result.json().get("text")
+                    if not isinstance(text, str) or not text.strip():
+                        raise ShreckLLMUnavailable("ShreckLLM returned empty structured output")
+                    return text
+                time.sleep(settings.synthesis_poll_interval_seconds)
+    except httpx.HTTPError as exc:
+        raise ShreckLLMUnavailable("ShreckLLM could not complete a structured-output job") from exc
+    raise ShreckLLMUnavailable("ShreckLLM structured-output job exceeded its configured deadline")

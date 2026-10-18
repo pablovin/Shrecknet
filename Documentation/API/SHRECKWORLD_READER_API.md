@@ -11,7 +11,11 @@ Every authenticated Shrecknet principal can discover ShreckWorlds and read their
 | `GET /shreckworlds/{world_id}/library-items` | Complete source array, ordered by configured priority/title |
 | `GET /shreckworlds/{world_id}/library-items/{item_id}` | One source, including SHA-256 revision, MIME type, filename and indexing state |
 | `GET` / `HEAD /shreckworlds/{world_id}/library-items/{item_id}/content` | Original file, with authenticated single-byte-range support |
-| `POST /shreckworlds/{world_id}/query` | Extractive answer and anchored evidence |
+| `POST /shreckworlds/{world_id}/query` | Backward-compatible single retrieval or opt-in planned evidence |
+| `POST /shreckworlds/{world_id}/agent-jobs` | Queue a ShreckWorld-owned planned evidence query |
+| `GET /shreckworlds/{world_id}/agent-jobs/{job_id}` | Poll that agent job and read its completed result |
+| `GET /admin/settings/model-targets/shreckworld_synthesizer` | Read the shared ShreckWorld LLM target |
+| `PUT /admin/settings/model-targets/shreckworld_synthesizer` | Update the shared ShreckWorld LLM target |
 | `POST /shreckworlds/{world_id}/resolve-action` | Read-only evidence and conservative source-priority review |
 
 IDs are ShreckWorld service IDs, not Shrecknet World IDs. Source lookups must match the supplied world. List filtering/sorting is currently performed by the frontend; these endpoints are not paginated. Existing `/admin` routes and old query payloads remain compatible.
@@ -44,6 +48,30 @@ Omit both source-scope fields for whole-world retrieval. `library_item_id` remai
 
 `mode` is `evidence` (default, backward-compatible) or `answer`. Evidence mode performs no synthesis and retains the current extractive response. Answer mode sends the retrieved evidence to the configured ShreckLLM synthesis model and returns `answer_status` (`complete`, `partial`, or `unsupported`), structured `claims`, `missing_information`, and `conflicts`. Each claim/conflict must cite source IDs returned with the response; invalid or unknown citation IDs fail the request rather than being silently removed. The server validates output structure and citation membership, but semantic entailment of every claim is not independently proven by a second model call. Answers are marked partial and disclose coverage gaps when requested sources lack compatible indexes or retrieved passages are omitted by the evidence budget. Rule priority is not treated as proof of applicability or precedence. Synthesis does not execute game actions.
 
+`retrieval_strategy` is `single` (default) or `planned`. `single` preserves the established retrieval and answer-mode behavior. `planned` is opt-in and accepts `mode="evidence"` only; combining `planned` with `mode="answer"` returns `422`. Planned retrieval builds a 1–6 need `query_plan`, searches each need against the same authorized active-generation scope, retains evidence by document/section without merging distinct sources, and includes `evidence_coverage`, `evidence_groups`, and optional `v3_trace`. Complex questions can invoke one ShreckLLM planning call; simple definitions use a deterministic single-need plan. An invalid or unavailable planner falls back to a safe deterministic need and is reported in `v3_trace.planner_fallback`.
+
+```json
+{
+  "query": "Can psychotherapy and private care be combined?",
+  "library_item_ids": ["SOURCE_ID_A", "SOURCE_ID_B"],
+  "mode": "evidence",
+  "retrieval_strategy": "planned",
+  "include_trace": true
+}
+```
+
+Planned retrieval does not generate an answer. `answer` explains that the response is an evidence bundle, while `citations` retains the normal source revision, page, geometry, and content URL fields. Coverage distinguishes `covered`, `partial`, `missing`, and `unresolved` per need. Retrieval similarity alone never establishes coverage. When enabled, one batched ShreckLLM review checks direct source quotations; invalid review output is not treated as verification. A single targeted follow-up round may search needs still missing, partial, or unresolved. Exhaustive questions and unsupported interactions are not declared complete merely because results were found. When any requested source is unindexed or incompatible, overall evidence coverage cannot be `adequate`; `source_coverage` distinguishes those unsearched sources from sources actually searched. The configurable budget is approximate (4 characters per token); a logical evidence unit that cannot fit is omitted whole and flagged in `evidence_groups` rather than silently truncated.
+
+Each returned `evidence_groups[].evidence_id` matches its citation's `source_id`. An omitted oversized unit has an `omitted-{chunk_id}` evidence ID, no citation, `incomplete_evidence: true`, and an `omission_reason`; its need association remains visible.
+
+## ShreckWorld agent jobs
+
+`POST /shreckworlds/{world_id}/agent-jobs` accepts the query fields above, including optional `library_item_id` or `library_item_ids`, `selection`, `top_k`, and `include_trace`. The endpoint always creates a ShreckWorld planned-evidence job; `mode="answer"` is rejected with `422`. The authenticated user's identity is recorded as the job owner. The service validates world/source scope and selected-source revision before queueing, then validates it again when the worker executes.
+
+The response is `202 Accepted` with `id`, `shreckworld_id`, `status`, `stage`, and timestamps. `GET /shreckworlds/{world_id}/agent-jobs/{job_id}` returns the same lifecycle fields, plus `result` when complete or a user-safe `error` when failed. Status is `queued`, `running`, `completed`, or `failed`; stages identify planning, retrieval, coverage assessment, targeted follow-up, reassessment, or completion. Only the job owner or an `admin` may poll it; an inaccessible or mismatched job returns `404`. Jobs are not cancellable. The existing synchronous query endpoint remains available and unchanged by job submission.
+
+The `shreckworld_agent` Celery queue is consumed by the ShreckWorld worker alongside `shreckworld_embedding` with the worker's existing single-task concurrency bound. Jobs persist in `shreckworld_agent_jobs`; startup creates the table for existing installations. Queue-dispatch failures are marked failed and return `503`; execution failures are logged server-side and exposed as a generic retryable job error. The agent does not call Elder or Librarian runtimes and does not run grounded answer synthesis.
+
 `source_coverage` is always returned, including in evidence mode. Its counts distinguish requested sources, sources with retrievable active chunks, sources without a ready index, and ready sources that require reindexing for the active embedding fingerprint. Only indexed compatible sources are searched. A source may be omitted from results because it has no ready index or needs reindexing; `include_trace` adds retrieval diagnostics (`retrieval_ms`, `synthesis_ms` when answer synthesis runs, and `total_ms`) but does not change scope. Timings are request-level observations, not latency guarantees.
 
 The response also contains citations with original passages and server-produced provenance. The semantic encoder can reject queries exceeding its actual token budget; do not silently truncate quoted evidence or invent a result.
@@ -71,13 +99,59 @@ Rule review never executes game actions, rolls dice, or mutates character/game d
 - `409`: selected document revision changed; reopen the source.
 - `422`: invalid payload, cross-book selection, or encoder token budget exceeded.
 - `503`: semantic inference unavailable. Original-file reading remains available.
+- `503`: agent-job queue dispatch failed; the persisted job is marked failed.
+- Agent job execution errors are available as a safe `error` on the owner-visible job resource.
 - `503`: ShreckLLM unavailable or synthesis deadline exceeded in `mode="answer"`.
 - `502`: synthesis returned malformed structured output or invalid citation references.
 - `422`: no complete passage fits the configured synthesis evidence budget.
 
-Deploy this service API before enabling the reader frontend. These additive reader endpoints and fields need no database migration. Independent structured-ingestion/model changes may require reindexing; see the architecture/indexing guides. Rolling back the frontend or these reader routes preserves uploaded source files and management data. Unit tests use explicit model doubles and do not download model artifacts; real retrieval quality and mobile large-book performance require representative acceptance datasets/devices.
+Deploy this service API before enabling the reader frontend. The service's existing schema initialization creates the new model-settings table automatically; it requires no data backfill. Independent structured-ingestion/model changes may require reindexing; see the architecture/indexing guides. Rolling back the frontend or these reader routes preserves uploaded source files and management data. Unit tests use explicit model doubles and do not download model artifacts; real retrieval quality and mobile large-book performance require representative acceptance datasets/devices.
 
-For answer mode, configure `SHRECKWORLD_SHRECKLLM_BASE_URL`, `SHRECKWORLD_SYNTHESIS_PROVIDER`, and `SHRECKWORLD_SYNTHESIS_MODEL`. `SHRECKWORLD_SYNTHESIS_TIMEOUT_SECONDS` controls the job deadline, `SHRECKWORLD_SYNTHESIS_POLL_INTERVAL_SECONDS` controls status polling, and `SHRECKWORLD_SYNTHESIS_EVIDENCE_TOKEN_BUDGET` caps complete evidence passages supplied to synthesis (estimated at four characters per token). The optional `SHRECKLLM_INTERNAL_SERVICE_TOKEN` is forwarded as a bearer token for installations that protect internal ShreckLLM calls. Defaults are `http://shreckllm:8110`, `openai`, `gpt-5-nano`, 25 seconds, 0.5 seconds, and 8,000 estimated evidence tokens respectively. The default deadline fits within the Python SDK's 30-second request timeout; when increasing the server deadline, increase the SDK `Shrecknet(timeout=...)` value accordingly. Evidence mode and source reading do not require ShreckLLM availability.
+For ShreckLLM, configure `SHRECKWORLD_SHRECKLLM_BASE_URL`. The ShreckWorld
+model target is managed through the settings API below; the legacy
+`SHRECKWORLD_SYNTHESIS_PROVIDER` and `SHRECKWORLD_SYNTHESIS_MODEL` values only
+provide its initial default before a target is saved.
+`SHRECKWORLD_SYNTHESIS_TIMEOUT_SECONDS` controls the job deadline,
+`SHRECKWORLD_SYNTHESIS_POLL_INTERVAL_SECONDS` controls status polling, and
+`SHRECKWORLD_SYNTHESIS_EVIDENCE_TOKEN_BUDGET` caps complete evidence passages
+supplied to synthesis (estimated at four characters per token). The optional
+`SHRECKLLM_INTERNAL_SERVICE_TOKEN` is forwarded as a bearer token for
+installations that protect internal ShreckLLM calls. Defaults are
+`http://shreckllm:8110`, `openai`, `gpt-5-nano`, 25 seconds, 0.5 seconds, and
+8,000 estimated evidence tokens respectively. The default deadline fits
+within the Python SDK's 30-second request timeout; when increasing the server
+deadline, increase the SDK `Shrecknet(timeout=...)` value accordingly. Evidence
+mode and source reading do not require ShreckLLM availability.
+
+## ShreckWorld model settings
+
+The ShreckWorld provider/model target is service-owned and shared by the agent
+planner, evidence-coverage reviewer, and grounded answer mode. Read or update it
+with an `admin` or `world_builder` token:
+
+```http
+GET /admin/settings/model-targets/shreckworld_synthesizer
+```
+
+```json
+{
+  "model_shreckworld_synthesizer": {
+    "provider": "openai",
+    "name": "gpt-5-nano",
+    "reasoning": false,
+    "reasoning_effort": null
+  }
+}
+```
+
+Send the same object shape to `PUT` to save a new target. `provider` and `name`
+must be non-empty strings; `reasoning` defaults to `false`, and
+`reasoning_effort` can be `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
+The target is persisted in the ShreckWorld database and takes precedence over
+the legacy `SHRECKWORLD_SYNTHESIS_PROVIDER` and
+`SHRECKWORLD_SYNTHESIS_MODEL` environment defaults. Until a target is saved,
+those variables (defaulting to `openai` and `gpt-5-nano`) provide the initial
+value. Changing this LLM target does not require reindexing.
 
 ## Structured semantic generations
 

@@ -12,9 +12,25 @@ No description.
 
 No description.
 
-### `query(self, world_id, question, *, library_item_id=None, selection=None, top_k=6, include_trace=False)`
+### `query(self, world_id, question, *, library_item_id=None, library_item_ids=None, selection=None, top_k=6, include_trace=False, mode='evidence', retrieval_strategy='single')`
 
-No description.
+Ask for compatible single-path output or opt-in planned evidence (`mode='evidence'`).
+
+### `start_agent_query(self, world_id, question, *, library_item_id=None, library_item_ids=None, selection=None, top_k=6, include_trace=True)`
+
+Queue a ShreckWorld planned evidence query and return its lifecycle.
+
+### `agent_job(self, world_id, job_id)`
+
+Read a ShreckWorld agent job; only its owner or an admin can poll it.
+
+### `model_settings(self)`
+
+Read the ShreckWorld LLM target; requires admin/world_builder access.
+
+### `update_model_settings(self, model_shreckworld_synthesizer)`
+
+Set the shared ShreckWorld planner, reviewer, and answer model target.
 
 ### `resolve_action(self, world_id, action, *, facts=None, library_item_id=None)`
 

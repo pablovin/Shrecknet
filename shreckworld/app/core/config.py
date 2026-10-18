@@ -42,11 +42,15 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://qdrant:6333"
     qdrant_collection: str = "shreckworld_semantic_v2"
     shreckllm_base_url: str = "http://shreckllm:8110"
+    # Legacy bootstrap defaults; the persisted model target takes precedence.
     synthesis_provider: str = Field(default="openai", min_length=1)
     synthesis_model: str = Field(default="gpt-5-nano", min_length=1)
     synthesis_timeout_seconds: float = Field(default=25, ge=1, le=600)
     synthesis_poll_interval_seconds: float = Field(default=0.5, ge=0.1, le=5)
     synthesis_evidence_token_budget: int = Field(default=8000, ge=1000, le=32000)
+    query_v3_planning_enabled: bool = True
+    query_v3_coverage_review_enabled: bool = True
+    query_v3_evidence_token_budget: int = Field(default=8000, ge=1000, le=32000)
 
 
 def get_settings() -> Settings:

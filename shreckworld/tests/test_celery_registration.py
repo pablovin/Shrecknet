@@ -15,6 +15,11 @@ assert name in celery_app.tasks, list(celery_app.tasks)
 assert celery_app.tasks[name].run.__module__ == "app.tasks.embedding"
 route = celery_app.amqp.router.route({}, name, args=("item", "job"))
 assert route["queue"].name == "shreckworld_embedding", route
+agent = "shreckworld.agent.query"
+assert agent in celery_app.tasks, list(celery_app.tasks)
+assert celery_app.tasks[agent].run.__module__ == "app.tasks.agent"
+agent_route = celery_app.amqp.router.route({}, agent, args=("job",))
+assert agent_route["queue"].name == "shreckworld_agent", agent_route
 '''],
         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
         timeout=30,

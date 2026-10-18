@@ -8,6 +8,40 @@ from app.schemas.shreckworld import ShreckWorldCitation
 from app.services.embedding import EmbeddingUnavailable
 
 
+def test_shreckworld_model_target_is_admin_configurable_and_persisted(api):
+    client, headers, _ = api
+    endpoint = "/admin/settings/model-targets/shreckworld_synthesizer"
+    initial = client.get(endpoint, headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["model_shreckworld_synthesizer"]["provider"] == "openai"
+    assert initial.json()["model_shreckworld_synthesizer"]["name"] == "gpt-5-nano"
+
+    target = {
+        "provider": "anthropic",
+        "name": "claude-sonnet-4",
+        "reasoning": True,
+        "reasoning_effort": "high",
+    }
+    saved = client.put(
+        endpoint, headers=headers,
+        json={"model_shreckworld_synthesizer": target},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["model_shreckworld_synthesizer"] == target
+    assert client.get(endpoint, headers=headers).json()["model_shreckworld_synthesizer"] == target
+    assert client.put(
+        endpoint, headers=headers,
+        json={"model_shreckworld_synthesizer": {**target, "name": " "}},
+    ).status_code == 422
+
+    player()
+    assert client.get(endpoint, headers=headers).status_code == 403
+    assert client.put(
+        endpoint, headers=headers,
+        json={"model_shreckworld_synthesizer": target},
+    ).status_code == 403
+
+
 def player():
     app.dependency_overrides.pop(require_world_manager, None)
     app.dependency_overrides[get_current_user] = lambda: ShrecknetPrincipal(user_id="reader", role="player")
@@ -39,7 +73,10 @@ def test_selected_passage_preserves_structured_scope_and_checks_revision(api, mo
     calls = []
     def query(session, **kwargs):
         calls.append(kwargs)
-        return [], {}
+        return [], {
+            "requested_sources": 1, "sources_searched": 0,
+            "sources_without_ready_index": 1, "sources_requiring_reindex": 0,
+        }
     monkeypatch.setattr('app.api.routers.shreckworlds.query_shreckworld', query)
     selection = dict(library_item_id=item['id'], source_sha256=item['source_sha256'], page_number=1, text='Selected evidence')
     payload = dict(query='Explain', library_item_id=item['id'], selection=selection)

@@ -1,5 +1,11 @@
 from .browser_auth import BrowserAuthAPI, BrowserSession, BrowserRegistration
-from .shreckworld import ShreckWorldAPI, SelectedPassage, KnowledgeWorld, KnowledgeSource, KnowledgeCitation, KnowledgeAnswer, RuleReview, KnowledgeIndexingJob, KnowledgeJobMetrics, KnowledgeReadiness
+from .shreckworld import (
+    ShreckWorldAPI, SelectedPassage, KnowledgeWorld, KnowledgeSource, KnowledgeCitation, KnowledgeAnswer,
+    KnowledgeAgentJob, KnowledgeEvidenceCoverage, KnowledgeEvidenceGroup, KnowledgeNeed,
+    KnowledgeNeedCoverage, KnowledgeQueryPlan, KnowledgeQueryV3Trace,
+    RuleReview, KnowledgeIndexingJob, KnowledgeJobMetrics, KnowledgeReadiness,
+    KnowledgeModelTarget, KnowledgeModelSettings,
+)
 from .client import AsyncShrecknetClient
 from .models import *
 from .resources import AgentsAPI, ArchitectAPI, CharacterAgentsAPI, ElderAPI, EmbeddingsAPI, JobsAPI, NovelistAPI, OntologiesAPI, OntologyEmbeddingsAPI, OntologyInstancesAPI, PersonalCompanionAPI, ShreckLLMAPI, WorldsAPI

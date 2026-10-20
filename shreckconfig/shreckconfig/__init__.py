@@ -38,7 +38,7 @@ class CorsPolicy(BaseModel):
 
 
 def cors_file() -> Path:
-    mounted = Path("/configs/browser.env")
+    mounted = Path("/app/browser.env")
     if mounted.exists():
         return mounted
     for root in (Path.cwd(), *Path.cwd().parents):

@@ -23,7 +23,7 @@ IDs are ShreckWorld service IDs, not Shrecknet World IDs. Source lookups must ma
 ## Browser origins
 
 CORS is configured exclusively in the repository-root `.env`, mounted read-only
-at `/configs/browser.env`. Both APIs use the shared `shreckconfig` loader;
+at `/app/browser.env`. Both APIs use the shared `shreckconfig` loader;
 process environment values cannot override this policy. See the
 [shared CORS guide](../Deployment/BROWSER_CORS.md) for syntax, container rollout,
 restart behavior, and failure handling. Authentication remains required on source

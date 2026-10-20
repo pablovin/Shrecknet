@@ -45,3 +45,33 @@ def test_changes_are_visible_on_reload(tmp_path):
     assert load_cors_policy(file).allow_origins == ["https://first.example"]
     file.write_text('CORS_ALLOW_ORIGINS=["https://second.example"]\n')
     assert load_cors_policy(file).allow_origins == ["https://second.example"]
+
+
+def test_container_cors_mount_does_not_nest_inside_read_only_config_mount():
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    for service in ("shrecknet_api", "shreckworld_api"):
+        mounts = compose["services"][service]["volumes"]
+        cors_mount = next(mount for mount in mounts if isinstance(mount, dict)
+                          and mount.get("source") == "./.env")
+        target = Path(cors_mount["target"])
+        assert str(target) == "/app/browser.env"
+        assert cors_mount["read_only"] is True
+        assert cors_mount["bind"]["create_host_path"] is False
+        for mount in mounts:
+            if isinstance(mount, str):
+                parts = mount.split(":")
+                parent, readonly = Path(parts[1]), len(parts) > 2 and "ro" in parts[2].split(",")
+            else:
+                if mount is cors_mount:
+                    continue
+                parent, readonly = Path(mount["target"]), mount.get("read_only", False)
+            assert not (readonly and parent in target.parents), f"{service}: {target} is beneath read-only {parent}"
+
+
+def test_loader_uses_the_container_mount(monkeypatch):
+    from shreckconfig import cors_file
+    monkeypatch.setattr(Path, "exists", lambda path: str(path) == "/app/browser.env")
+    assert cors_file() == Path("/app/browser.env")

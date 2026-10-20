@@ -4,6 +4,10 @@ This entry collects the current batch of Foundry plugin updates.
 
 ## Fixed
 
+- Shared CORS dotenv mounts use `/app/browser.env`, outside the read-only
+  `/configs` mount, so Docker can create the bind-mount target at startup.
+  Rebuild and recreate both API containers to apply the corrected mount and loader.
+
 - Atlas directory cards expand to show their complete icons, entity-type names,
   and owning ontology names. Long names wrap instead of being clipped by
   Foundry's fixed button height.

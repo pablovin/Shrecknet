@@ -360,7 +360,7 @@ services:
     volumes:
       - type: bind
         source: ./.env
-        target: /configs/browser.env
+        target: /app/browser.env
         read_only: true
         bind:
           create_host_path: false
@@ -564,7 +564,7 @@ services:
     volumes:
       - type: bind
         source: ./.env
-        target: /configs/browser.env
+        target: /app/browser.env
         read_only: true
         bind:
           create_host_path: false

@@ -3,9 +3,12 @@
 ## Contract
 
 Shrecknet and ShreckWorld read browser CORS exclusively from the repository-root
-`.env`. Compose mounts that file read-only at `/configs/browser.env` in both API
+`.env`. Compose mounts that file read-only at `/app/browser.env` in both API
 containers. It does not interpolate CORS settings into their `environment` blocks.
 The `shreckconfig` package owns parsing and validation for both services.
+The mount is deliberately outside `/configs`, which Shrecknet already mounts
+read-only. Nesting a new file mount inside that directory can prevent Docker from
+creating its target and stop container startup.
 
 ```dotenv
 CORS_ALLOW_ORIGINS=["https://shrecknet.club","https://foundry.shrecknet.club"]
@@ -87,7 +90,7 @@ explicit temporary path to `load_cors_policy` without modifying deployment files
 ShreckRPG is deployed from a separate source repository and is not part of this
 Compose stack. Its CORS behavior has not been changed here. To adopt the same
 contract, install `shreckconfig`, mount this same `.env` read-only at
-`/configs/browser.env`, and initialize its middleware with:
+`/app/browser.env`, and initialize its middleware with:
 
 ```python
 from shreckconfig import load_cors_policy

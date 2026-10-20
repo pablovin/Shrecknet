@@ -23,7 +23,7 @@ For a local installation from the repository root:
 
 ```bash
 python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-python -m pip install -e ./shreckdoc -e './shreckworld[test]'
+python -m pip install -e ./shreckconfig -e ./shreckdoc -e './shreckworld[test]'
 export HF_HOME="$PWD/shreckworld/models/hf"
 export HF_HUB_CACHE="$HF_HOME"
 export SHRECKWORLD_DOCLING_ARTIFACTS_PATH="$PWD/shreckworld/models/docling"
@@ -66,6 +66,11 @@ and `SHRECKWORLD_QUERY_V3_COVERAGE_REVIEW_ENABLED` default to `true`, and
 `SHRECKWORLD_QUERY_V3_EVIDENCE_TOKEN_BUDGET` defaults to 8,000 estimated tokens.
 The planned agent uses the configured ShreckLLM provider/model, but never runs
 answer synthesis.
+
+Browser CORS is configured only in the repository-root `.env`, read directly
+through a read-only API container mount. See the
+[shared CORS guide](../Documentation/Deployment/BROWSER_CORS.md) for settings and
+container rollout; process environment overrides are not used for CORS.
 
 Canonical contracts:
 

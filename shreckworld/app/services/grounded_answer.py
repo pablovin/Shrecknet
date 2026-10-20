@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Literal
 
@@ -20,6 +21,8 @@ from app.schemas.shreckworld import (
     ShreckWorldEvidence, ShreckWorldModelTarget,
 )
 from app.services.citation_regions import citation_rectangles
+
+logger = logging.getLogger(__name__)
 
 
 class GroundedAnswerError(RuntimeError):
@@ -86,7 +89,49 @@ def synthesize_grounded_answer(
         result = _GroundedAnswer.model_validate(json.loads(raw))
     except (json.JSONDecodeError, ValidationError) as exc:
         raise GroundedAnswerInvalid("invalid_structure") from exc
-    _validate_citations(result, supplied_ids, citations)
+
+    citation_text = {
+        citation.source_id: citation.evidence_text or citation.excerpt
+        for citation in citations
+    }
+    valid_claims = []
+    rejected_reasons = []
+    for claim in result.claims:
+        reason = _claim_rejection_reason(claim, supplied_ids, citation_text)
+        if reason is None:
+            valid_claims.append(claim)
+        else:
+            rejected_reasons.append(reason)
+    valid_conflicts = []
+    for conflict in result.conflicts:
+        if conflict.description.strip() and conflict.citation_ids and set(conflict.citation_ids) <= supplied_ids:
+            valid_conflicts.append(conflict)
+        else:
+            rejected_reasons.append("invalid_conflict_reference")
+
+    claims = valid_claims if result.status != "unsupported" else []
+    if result.status == "unsupported" and valid_claims:
+        rejected_reasons.extend("claim_on_unsupported_answer" for _ in valid_claims)
+    status = result.status
+    if rejected_reasons:
+        status = "partial" if claims else "unsupported"
+        logger.warning(
+            "Discarded unsupported ShreckWorld synthesis output (reasons=%s)",
+            ",".join(rejected_reasons),
+        )
+    elif status != "unsupported" and not claims:
+        status = "unsupported"
+
+    missing_information = [item for item in result.missing_information if item.strip()]
+    if len(missing_information) != len(result.missing_information):
+        status = "partial" if claims else "unsupported"
+        logger.warning("Discarded blank ShreckWorld synthesis missing-information entries")
+    if rejected_reasons:
+        missing_information.append(
+            f"{len(rejected_reasons)} generated claim or conflict item(s) were omitted "
+            "because their supporting evidence could not be verified."
+        )
+
     by_source = {citation.source_id: citation for citation in citations}
     claims = [
         GroundedClaim(
@@ -105,13 +150,13 @@ def synthesize_grounded_answer(
                 for support in claim.support
             ],
         )
-        for index, claim in enumerate(result.claims, start=1)
+        for index, claim in enumerate(claims, start=1)
     ]
-    presentation = _render_presentation(claims, result.missing_information)
+    presentation = _render_presentation(claims, missing_information)
     answer = _render_answer(presentation)
     omitted_citations = len(citations) - len(supplied_ids)
     return (
-        answer, result.status, claims, result.missing_information, result.conflicts,
+        answer, status, claims, missing_information, valid_conflicts,
         omitted_citations, presentation, [evidence_item(citation) for citation in citations],
     )
 
@@ -144,36 +189,22 @@ def _evidence_package(
     return evidence, supplied_ids
 
 
-def _validate_citations(
-    result: _GroundedAnswer, supplied_ids: set[str], citations: list[ShreckWorldCitation],
-) -> None:
-    if result.status == "unsupported":
-        if result.claims:
-            raise GroundedAnswerInvalid("unsupported_with_claims")
-    elif not result.claims:
-        raise GroundedAnswerInvalid("supported_without_claims")
-
-    citation_text = {citation.source_id: citation.evidence_text or citation.excerpt for citation in citations}
-    for claim in result.claims:
-        claim_ids = set(claim.citation_ids)
-        support_ids = {support.source_id for support in claim.support}
-        if not claim.text.strip():
-            raise GroundedAnswerInvalid("empty_claim")
-        if not claim_ids or not claim_ids <= supplied_ids:
-            raise GroundedAnswerInvalid("unknown_citation")
-        if support_ids != claim_ids:
-            raise GroundedAnswerInvalid("missing_quote_support")
-        for support in claim.support:
-            source_text = citation_text.get(support.source_id, "")
-            if not support.quote.strip() or _canonical(support.quote) not in _canonical(source_text):
-                raise GroundedAnswerInvalid("quote_not_verbatim")
-    for conflict in result.conflicts:
-        if not conflict.description.strip():
-            raise GroundedAnswerInvalid("empty_conflict")
-        if not conflict.citation_ids or not set(conflict.citation_ids) <= supplied_ids:
-            raise GroundedAnswerInvalid("unknown_conflict_citation")
-    if any(not item.strip() for item in result.missing_information):
-        raise GroundedAnswerInvalid("empty_missing_information")
+def _claim_rejection_reason(
+    claim: _GroundedClaim, supplied_ids: set[str], citation_text: dict[str, str],
+) -> str | None:
+    claim_ids = set(claim.citation_ids)
+    support_ids = {support.source_id for support in claim.support}
+    if not claim.text.strip():
+        return "empty_claim"
+    if not claim_ids or not claim_ids <= supplied_ids:
+        return "unknown_citation"
+    if support_ids != claim_ids:
+        return "missing_quote_support"
+    for support in claim.support:
+        source_text = citation_text.get(support.source_id, "")
+        if not support.quote.strip() or _canonical(support.quote) not in _canonical(source_text):
+            return "quote_not_verbatim"
+    return None
 
 
 def _canonical(value: str) -> str:

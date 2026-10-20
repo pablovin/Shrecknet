@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from shreckconfig import load_cors_policy
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import (
@@ -72,26 +73,12 @@ logger = logging.getLogger(__name__)
 _embedding_prewarm_task: asyncio.Task | None = None
 
 
-def _effective_cors_origins(origins: list[str]) -> list[str]:
-    local_defaults = [
-        "http://localhost",
-        "http://localhost:80",
-        "http://127.0.0.1",
-        "http://127.0.0.1:80",
-    ]
-    merged = [origin.strip() for origin in origins if origin and origin.strip()]
-    for origin in local_defaults:
-        if origin not in merged:
-            merged.append(origin)
-    return merged
-
-
 def _origin_matches(origin: str, allowed_origins: list[str], allowed_regex: str | None) -> bool:
     if origin in allowed_origins:
         return True
     if allowed_regex:
         try:
-            return re.match(allowed_regex, origin) is not None
+            return re.fullmatch(allowed_regex, origin) is not None
         except re.error:
             return False
     return False
@@ -353,15 +340,16 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title=get_settings().app_name, version="0.5.7", lifespan=lifespan)
 
 settings = get_settings()
-effective_origins = _effective_cors_origins(settings.cors_allow_origins)
+cors_policy = load_cors_policy()
+effective_origins = cors_policy.allow_origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=effective_origins,
-    allow_origin_regex=settings.cors_allow_origin_regex,
-    allow_credentials=settings.cors_allow_credentials,
-    allow_methods=settings.cors_allow_methods,
-    allow_headers=settings.cors_allow_headers,
-    max_age=settings.cors_max_age,
+    allow_origin_regex=cors_policy.allow_origin_regex,
+    allow_credentials=cors_policy.allow_credentials,
+    allow_methods=cors_policy.allow_methods,
+    allow_headers=cors_policy.allow_headers,
+    max_age=cors_policy.max_age,
 )
 media_root = Path(settings.media_root)
 media_root.mkdir(parents=True, exist_ok=True)
@@ -379,11 +367,11 @@ async def ensure_media_cors_headers(request, call_next):
     if (
         origin
         and request.url.path.startswith(settings.media_base_url)
-        and _origin_matches(origin, effective_origins, settings.cors_allow_origin_regex)
+        and _origin_matches(origin, effective_origins, cors_policy.allow_origin_regex)
     ):
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
-        if settings.cors_allow_credentials:
+        if cors_policy.allow_credentials:
             response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
 

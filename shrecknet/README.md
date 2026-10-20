@@ -16,7 +16,7 @@ Architect scene-centric chunking docs: `../Documentation/Agents/Architect/Scene 
 ## Run
 ```bash
 cd shrecknet
-pip install -e ../shreckdoc -e ".[test]"
+pip install -e ../shreckconfig -e ../shreckdoc -e ".[test]"
 uvicorn app.main:app --reload --port 8100
 ```
 
@@ -32,3 +32,10 @@ writes from compact arc assignments and precise source passages.
 64,000 (minimum 24,000); configure them through the runtime configuration API within
 the selected models' capacities. See the [Novelist contract](../Documentation/Agents/Novelist/Novelist.md)
 for context preflight, PDF provenance, debug files, and worker rollout.
+
+## Browser CORS
+
+Configure CORS only in the repository-root `.env`; the API reads its read-only
+container mount directly. CORS settings are unavailable through `/config` and
+process environment overrides. See the [shared CORS guide](../Documentation/Deployment/BROWSER_CORS.md)
+for rollout, restart behavior, and legacy database cleanup.

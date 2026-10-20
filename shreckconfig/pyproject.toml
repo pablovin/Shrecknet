@@ -1,0 +1,16 @@
+[project]
+name = "shreckconfig"
+version = "0.1.0"
+description = "Shared file-only browser security configuration"
+requires-python = ">=3.10"
+dependencies = ["pydantic>=2,<3", "python-dotenv>=1,<2"]
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["shreckconfig*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

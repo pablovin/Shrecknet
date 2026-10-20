@@ -5,7 +5,6 @@ import pytest
 from app.schemas.shreckworld import ShreckWorldCitation
 from app.services.grounded_answer import (
     EvidenceBudgetExceeded,
-    GroundedAnswerInvalid,
     synthesize_grounded_answer,
 )
 from app.schemas.shreckworld import ShreckWorldModelTarget
@@ -62,7 +61,7 @@ def test_grounded_answer_renders_only_claims_citing_supplied_evidence(monkeypatc
     assert omitted == 0
 
 
-def test_grounded_answer_rejects_citations_not_in_evidence(monkeypatch):
+def test_grounded_answer_discards_claims_with_citations_not_in_evidence(monkeypatch):
     from app.services import grounded_answer
 
     monkeypatch.setattr(
@@ -81,14 +80,18 @@ def test_grounded_answer_rejects_citations_not_in_evidence(monkeypatch):
         ),
     )
 
-    with pytest.raises(GroundedAnswerInvalid) as error:
-        synthesize_grounded_answer(
-            query="What is the rule?", citations=[citation()], model_target=MODEL_TARGET
-        )
-    assert error.value.reason == "unknown_citation"
+    answer, status, claims, missing, _, _, presentation, evidence = synthesize_grounded_answer(
+        query="What is the rule?", citations=[citation()], model_target=MODEL_TARGET
+    )
+    assert status == "unsupported"
+    assert claims == []
+    assert "[source-99]" not in answer
+    assert "could not be verified" in missing[0]
+    assert presentation.direct_answer in answer
+    assert evidence[0].id == "source-1"
 
 
-def test_grounded_answer_requires_support_for_every_claim_citation(monkeypatch):
+def test_grounded_answer_discards_claims_missing_support_for_any_citation(monkeypatch):
     from app.services import grounded_answer
 
     second = citation().model_copy(update={
@@ -111,12 +114,43 @@ def test_grounded_answer_requires_support_for_every_claim_citation(monkeypatch):
         ),
     )
 
-    with pytest.raises(GroundedAnswerInvalid) as error:
-        synthesize_grounded_answer(
-            query="What is the rule?", citations=[citation(), second],
-            model_target=MODEL_TARGET,
-        )
-    assert error.value.reason == "missing_quote_support"
+    _, status, claims, missing, _, _, _, _ = synthesize_grounded_answer(
+        query="What is the rule?", citations=[citation(), second],
+        model_target=MODEL_TARGET,
+    )
+    assert status == "unsupported"
+    assert claims == []
+    assert "could not be verified" in missing[0]
+
+
+def test_grounded_answer_keeps_verified_claims_and_drops_bad_quote_claims(monkeypatch):
+    from app.services import grounded_answer
+
+    monkeypatch.setattr(
+        grounded_answer, "get_settings",
+        lambda: SimpleNamespace(synthesis_evidence_token_budget=8000),
+    )
+    monkeypatch.setattr(
+        grounded_answer, "generate_grounded_answer",
+        lambda **kwargs: (
+            '{"status":"complete","claims":['
+            '{"text":"Verified rule.","citation_ids":["source-1"],"kind":"rule","support":['
+            '{"source_id":"source-1","quote":"The complete rule section."}]},'
+            '{"text":"Unverified rule.","citation_ids":["source-1"],"kind":"fact","support":['
+            '{"source_id":"source-1","quote":"This quote does not exist."}]}],'
+            '"missing_information":[],"conflicts":[]}'
+        ),
+    )
+
+    answer, status, claims, missing, _, _, _, evidence = synthesize_grounded_answer(
+        query="What is the rule?", citations=[citation()], model_target=MODEL_TARGET,
+    )
+    assert status == "partial"
+    assert [claim.text for claim in claims] == ["Verified rule."]
+    assert "[source-1]" in answer
+    assert "Unverified rule." not in answer
+    assert "1 generated claim" in missing[0]
+    assert evidence[0].id == "source-1"
 
 
 def test_grounded_answer_does_not_truncate_passages_to_fit_budget(monkeypatch):

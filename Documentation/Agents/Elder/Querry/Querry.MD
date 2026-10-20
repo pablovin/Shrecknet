@@ -28,6 +28,11 @@ Both return `ElderQueryResponse`; the latter is stream-compatible by route name,
 
 `entities_hint`, `grounding_definitions`, and evidence-budget controls are not public frontend inputs. In particular, do not send `synthesis_evidence_budget_tokens`: it is not part of `ElderQueryRequest`.
 
+Both paths hold the HTTP request open through generation and chat persistence.
+Clients must allow the query's full duration, render its returned answer directly,
+and recover an interrupted response by reading the exact owned chat rather than
+replaying the POST. See [completion and connection recovery](../Elder.md#completion-and-connection-recovery).
+
 ## Current response fields
 
 ```json

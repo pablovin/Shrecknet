@@ -23,3 +23,5 @@ This folder contains release notes by application version.
 - [Unreleased Novelist V5 Narrative Director](unreleased-novelist-director.md)
 
 - [Foundry v0.3.1](./foundry-v0.3.1.md) - Repair release validation and publish installable manifest assets.
+
+- [Foundry v0.3.2](./foundry-v0.3.2.md) - Atlas icon and full-name layout fixes; current plugin update batch.

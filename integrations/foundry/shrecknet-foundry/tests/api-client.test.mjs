@@ -118,3 +118,53 @@ test("ShreckWorld queries keep source scope and Chronicle saves use revision sha
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Atlas metadata includes hidden entity types without changing directory discovery", async () => {
+  const client = new ShrecknetClient({ serverUrl: "https://shrecknet.example", accessToken: "player-token" });
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url: String(url), authorization: options.headers.Authorization });
+    return Response.json([]);
+  };
+  try {
+    await client.listEntityTypes(12);
+    await client.listEntityTypes(12, { displayedOnly: false });
+    await client.listEntityRelationships(12, 3);
+    assert.deepEqual(requests.map((request) => request.url), [
+      "https://shrecknet.example/ontologies/12/entities?display_on_world=true",
+      "https://shrecknet.example/ontologies/12/entities",
+      "https://shrecknet.example/ontologies/12/entities/3/relationships",
+    ]);
+    assert.ok(requests.every((request) => request.authorization === "Bearer player-token"));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("companion requests planned concise answers scoped to several books", async () => {
+  const client = new ShrecknetClient({ serverUrl: "https://shrecknet.example", accessToken: "player-token" });
+  const originalFetch = globalThis.fetch;
+  let body;
+  globalThis.fetch = async (_, options) => { body = JSON.parse(options.body); return Response.json({}); };
+  try {
+    await client.queryKnowledge("https://rules.example", "world", "Rules?", ["a", "b"], {answer: true});
+    assert.deepEqual(body, {query: "Rules?", top_k: 6, include_trace: false, library_item_ids: ["a", "b"], mode: "answer", retrieval_strategy: "planned", response_detail: "concise"});
+    await client.queryKnowledge("https://rules.example", "world", "Rules?", [], {answer: true});
+    assert.equal(body.library_item_ids, undefined);
+    assert.equal(body.library_item_id, undefined);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("network failures identify the service base without leaking authorization", async () => {
+  const client = new ShrecknetClient({ serverUrl: "https://shrecknet.example", accessToken: "private-token" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+  try {
+    await assert.rejects(client.listKnowledgeWorlds("https://rules.example/api"), (error) => {
+      assert.equal(error.status, 0);
+      assert.match(error.message, /https:\/\/rules.example\/api/);
+      assert.match(error.message, /CORS/);
+      assert.ok(!error.message.includes("private-token"));
+      return true;
+    });
+  } finally { globalThis.fetch = originalFetch; }
+});

@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2
 
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN pip install --prefer-binary --index-url "$TORCH_INDEX_URL" "torch>=2,<3" "torchvision>=0.17,<1"
+COPY --from=shreckconfig / /tmp/shreckconfig
+RUN pip install --no-deps /tmp/shreckconfig
+
 COPY --from=shreckdoc / /tmp/shreckdoc
 RUN pip install --no-deps /tmp/shreckdoc
 COPY pyproject.toml ./

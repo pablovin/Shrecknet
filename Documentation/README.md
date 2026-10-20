@@ -57,7 +57,7 @@ Everything you need to deploy Shrecknet
 - [Deployment Workflow](./Deployment/DEPLOYMENT_WORKFLOW.md) - Step-by-step deployment process
 - [Docker Optimization](./Deployment/DOCKER_OPTIMIZATION.md) - Performance optimizations
 - [Deployment Optimization Summary](./Deployment/DEPLOYMENT_OPTIMIZATION_SUMMARY.md)
-- [Foundry Module Deployment](./Deployment/FOUNDRY_MODULE.md) - Module releases, CORS, installation, and operations
+- [Foundry Module Deployment](./Deployment/FOUNDRY_MODULE.md) - Atlas Explorer, Elder Companion, ShreckWorld bookshelf and rules companion, module releases, CORS, installation, and operations
 
 ### [Backend](./Backend/)
 Backend service documentation (FastAPI)
@@ -158,3 +158,5 @@ When adding new documentation:
 See the main [README](../README.md) for contribution guidelines.
 
 - [ShreckWorld reader and rule-review API](API/SHRECKWORLD_READER_API.md) — Authenticated libraries, original files, passage questions, citations, and agent evidence access.
+
+- [Shared Browser CORS](./Deployment/BROWSER_CORS.md) - File-only `.env` policy, container mounts, retired database settings, and deployment

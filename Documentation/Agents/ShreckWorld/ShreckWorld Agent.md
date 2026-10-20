@@ -54,11 +54,13 @@ the evidence selected by its own planned retrieval pipeline.
    because no counterexample was retrieved.
 7. **Synthesize when requested.** `mode="answer"` makes one ShreckLLM synthesis
    call over the citations already selected by planned retrieval; it does not
-   run another search. Every claim must provide an exact supporting quote from
-   its cited evidence. The service validates quotes and citation IDs, resolves
-   the best available page/block location, and renders `[source-N]` inline
-   references. `mode="evidence"` skips synthesis and retains the evidence-only
-   response.
+   run another search. Every returned claim has a supporting quote from its
+   cited evidence. Claims with unverifiable citations or quotes are omitted;
+   if any are omitted the answer is partial, and if all are omitted it is
+   unsupported. Retrieved citations/evidence remain available independently.
+   The service resolves the best available page/block location and renders
+   `[source-N]` inline references. `mode="evidence"` skips synthesis and retains
+   the evidence-only response.
 8. **Return the typed response.** The synchronous route and persisted job share
    the same response schema: answer status/content, structured claims and
    supports, evidence entries, citations, source warnings, query interpretation,

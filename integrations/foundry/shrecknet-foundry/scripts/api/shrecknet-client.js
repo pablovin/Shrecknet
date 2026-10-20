@@ -158,7 +158,7 @@ export class ShrecknetClient {
     try {
       response = await fetch(`${base}${path}`, options);
     } catch (_) {
-      throw new ShrecknetApiError("Unable to connect to the configured service.", 0);
+      throw new ShrecknetApiError(`Unable to reach ${base}. Check the service URL, availability, and CORS permission for this Foundry origin.`, 0);
     }
     return response;
   }
@@ -188,7 +188,12 @@ export class ShrecknetClient {
   getCurrentUser() { return this.request("/users/me"); }
   getWorld(worldId) { return this.request(`/worlds/${encodeURIComponent(worldId)}`); }
   getOntology(ontologyId) { return this.request(`/ontologies/${ontologyId}`); }
-  listEntityTypes(ontologyId) { return this.request(`/ontologies/${ontologyId}/entities?display_on_world=true`); }
+  listEntityTypes(ontologyId, { displayedOnly = true } = {}) {
+    return this.request(`/ontologies/${ontologyId}/entities${displayedOnly ? "?display_on_world=true" : ""}`);
+  }
+  listEntityRelationships(ontologyId, entityDefinitionId) {
+    return this.request(`/ontologies/${ontologyId}/entities/${entityDefinitionId}/relationships`);
+  }
   listEntityProperties(ontologyId, entityDefinitionId) {
     return this.request(`/ontologies/${ontologyId}/entities/${entityDefinitionId}/properties`);
   }
@@ -269,11 +274,11 @@ export class ShrecknetClient {
     return this.request(`/shreckworlds/${encodeURIComponent(worldId)}/library-items`, { baseUrl });
   }
 
-  queryKnowledge(baseUrl, worldId, query, libraryItemId = null) {
+  queryKnowledge(baseUrl, worldId, query, libraryItemId = null, { answer = false } = {}) {
     return this.request(`/shreckworlds/${encodeURIComponent(worldId)}/query`, {
       baseUrl,
       method: "POST",
-      body: { query, top_k: 6, include_trace: false, ...(libraryItemId ? { library_item_id: libraryItemId } : {}) },
+      body: { query, top_k: 6, include_trace: false, ...(Array.isArray(libraryItemId) ? (libraryItemId.length ? { library_item_ids: libraryItemId } : {}) : libraryItemId ? { library_item_id: libraryItemId } : {}), ...(answer ? { mode: "answer", retrieval_strategy: "planned", response_detail: "concise" } : {}) },
     });
   }
 

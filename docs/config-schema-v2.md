@@ -70,3 +70,9 @@
 
 ## Notes
 - Env-only bootstrap fields are intentionally hidden from this schema endpoint.
+
+## File-only CORS
+
+CORS fields are retired from the configuration schema and payload. Attempts to
+write `cors_*` settings return HTTP 400. Configure the shared root `.env` instead;
+see [Browser CORS](../Documentation/Deployment/BROWSER_CORS.md).

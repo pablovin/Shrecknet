@@ -191,3 +191,11 @@ curl -s -X POST http://localhost:8100/auth/token \
   -H "Content-Type: application/json" \
   -d '{"username":"keeper","password":"change-me-strong"}'
 ```
+
+## Shared browser CORS
+
+Shrecknet and ShreckWorld read CORS exclusively from the root `.env` through the
+shared `shreckconfig/` package. Their API containers mount the file read-only.
+See [Browser CORS configuration](Documentation/Deployment/BROWSER_CORS.md) for
+initial deployment and restart instructions. ShreckRPG requires integration in
+its separate repository.

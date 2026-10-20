@@ -65,7 +65,7 @@
             <button type="button" data-action="searchScenes" aria-label="Search scenes">Search</button>
           </form>{{/if}}
         </nav>
-        <div class="shrecknet-content">
+        <div class="shrecknet-content {{#if isElderWorkspace}}is-elder-content{{/if}} {{#if knowledge}}is-knowledge-content{{/if}}">
           <p class="shrecknet-notice" data-workspace-notice hidden role="status"></p>
           {{#if resource.breadcrumbs}}<nav class="shrecknet-breadcrumbs" aria-label="Breadcrumb">{{#each resource.breadcrumbs}}{{#if action}}<button type="button" data-action="{{action}}" data-ontology-id="{{ontologyId}}" data-definition-id="{{definitionId}}" data-world-id="{{worldId}}" data-title="{{label}}">{{label}}</button>{{else}}<span>{{label}}</span>{{/if}}{{#unless @last}}<span aria-hidden="true"> &gt; </span>{{/unless}}{{/each}}</nav>{{/if}}
 
@@ -79,16 +79,40 @@
             <h2>{{resource.title}}</h2>
             {{#if resource.pages.length}}<div class="shrecknet-card-grid">{{#each resource.pages}}<button type="button" class="shrecknet-page-card" data-action="openInstance" data-instance-id="{{instance_id}}">{{#if imageUrl}}<img src="{{imageUrl}}" alt="">{{else}}<span class="shrecknet-card-placeholder" aria-hidden="true"><span class="fa-solid fa-file-lines"></span></span>{{/if}}<span>{{displayName}}</span></button>{{/each}}</div>{{else}}<p class="shrecknet-empty">No pages found.</p>{{/if}}
           {{else if (eq resource.kind "instance")}}
-            <h2>{{resource.title}}</h2>
-            {{#if resource.instance.pageImageUrl}}<div class="shrecknet-page-hero"><img src="{{resource.instance.pageImageUrl}}" alt="{{resource.instance.displayName}}">{{#if canShowPlayers}}<button type="button" data-action="showImageToPlayers" data-image-url="{{resource.instance.pageImageUrl}}" data-title="{{resource.instance.displayName}}">Show players</button>{{/if}}</div>{{/if}}
-            {{#each resource.instance.entities}}
-              <article class="shrecknet-record"><h3>{{alias}}</h3>{{#if showAvatar}}<div class="shrecknet-image-wrap"><img src="{{avatarUrl}}" alt="">{{#if ../canShowPlayers}}<button type="button" data-action="showImageToPlayers" data-image-url="{{avatarUrl}}" data-title="{{alias}}">Show players</button>{{/if}}</div>{{/if}}{{#if hasBothTextSources}}<div class="shrecknet-tabs"><button type="button" class="{{#if showText}}is-active{{/if}}" data-action="selectTextSource" data-entity-id="{{entity_instance_id}}" data-source="text">Text</button><button type="button" class="{{#if showGeneratedText}}is-active{{/if}}" data-action="selectTextSource" data-entity-id="{{entity_instance_id}}" data-source="generated">Generated text</button></div>{{/if}}{{#if hasText}}{{#if showText}}<p class="shrecknet-source-label">Text</p><button type="button" class="shrecknet-share-button" data-action="showOnChat" data-entity-id="{{entity_instance_id}}">Show on chat</button><div class="shrecknet-document-text">{{{textHtml}}}</div>{{/if}}{{/if}}{{#if hasGeneratedText}}{{#if showGeneratedText}}<p class="shrecknet-source-label">Generated text</p><button type="button" class="shrecknet-share-button" data-action="showOnChat" data-entity-id="{{entity_instance_id}}">Show on chat</button><div class="shrecknet-document-text">{{{generatedTextHtml}}}</div>{{/if}}{{/if}}{{#unless hasText}}{{#unless hasGeneratedText}}<p class="shrecknet-empty">No document text available.</p>{{/unless}}{{/unless}}
-                {{#if properties.length}}<h4>Properties</h4><dl class="shrecknet-properties">{{#each properties}}<div><dt>{{displayName}}</dt><dd>{{displayValue}}</dd></div>{{/each}}</dl>{{/if}}
-                {{#if relationships.length}}<h4>Related</h4><div class="shrecknet-card-grid shrecknet-related-grid">{{#each relationships}}{{#if card}}<button type="button" class="shrecknet-page-card shrecknet-page-card-small" data-action="openInstance" data-instance-id="{{card.instanceId}}">{{#if card.imageUrl}}<img src="{{card.imageUrl}}" alt="">{{else}}<span class="shrecknet-card-placeholder" aria-hidden="true"><span class="fa-solid fa-file-lines"></span></span>{{/if}}<span>{{card.name}}</span></button>{{else}}<span class="shrecknet-unavailable-related">Related record unavailable</span>{{/if}}{{/each}}</div>{{/if}}
-              </article>
-            {{/each}}
-            {{#if resource.instance.related_content.length}}<h3>Related Content</h3><div class="shrecknet-card-grid">{{#each resource.instance.related_content}}<button type="button" class="shrecknet-page-card" data-action="openInstance" data-instance-id="{{id}}">{{#if imageUrl}}<img src="{{imageUrl}}" alt="">{{else}}<span class="shrecknet-card-placeholder" aria-hidden="true"><span class="fa-solid fa-file-lines"></span></span>{{/if}}<span>{{displayName}}</span></button>{{/each}}</div>{{/if}}
-            {{#if resource.instance.scenes.length}}<h3>Narrative Scenes</h3><div class="shrecknet-page-scene-list">{{#each resource.instance.scenes}}<button type="button" class="shrecknet-page-scene-row" data-action="openScene" data-instance-id="{{../resource.instance.instance_id}}" data-scene-id="{{id}}"><strong>{{name}}</strong><small>Open narrative scene</small></button>{{/each}}</div>{{/if}}
+            <section class="shrecknet-atlas-explorer {{#if readerFocus}}is-reading-focused{{/if}}">
+              <header class="shrecknet-atlas-header">
+                {{#if resource.instance.pageImageUrl}}<img src="{{resource.instance.pageImageUrl}}" alt="">{{/if}}
+                <div><p class="shrecknet-kicker">ATLAS EXPLORER</p><h2>{{resource.instance.displayName}}</h2><p>{{resource.instance.typeNames}}</p></div>
+                <div class="shrecknet-atlas-actions"><button type="button" data-action="showOnChat">Show in chat</button><button type="button" data-action="toggleReaderFocus" aria-pressed="{{readerFocus}}">{{#if readerFocus}}Show panels{{else}}Focus reading{{/if}}</button></div>
+              </header>
+              <div class="shrecknet-atlas-columns">
+                <details class="shrecknet-atlas-navigation" data-explorer-panel="navigation">
+                  <summary>Relationships and scenes</summary>
+                  <div class="shrecknet-atlas-panel-content">
+                    <h3>Relationships</h3>
+                    {{#each resource.instance.relationshipGroups}}<details class="shrecknet-relationship-group" open><summary>{{name}}</summary><ul>{{#each targets}}<li>{{#if unavailable}}<span class="shrecknet-unavailable-related">Related page unavailable</span>{{else}}<button type="button" data-action="openInstance" data-instance-id="{{instanceId}}"><strong>{{name}}</strong><small>{{typeName}}</small></button>{{/if}}</li>{{/each}}</ul></details>{{else}}<p class="shrecknet-empty">No relationships.</p>{{/each}}
+                    {{#if resource.instance.scenes.length}}<details open><summary>Narrative scenes · {{resource.instance.scenes.length}}</summary><ol class="shrecknet-atlas-scenes">{{#each resource.instance.scenes}}<li><button type="button" data-action="openScene" data-instance-id="{{../resource.instance.instance_id}}" data-scene-id="{{id}}">{{name}}</button></li>{{/each}}</ol></details>{{/if}}
+                    {{#if resource.instance.related_content.length}}<details><summary>Related content</summary><ul>{{#each resource.instance.related_content}}<li><button type="button" data-action="openInstance" data-instance-id="{{id}}">{{displayName}}</button></li>{{/each}}</ul></details>{{/if}}
+                  </div>
+                </details>
+                <main class="shrecknet-atlas-reading" aria-label="Page text">
+                  {{#each resource.instance.entities}}
+                    <article class="shrecknet-record"><h3>{{alias}}</h3>
+                      {{#if showAvatar}}<img class="shrecknet-section-avatar" src="{{avatarUrl}}" alt="">{{/if}}
+                      {{#if hasBothTextSources}}<div class="shrecknet-tabs" role="group" aria-label="Text source"><button type="button" class="{{#if showText}}is-active{{/if}}" aria-pressed="{{showText}}" data-action="selectTextSource" data-entity-id="{{entity_instance_id}}" data-source="text">Original text</button><button type="button" class="{{#if showGeneratedText}}is-active{{/if}}" aria-pressed="{{showGeneratedText}}" data-action="selectTextSource" data-entity-id="{{entity_instance_id}}" data-source="generated">Generated text</button></div>{{/if}}
+                      {{#if showText}}<p class="shrecknet-source-label">Original text</p><div class="shrecknet-document-text">{{{textHtml}}}</div>{{/if}}
+                      {{#if showGeneratedText}}<p class="shrecknet-source-label">Generated text</p><div class="shrecknet-document-text">{{{generatedTextHtml}}}</div>{{/if}}
+                      {{#unless hasText}}{{#unless hasGeneratedText}}<p class="shrecknet-empty">No document text available.</p>{{/unless}}{{/unless}}
+                    </article>
+                  {{else}}<p class="shrecknet-empty">No document text available.</p>{{/each}}
+                </main>
+                <details class="shrecknet-atlas-context" data-explorer-panel="context">
+                  <summary>Properties</summary><div class="shrecknet-atlas-panel-content">
+                  {{#each resource.instance.entities}}<section><h3>{{alias}}</h3>{{#if properties.length}}<dl class="shrecknet-properties">{{#each properties}}<div><dt>{{displayName}}</dt><dd>{{displayValue}}</dd></div>{{/each}}</dl>{{else}}<p class="shrecknet-empty">No properties.</p>{{/if}}</section>{{/each}}
+                  </div>
+                </details>
+              </div>
+            </section>
           {{else if (eq resource.kind "sceneCollection")}}
             <section class="shrecknet-scene-collection"><header><p>NARRATIVE SCENES</p><h2>{{resource.title}}</h2><form data-shrecknet-submit="searchScenes" role="search"><label class="shrecknet-visually-hidden" for="shrecknet-scene-search">Search scene names</label><input id="shrecknet-scene-search" name="sceneQuery" value="{{resource.query}}" placeholder="Search scene names…"><button type="button" data-action="searchScenes">Search scenes</button></form></header>
             {{#if resource.groups.length}}{{#each resource.groups}}<details class="shrecknet-scene-group"><summary>{{#if imageUrl}}<img src="{{imageUrl}}" alt="">{{/if}}<span>{{name}}</span><small>{{scenes.length}} scenes</small></summary><div class="shrecknet-scene-group-content"><button type="button" class="shrecknet-source-page" data-action="openInstance" data-instance-id="{{instanceId}}">Open source page</button><div class="shrecknet-scene-rows">{{#each scenes}}<button type="button" class="shrecknet-scene-row" data-action="openScene" data-instance-id="{{instance_id}}" data-scene-id="{{id}}"><strong>{{name}}</strong><small>{{milestone_count}} milestones · {{perspective_count}} perspectives</small></button>{{/each}}</div></div></details>{{/each}}{{else}}<p class="shrecknet-empty">No scenes found.</p>{{/if}}</section>
@@ -110,7 +134,7 @@
           {{else if (eq resource.kind "knowledgeWorlds")}}
             <section class="shrecknet-service-page">
               <p class="shrecknet-kicker">SHRECKWORLD</p><h2>Knowledge worlds</h2>
-              <p class="shrecknet-intro">Browse source libraries and retrieve cited, extractive evidence from indexed material.</p>
+              <p class="shrecknet-intro">Choose a library to consult your books with grounded answers and source excerpts.</p>
               {{#if resource.worlds.length}}<div class="shrecknet-card-grid">{{#each resource.worlds}}
                 <button type="button" class="shrecknet-page-card" data-action="openKnowledgeWorld" data-world-id="{{id}}">
                   <span class="shrecknet-card-placeholder" aria-hidden="true"><span class="fa-solid fa-book"></span></span>
@@ -118,70 +142,55 @@
                 </button>
               {{/each}}</div>{{else}}<p class="shrecknet-empty">No ShreckWorlds are available to this account.</p>{{/if}}
             </section>
-          {{else if (eq resource.kind "knowledgeLibrary")}}
-            <section class="shrecknet-service-page">
-              <p class="shrecknet-kicker">SHRECKWORLD LIBRARY</p><h2>{{resource.world.name}}</h2>
-              <p>{{resource.world.description}}</p>
-              <form class="shrecknet-query-form" data-shrecknet-submit="queryKnowledge">
-                <label>Ask a question<textarea name="query" rows="3" maxlength="4000" required placeholder="Search the indexed sources for evidence…"></textarea></label>
-                <label>Limit to source<select name="libraryItemId"><option value="">All sources</option>{{#each resource.sources}}<option value="{{id}}">{{title}}</option>{{/each}}</select></label>
-                <button type="submit">Find evidence</button>
-              </form>
-              <h3>Sources</h3>
-              {{#if resource.sources.length}}<div class="shrecknet-source-list">{{#each resource.sources}}
-                <button type="button" class="shrecknet-source-card" data-action="openKnowledgeSource" data-source-id="{{id}}">
-                  <strong>{{title}}</strong><span>{{authors}}</span><small>{{authority_tier}} · {{index_status}} · {{embedding_status}}</small>
-                </button>
-              {{/each}}</div>{{else}}<p class="shrecknet-empty">This ShreckWorld has no library sources.</p>{{/if}}
-            </section>
-          {{else if (eq resource.kind "knowledgeSource")}}
-            <article class="shrecknet-service-page shrecknet-source-detail">
-              {{#if resource.source.coverUrl}}<img class="shrecknet-source-cover" src="{{resource.source.coverUrl}}" alt="Cover for {{resource.source.title}}">{{/if}}
-              <p class="shrecknet-kicker">SHRECKWORLD SOURCE</p><h2>{{resource.source.title}}</h2>
-              <p>{{resource.source.description}}</p>
-              <dl class="shrecknet-properties">
-                <div><dt>Authors</dt><dd>{{resource.source.authors}}</dd></div>
-                <div><dt>Authority</dt><dd>{{resource.source.authority_tier}} · priority {{resource.source.authority_priority}}</dd></div>
-                <div><dt>File</dt><dd>{{resource.source.original_filename}}</dd></div>
-                <div><dt>Index status</dt><dd>{{resource.source.index_status}} · {{resource.source.embedding_status}}</dd></div>
-              </dl>
-              <form class="shrecknet-query-form" data-shrecknet-submit="queryKnowledge">
-                <label>Ask about this source<textarea name="query" rows="3" maxlength="4000" required placeholder="Find relevant passages…"></textarea></label>
-                <input type="hidden" name="libraryItemId" value="{{resource.source.id}}">
-                <button type="submit">Find evidence in this source</button>
-              </form>
-            </article>
-          {{else if (eq resource.kind "knowledgeResults")}}
-            <section class="shrecknet-service-page">
-              <p class="shrecknet-kicker">EXTRACTIVE EVIDENCE · NOT A SYNTHESIZED ANSWER</p><h2>{{resource.title}}</h2>
-              <p class="shrecknet-evidence-answer">{{knowledgeResults.answer}}</p>
-              {{#if knowledgeResults.citations.length}}<h3>Citations</h3><div class="shrecknet-citation-list">{{#each knowledgeResults.citations}}
-                <article class="shrecknet-citation">
-                  <header><strong>{{title}}</strong><span>Page {{page_number}} · {{authority_tier}}</span></header>
-                  <p>{{excerpt}}</p>
-                  {{#if parent_excerpt}}<details><summary>More context</summary><p>{{parent_excerpt}}</p></details>{{/if}}
-                </article>
-              {{/each}}</div>{{else}}<p class="shrecknet-empty">No relevant indexed evidence was found.</p>{{/if}}
-              <form class="shrecknet-query-form" data-shrecknet-submit="queryKnowledge">
-                <label>Ask another question<textarea name="query" rows="3" maxlength="4000" required>{{resource.query}}</textarea></label>
-                <input type="hidden" name="libraryItemId" value="{{resource.sourceId}}">
-                <button type="submit">Search again</button>
-              </form>
+          {{else if knowledge}}
+            <section class="shrecknet-knowledge {{#if knowledge.showBooks}}show-books{{else}}show-companion{{/if}}" aria-label="ShreckWorld library and rules companion">
+              <header class="shrecknet-knowledge-heading"><div><h2>ShreckWorld</h2><p>{{resource.world.name}} · Your library and rules companion</p></div><button type="button" class="shrecknet-knowledge-toggle" data-action="toggleKnowledgePane">{{#if knowledge.showBooks}}Show Companion{{else}}Show Books{{/if}}</button></header>
+              <div class="shrecknet-knowledge-columns">
+                <aside class="shrecknet-bookshelf" aria-label="Your Books">
+                  <h3>Your Books</h3><label><span class="shrecknet-visually-hidden">Search your library</span><input type="search" data-knowledge-search placeholder="Search your library…"></label>
+                  <div class="shrecknet-book-list">{{#each knowledge.books}}<article class="shrecknet-book {{#if selected}}is-selected{{/if}}" data-book-title="{{title}}">
+                    <a href="{{readerUrl}}" target="_blank" rel="noopener noreferrer" aria-label="Open {{title}} in Shrecknet">{{#if coverUrl}}<img src="{{coverUrl}}" alt="">{{else}}<span class="shrecknet-book-cover" aria-hidden="true">♧</span>{{/if}}</a>
+                    <div><a href="{{readerUrl}}" target="_blank" rel="noopener noreferrer"><strong>{{title}} ↗</strong></a><small>{{authors}}</small><small>{{authority_tier}}</small><small>{{readiness}}</small><label><input type="checkbox" data-knowledge-source value="{{id}}" {{#if selected}}checked{{/if}} {{#if ../knowledge.busy}}disabled{{/if}}>Use for questions</label></div>
+                  </article>{{else}}<p class="shrecknet-empty">No books in this library.</p>{{/each}}</div>
+                  <a class="shrecknet-manage-library" href="{{knowledge.manageUrl}}" target="_blank" rel="noopener noreferrer">Manage library ↗</a>
+                </aside>
+                <section class="shrecknet-rules-companion" aria-label="Shreck Companion">
+                  <header><span class="shrecknet-elder-emblem" aria-hidden="true">✧</span><div><h3>Shreck Companion</h3><small>Your books, explained</small></div></header>
+                  <div class="shrecknet-book-context"><strong>Searching: {{knowledge.scope}}</strong><small>Select books on the shelf. With none selected, all books are searched.</small></div>
+                  <div class="shrecknet-knowledge-log" role="log" aria-label="Rules conversation" aria-live="polite" aria-busy="{{knowledge.busy}}">
+                    {{#each knowledge.turns}}<div class="shrecknet-rules-turn"><p class="shrecknet-rules-question">{{query}}</p><article><strong>✧ Shreck Companion</strong><p class="shrecknet-rules-answer">{{answer}}</p><small>Answer status: {{status}}</small>
+                      {{#each warnings}}<p class="shrecknet-notice">{{message}}</p>{{/each}}
+                      {{#each conflicts}}<p class="shrecknet-notice"><strong>Source conflict</strong> {{description}} · {{citation_ids}}</p>{{/each}}
+                      {{#each missing}}<p class="shrecknet-notice">{{this}}</p>{{/each}}
+                      {{#each citations}}<details class="shrecknet-rule-citation"><summary>{{source_id}} · {{title}}{{#if page_number}} · Page {{page_number}}{{/if}}</summary><p>{{authority_tier}} {{#if page_label}}· Printed page {{page_label}}{{/if}}</p><blockquote>{{excerpt}}</blockquote>{{#if parent_excerpt}}<details><summary>More context</summary><p>{{parent_excerpt}}</p></details>{{/if}}{{#if readerUrl}}<a href="{{readerUrl}}" target="_blank" rel="noopener noreferrer">Open source in Shrecknet ↗</a>{{/if}}</details>{{/each}}
+                      <div class="shrecknet-answer-actions"><button type="button" data-action="copyKnowledgeAnswer" data-turn="{{index}}">Copy answer</button><button type="button" data-action="shareKnowledgeAnswer" data-turn="{{index}}">Send to Foundry chat</button></div>
+                    </article></div>{{else}}<div class="shrecknet-elder-welcome"><span aria-hidden="true">✧</span><h3>What do your books say?</h3><p>Ask a rules question to find an explanation and its supporting passages.</p></div>{{/each}}
+                    {{#if knowledge.busy}}<p role="status">Consulting your books…</p>{{/if}}
+                  </div>
+                  <form class="shrecknet-elder-composer" data-shrecknet-submit="queryKnowledge"><label class="shrecknet-visually-hidden" for="shrecknet-rules-query">Ask about your books</label><textarea id="shrecknet-rules-query" data-knowledge-draft name="query" rows="2" maxlength="4000" required placeholder="Ask anything about your books…" {{#if knowledge.busy}}disabled{{/if}}>{{knowledge.draft}}</textarea><div><small>♧ Book context · Each question searches the selected books</small><button type="submit" aria-label="Send rules question" {{#if knowledge.busy}}disabled{{/if}}>↑</button></div></form>
+                </section>
+              </div>
             </section>
           {{else if (eq resource.kind "elder")}}
-            <section class="shrecknet-service-page shrecknet-elder-page">
-              <p class="shrecknet-kicker">ATLAS COMPANION</p><h2>Ask an Elder</h2>
-              <p>Elders answer with Atlas context and cite their sources. When opened from an Atlas page, that page is included as context.</p>
+            <section class="shrecknet-elder-page" aria-label="Elder Companion">
               {{#if elderAgents.length}}
-                <label class="shrecknet-inline-select">Elder<select data-elder-select>{{#each elderAgents}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
-                {{#if elderHistory.length}}<div class="shrecknet-elder-history" aria-live="polite">{{#each elderHistory}}
-                  <article class="shrecknet-elder-message role-{{role}}"><strong>{{role}}</strong><div>{{content}}</div>
-                    {{#if citations.length}}<details><summary>Sources ({{citations.length}})</summary><ul>{{#each citations}}<li>{{#if title}}{{title}}{{else}}{{#if node_label}}{{node_label}}{{else}}{{node_name}}{{/if}}{{/if}} {{#if page_number}}· page {{page_number}}{{/if}}</li>{{/each}}</ul></details>{{/if}}
-                  </article>
-                {{/each}}</div>{{else}}<p class="shrecknet-empty">Ask a question to start a conversation.</p>{{/if}}
-                <form class="shrecknet-query-form" data-shrecknet-submit="askElder">
-                  <label>Your question<textarea name="query" rows="3" maxlength="4000" required placeholder="Ask about this Atlas…"></textarea></label>
-                  <button type="submit">Ask Elder</button>
+                <header class="shrecknet-elder-identity">
+                  {{#if elderIdentity.avatarUrl}}<img src="{{elderIdentity.avatarUrl}}" alt="">{{else}}<span class="shrecknet-elder-emblem" aria-hidden="true">✧</span>{{/if}}
+                  <div><h2>{{elderIdentity.name}}</h2><p>{{#if elderIdentity.description}}{{elderIdentity.description}}{{else}}Elder of {{connection.worldName}}{{/if}}</p><small>Atlas companion</small></div>
+                  <label><span class="shrecknet-visually-hidden">Switch Elder</span><select data-elder-select {{#if isAskingElder}}disabled{{/if}}>{{#each elderAgents}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
+                </header>
+                <aside class="shrecknet-elder-context" aria-label="Active context"><strong>Active context</strong><div><span>{{connection.worldName}}</span>{{#if elderContext}}<button type="button" data-action="openInstance" data-instance-id="{{elderContext.id}}">{{elderContext.name}}</button><button type="button" data-action="clearElderContext" {{#if isAskingElder}}disabled{{/if}}>Clear page focus</button>{{else}}<span>Whole Atlas</span>{{/if}}</div><small>Page focus guides the answer; the Elder may also retrieve other Atlas evidence.</small></aside>
+                <div class="shrecknet-elder-history" role="log" aria-label="Conversation" aria-live="polite" aria-busy="{{isAskingElder}}">
+                  {{#each elderHistory}}
+                    <article class="shrecknet-elder-message {{#if isUser}}role-user{{else}}role-assistant{{/if}}"><strong>{{#if isUser}}You{{else}}{{../elderIdentity.name}}{{/if}}</strong><div>{{content}}</div>
+                      {{#if citations.length}}<details class="shrecknet-elder-sources"><summary>{{citations.length}} sources</summary>{{#each citations}}<article><h3>{{title}}</h3>{{#if excerpts.length}}{{#each excerpts}}<blockquote>{{this}}</blockquote>{{/each}}{{else}}{{#if text}}<blockquote>{{text}}</blockquote>{{else}}<p>No excerpt returned.</p>{{/if}}{{/if}}{{#if instanceId}}<button type="button" data-action="openInstance" data-instance-id="{{instanceId}}">Open Atlas page</button>{{/if}}</article>{{/each}}</details>{{/if}}
+                    </article>
+                  {{else}}<div class="shrecknet-elder-welcome"><span aria-hidden="true">✧</span><h3>Consult {{elderIdentity.name}}</h3><p>Ask about the people, places, and events of {{connection.worldName}}.</p></div>{{/each}}
+                  {{#if isAskingElder}}<p role="status">{{elderIdentity.name}} is consulting the Atlas…</p>{{/if}}
+                </div>
+                <form class="shrecknet-elder-composer" data-shrecknet-submit="askElder">
+                  <label class="shrecknet-visually-hidden" for="shrecknet-elder-query">Ask {{elderIdentity.name}}</label><textarea id="shrecknet-elder-query" data-elder-draft name="query" rows="2" maxlength="4000" required placeholder="Ask {{elderIdentity.name}} about this world…" {{#if isAskingElder}}disabled{{/if}}>{{elderDraft}}</textarea>
+                  <div><small>✧ Atlas context</small><button type="submit" aria-label="Send question" {{#if isAskingElder}}disabled{{/if}}>↑</button></div>
                 </form>
               {{else}}<p class="shrecknet-empty">No Elders are configured for the connected Atlas ontologies.</p>{{/if}}
             </section>

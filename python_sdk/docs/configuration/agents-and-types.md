@@ -18,3 +18,7 @@ Use `python_sdk/examples/06_agents_management/01_agents_management_basics.py`.
 - `architect`: structure and world modeling workflows.
 - `librarian`: library/document intelligence workflows.
 - `novelist`: drafting/narrative generation workflows.
+
+CORS is deployment configuration and cannot be updated through the configuration
+API or SDK. Retired `cors_*` updates return HTTP 400. Use the shared root `.env`;
+see [Browser CORS](../../../Documentation/Deployment/BROWSER_CORS.md).

@@ -14,19 +14,12 @@ The production Foundry installation is served from:
 https://foundry.shrecknet.club
 ```
 
-The browser executes module requests from that origin, so the Shrecknet API must
-allow it in `cors_allow_origins`. New deployments receive this value from
-`configs/shrecknet.initial.json`. For an existing deployment, an administrator
-must add the origin through the Configuration Manager without discarding any
-existing allowed origins.
-
-The existing `cors_allow_methods` and `cors_allow_headers` defaults permit the
-module's `Authorization` and `X-Shrecknet-Integration-Key` headers. If those
-values are tightened later, retain both headers and the `POST`, `GET`, and
-`OPTIONS` methods. ShreckWorld and ShreckRPG requests also originate in the
-Foundry browser; configure each service's CORS allowlist for this origin and
-allow authorization/content-type headers plus `GET`, `POST`, `PUT`, `DELETE`,
-and `OPTIONS`.
+Shrecknet and ShreckWorld read CORS only from the root `.env`, mounted read-only
+into their API containers. Include `https://foundry.shrecknet.club` in
+`CORS_ALLOW_ORIGINS`. Use the [shared browser CORS guide](BROWSER_CORS.md) for the
+complete settings, initial container rollout, restart behavior, and rollback.
+ShreckRPG is maintained separately; Chronicles still requires that service's
+existing CORS setup until it adopts the same shared loader.
 
 ## Integration setup
 
@@ -49,8 +42,8 @@ being shown to players or posted to chat.
 
 The **Elder** workspace lists Elders assigned to the configured Atlas
 ontologies; opening it from a page or Narrative Scene provides that resource as
-optional context. **ShreckWorld** shows source metadata and cited, extractive
-query evidence rather than a synthesized answer. ShreckWorld source visibility
+optional context. **ShreckWorld** provides a bookshelf and grounded rules companion with cited
+answers and source excerpts. ShreckWorld source visibility
 is determined by that service; Foundry adds no per-world ACL.
 
 See [Foundry Integration API](../API/FOUNDRY_INTEGRATION_API.md) for the full
@@ -105,6 +98,196 @@ module ZIP; never repoint an existing release tag.
 
 The release tag is immutable. Do not move or recreate it after publishing.
 
+## Elder replies and interrupted connections
+
+The Elder workspace displays a successful query's `answer` and sources directly
+in the submitted conversation. It does not depend on a subsequent chat-list
+refresh or switch to the first listed chat.
+
+Before submission it snapshots that owned chat's history. If the query request
+loses its connection or receives gateway 502/504, the plugin keeps the question
+pending and checks `GET /jobs/elder/chats/{chat_id}?include_history=true`
+immediately, then every three seconds, up to 200 checks (about ten minutes).
+Only a new matching user question followed by an assistant message counts as a
+completed reply. Previous answers and incomplete turns are not reused. A 500
+response gets one immediate history check; validation errors are not polled.
+Recovery never repeats the POST or starts another generation. Unauthorized,
+forbidden, and missing-chat responses stop recovery. Leaving the conversation,
+closing the workspace, or signing out prevents late replies from updating it.
+Sending another question and changing Elders are disabled while a question is
+pending. If no completed reply is found, reopen that conversation to check its
+history before resending: the backend may still be generating.
+
+Elder query routes return one JSON response after generation; there are no SSE
+heartbeats. Configure the Foundry-reachable API proxy to allow long Elder query
+requests (900 seconds is the ShreckOS bundled proxy's setting), and return CORS
+headers for the Foundry origin on gateway errors as well as successful replies.
+An upstream HTTP error without those headers can appear as the generic browser
+message **Unable to connect to the configured service**. The plugin can recover
+saved replies, but cannot change an external proxy's timeout or CORS policy.
+
+No backend response, authentication, or database contract changes are required.
+These fixes remain in the `0.3.2` plugin release.
+
+## Atlas Explorer
+
+Atlas directories show complete entity-type icons, `name`, and owning ontology
+names. Cards grow with wrapped labels instead of inheriting Foundry's fixed
+button height. Page and related-record cards also grow to keep names visible.
+
+Opening an Atlas page presents a compact header with its name, types, thumbnail,
+and **Show in chat** action. The reading area offers **Original text** and
+**Generated text** per entity section. Original text is selected by default when
+both sources exist; a section with only one source uses that source. Selections
+persist in the current workspace session while navigating Back and Forward.
+Sections without either source display an empty-state message.
+
+Relationships are grouped by relationship definition, with each target displayed
+as its **page name · entity type**. The page name takes precedence over the target
+entity alias. Targets are deduplicated by page and type within each group across
+all sections. A target may still appear under multiple relationship types.
+Unresolved targets show **Related page unavailable**, without internal IDs.
+Relationship targets and ordered Narrative Scenes open through the existing
+workspace navigation and history. Related content remains available separately.
+
+At workspace content widths of 1100px and above, navigation, reading, and
+properties occupy three columns. From 750px, collapsible panels share a column
+beside the reading area. Below 750px, panels stack above the reading area. Panels
+start collapsed when first opened below 1100px and remember user toggles during
+the workspace session. **Focus reading** hides both panels; **Show panels**
+restores them. Breakpoints follow the resizable content area, not browser width.
+
+### Show in chat
+
+The single page-level button creates one Foundry chat message containing:
+
+- The page name and image, when available.
+- Every entity section, with only its selected original or generated text and a
+  source label. Empty sections are identified without preventing sharing.
+- Relationships grouped by type, with target page names and entity types.
+
+Only the explicitly shared page's content is included. Related pages' body text,
+properties, scenes, and recursively connected content are not added. The message
+is a snapshot, not a live Shrecknet page or a set of Foundry document links.
+Chat posting uses the current Foundry user's speaker and default message
+visibility; the action does not impose an additional GM-only restriction.
+The sender must therefore choose content appropriate for that chat audience.
+Duplicate clicks while a share is pending create only one message, and failures
+are reported in the workspace.
+
+Atlas sharing uses the same safe HTML subset as Chronicles: scripts, event
+handlers, unsafe links, and unsafe embedded images are removed. The Atlas page
+view offers **Show in chat** as its sole content-sharing action. Image reveal
+controls elsewhere in the module retain their existing behavior.
+
+### Ownership and compatibility
+
+`scripts/apps/atlas-content.js` owns source selection, relationship grouping,
+and chat markup. `shrecknet-shell.js` orchestrates existing API reads and Foundry
+chat creation; `shell.hbs` and `styles/base.css` own presentation. The shared
+`_presentDocument` sanitizer also backs Chronicle rendering and protected asset
+handling. Chronicle asset resolution remains scoped to its owning Chronicle.
+
+Type labels use `GET /ontologies/{ontology_id}/entities` without the directory's
+`display_on_world=true` filter, so referenced hidden types still have names.
+Relationship labels use
+`GET /ontologies/{ontology_id}/entities/{entity_id}/relationships` for the page's
+entity definitions. Metadata is cached within the workspace by ontology;
+relationship targets continue to use the existing entity-resolution endpoint and
+signed-in player's authorization. A failed metadata read is not cached as a
+success and can be retried. Close and reopen the workspace to refresh cached
+metadata after ontology changes. Signing out clears cached Atlas pages, resolved
+relationships, metadata, and text-source selections before another user signs in.
+
+Version `0.3.2` includes these changes. No public API or SDK contract, database
+migration, or configuration change is required. Publish the matching module
+release using the process above; rollback uses the previous published ZIP.
+
+## Elder Companion
+
+The Elder workspace displays its portrait (or fallback emblem), name, description,
+and switcher above an active-context strip. The conversation scrolls while the
+identity, context, and composer remain accessible. User messages appear as
+right-aligned bubbles; responses use the Elder's name. Draft questions survive
+rerenders and failures, clear after a successful reply, and clear when switching
+Elders or signing out.
+
+Opening Elder from an Atlas page or Narrative Scene captures the page identifier
+and label. **Clear page focus** removes `instance_id` from subsequent queries
+without deleting history. Page focus guides retrieval; it is not an exclusive
+source restriction. Expandable sources display returned `evidence_chunks` text,
+falling back to `canonical_text` or context text. **Open Atlas page** requires an
+explicit parent-page identifier; graph node IDs are never treated as page IDs.
+Answers and excerpts render as escaped text.
+
+History still loads the user's most recent Elder chat, without a per-World
+partition. Floating/sidecar modes, claim-level links, Actor mappings, Chronicle
+excerpt saving, and generated answer language/length changes remain future work.
+No API, SDK, database migration, or configuration change is required. Existing
+module rollback instructions apply. `elder-conversation.js` owns source
+presentation and transport recovery; the shell owns UI state.
+
+## ShreckWorld bookshelf and rules companion
+
+Opening **ShreckWorld** lists the signed-in user's accessible knowledge worlds.
+Opening a world displays **Your Books** beside **Shreck Companion**. The shelf
+can be resized horizontally; below 650px of content width, **Show Books** and
+**Show Companion** switch panes. The conversation scrolls independently of the
+composer. Search filters book titles locally.
+
+Book covers and titles open the web reader in a new browser tab using
+`/home/shreckworld/shreckworld/shreckworld?collectionId={world_id}&sourceId={item_id}`.
+**Manage library** opens the same route with only `collectionId`. These links
+carry no bearer token; the website uses its own signed-in session. Foundry does
+not embed original files. Covers are fetched through the authenticated service
+API and fall back to an emblem when unavailable.
+
+**Use for questions** controls source selection independently from opening books.
+No selected books means all sources in the current knowledge world. Multiple
+selections send `library_item_ids`; questions request `mode="answer"`,
+`retrieval_strategy="planned"`, and `response_detail="concise"`. The existing
+single-source client contract remains supported. Each question is independent;
+previous turns are displayed but are not sent as conversational model context.
+Drafts, selected books, and completed turns are retained per knowledge world
+within this workspace instance. Signing out clears them; closing the window or
+reloading Foundry does not persist them. Failed questions retain their draft,
+duplicate pending submissions are ignored, and late answers after sign-out are
+discarded.
+
+Answers display backend support status, source warnings, missing information,
+and conflicts without converting unavailable evidence into a supported answer.
+Expandable citations show the supplied authority tier, excerpt, physical page,
+and printed page label when available. Source links open the correct book;
+page-specific navigation and highlighting require a confirmed web reader anchor
+contract and are not currently implemented. System and edition fields are not
+invented when absent from the source API. See the
+[reader API](../API/SHRECKWORLD_READER_API.md) for synthesis and citation guarantees.
+
+**Copy answer** copies the explanation and source excerpts. **Send to Foundry
+chat** explicitly shares that answer and citations using the user's normal
+speaker and default chat visibility, subject to Foundry message permission. Text
+is escaped before posting; tokens and protected cover URLs are never included.
+The sender must choose material appropriate for the chat audience.
+
+### Connection and deployment
+
+Browser origins, methods, headers, credentials, and preflight cache duration come
+only from the shared root `.env`. Follow the [shared browser CORS guide](BROWSER_CORS.md)
+to rebuild/recreate the APIs for the first rollout and apply subsequent edits.
+
+A browser network failure identifies the configured API base and suggests checking
+reachability and CORS. Confirm the configured URL is browser-reachable; internal
+Docker hostnames are not suitable. The production `/shreckworld-api/health`
+endpoint can be reachable while cross-origin authenticated requests are blocked.
+The localhost-only legacy CORS policy blocks Foundry even when service health is
+normal. Updating the Foundry module alone does not update that backend policy.
+
+No schema migration or SDK model change is required. Shrecknet automatically
+removes legacy CORS config rows; `/config` no longer accepts them. Deploy the
+shared file policy in both API images and the module files together. Rollback restores the prior API image and module
+ZIP; source files and indexed content are preserved. `knowledge-companion.js`
+owns turn presentation and web-reader links; the shell owns per-world UI state.
+
 ## Release verification
 
 Before tagging, test against a clean Foundry V14 installation:
@@ -113,13 +296,15 @@ Before tagging, test against a clean Foundry V14 installation:
 - the module can be enabled in an empty Foundry World;
 - the Atlas and Narrative Scenes workspace navigation remains available while
   browsing, and each content area scrolls independently;
+- Atlas directory icons are fully visible, with complete type and ontology names;
+  long labels wrap, and page/related-record cards remain readable;
 - keyboard focus is visible and the workspace remains usable in a narrow,
   resizable Foundry window;
 - the GM can configure a Shrecknet URL, setup key, and World from Game Settings and see an online status;
 - the GM can configure reachable ShreckWorld and ShreckRPG API bases, and service requests use each player's own session;
 - an individual player can sign in and browse authorized data;
 - Atlas Elders and history load, and an opened Atlas record can be used as optional Elder context;
-- ShreckWorld source metadata, scoped evidence queries, and citations render for an authenticated user;
+- ShreckWorld books open externally, selection scopes grounded answers, source excerpts and warnings render, compact pane switching preserves drafts, and copy/chat actions share only the chosen turn;
 - Chronicle capabilities control available actions, share recipients persist, revision conflicts are reported, and protected images are copied to Foundry storage before reveal;
 - a browser request succeeds from `https://foundry.shrecknet.club`;
 - the release ZIP contains `module.json`, `scripts/main.js`, templates, styles,

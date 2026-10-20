@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import mimetypes
 import re
 import shutil
@@ -45,6 +46,8 @@ from app.services.model_settings import (
     get_model_shreckworld_synthesizer,
     save_model_shreckworld_synthesizer,
 )
+
+logger = logging.getLogger(__name__)
 
 admin_router = APIRouter(prefix="/admin/shreckworlds", tags=["ShreckWorld admin"])
 settings_router = APIRouter(prefix="/admin/settings", tags=["ShreckWorld settings"])

@@ -47,7 +47,10 @@ Evidence mode skips synthesis. Answer mode includes `answer_content`, grounded
 `claims` with exact-quote `support`, and frontend-oriented `evidence` entries.
 Rendered answer text uses inline `[source-N]` references; those IDs match
 `citations[].source_id`, `claims[].support[].evidence_id`, and `evidence[].id`.
-Index availability is reported separately in `source_warnings`. This pipeline
+Claims with citations or quotes that cannot be verified are omitted; the
+response becomes partial if any verified claims remain, or unsupported if none
+do. Retrieved citation/evidence objects are still returned for frontend
+inspection. Index availability is reported separately in `source_warnings`. This pipeline
 belongs to ShreckWorld and does not call Elder or Librarian. Use
 `include_trace=True` to inspect planning, retrieval, coverage, synthesis,
 fallback, and bounded follow-up diagnostics.

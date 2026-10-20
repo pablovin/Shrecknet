@@ -10,6 +10,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
+from shreckconfig import CORS_FIELDS
+
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -210,12 +212,6 @@ class Settings(BaseSettings):
     app_name: str = "shrecknet"
     debug: bool = False
     public_origin: str = "http://localhost"
-    cors_allow_origins: list[str] = ["http://localhost"]
-    cors_allow_origin_regex: str | None = r"https://.*\.lovableproject\.com"
-    cors_allow_credentials: bool = True
-    cors_allow_methods: list[str] = ["*"]
-    cors_allow_headers: list[str] = ["*"]
-    cors_max_age: int = 3600
     database_url: str = _sqlite_url(DEFAULT_DATABASE_FILENAME)
     jobs_database_url: str = _sqlite_url(DEFAULT_JOBS_DATABASE_FILENAME)
     media_root: str = "./media"
@@ -443,6 +439,7 @@ def _load_initial_settings_file() -> dict[str, Any]:
             raise ValueError(f"Invalid Shrecknet config seed file '{path}': expected JSON object")
         payload = migrate_character_agent_model_values(normalize_validation_retry_settings(payload))
         allowed = set(Settings.model_fields)
+        payload = {key: value for key, value in payload.items() if key not in CORS_FIELDS}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise ValueError(
@@ -479,7 +476,7 @@ def _seed_defaults_if_needed(conn: sqlite3.Connection) -> dict[str, Any]:
     existing = {
         key: value
         for key, value in _load_settings_from_db(conn).items()
-        if key not in BOOTSTRAP_ENV_FIELDS
+        if key not in BOOTSTRAP_ENV_FIELDS and key not in CORS_FIELDS
     }
     if LEGACY_VALIDATION_RETRIES in existing:
         normalized = normalize_validation_retry_settings(existing)
@@ -687,6 +684,8 @@ def load_settings() -> Settings:
     conn = _connect()
     try:
         _ensure_schema(conn)
+        with conn:
+            conn.executemany(f"DELETE FROM {CONFIG_TABLE} WHERE key = ?", [(key,) for key in CORS_FIELDS])
         _normalize_legacy_database_urls(conn)
         _migrate_character_agent_targets(conn)
         _normalize_legacy_llm_targets(conn)
@@ -717,6 +716,8 @@ def reload_settings() -> Settings:
 def update_settings(updates: dict[str, Any]) -> Settings:
     global _settings_cache
     with _settings_lock:
+        if set(updates) & CORS_FIELDS:
+            raise ValueError("CORS is configured only in the shared .env file")
         retired = set(updates) & set(RETIRED_CHARACTER_AGENT_MODELS)
         if retired:
             raise ValueError(f"Retired CharacterAgent model settings: {', '.join(sorted(retired))}")

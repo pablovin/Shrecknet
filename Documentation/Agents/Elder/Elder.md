@@ -56,6 +56,32 @@ Each `sources[]` item includes its node identity/display data, score, evidence I
 
 The server writes the same response metadata into assistant chat messages. That metadata currently contains `sources`, timings, plan, priors, trace ID, version, and LLM usage; it is the migration source for V3 structured continuity anchors.
 
+## Completion and connection recovery
+
+Both query entry points return one JSON response after the entire pipeline and
+owned-chat persistence complete. `/chat/messages/stream` is a compatibility path;
+it does not send SSE events or progress heartbeats. A lost HTTP connection does
+not prove that generation failed or stopped. Completed turns can already be
+saved and become visible on the next history read.
+
+Clients should display the returned `answer` and `sources` immediately rather
+than depending on a second chat-list or history request. On an ambiguous
+transport failure, read the exact submitted `chat_id` through
+`GET /jobs/elder/chats/{chat_id}?include_history=true`. Compare with the
+pre-submission transcript and require a new matching user question followed by
+an assistant reply; an older identical question is not evidence of completion.
+Do not automatically repeat the query POST. History access still requires the
+owning user's authentication; no new public polling route is introduced.
+
+The Foundry and ShreckOS Atlas clients recover through bounded history reads.
+ShreckOS uses a dedicated 15-minute query deadline and its bundled Nginx proxy
+allows 900 seconds on Elder query paths; ordinary requests keep their shorter
+deadlines. External proxies, including the Foundry browser's Shrecknet API
+proxy, need a compatible timeout and correct CORS headers on error responses.
+This client/deployment change does not alter `ElderQueryResponse`, chat schemas,
+SDK contracts, or persistence. See the [Foundry operations guide](../../Deployment/FOUNDRY_MODULE.md)
+for plugin recovery behavior.
+
 ## Observability
 
 Elder reports the timings above and emits `[ELDER_LLM_USAGE]` lines with call stage, model, input/output/total tokens, and wait time, followed by one `[ELDER_LLM_USAGE_TOTAL]` line keyed by trace ID and agent ID. Debug artifacts, when `elder_debug_artifacts_enabled` is enabled, are best-effort local files and never alter query execution.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+from shreckconfig import load_cors_policy
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,7 +15,8 @@ from app.services.embedding import EmbeddingUnavailable, get_embedder
 settings = get_settings()
 settings.media_root.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="ShreckWorld", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"], expose_headers=["Accept-Ranges", "Content-Length", "Content-Range", "ETag"])
+cors_policy = load_cors_policy()
+app.add_middleware(CORSMiddleware, **cors_policy.model_dump(), expose_headers=["Accept-Ranges", "Content-Length", "Content-Range", "ETag"])
 
 
 @app.on_event("startup")

@@ -1,3 +1,6 @@
+import { knowledgeReaderUrl, presentKnowledgeTurn, formatKnowledgeTurn } from "./knowledge-companion.js";
+import { presentElderHistory, presentElderSources, submitElderTurn } from "./elder-conversation.js";
+import { selectedTextSource, groupRelationships, renderAtlasChat, safeImageUrl } from "./atlas-content.js";
 import { ShrecknetClient, ShrecknetApiError } from "../api/shrecknet-client.js";
 import { NavigationHistory } from "../navigation/navigation-history.js";
 import { getConnectionState, saveConnectionState, saveServiceUrls } from "../settings/connection-settings.js";
@@ -41,7 +44,11 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       openKnowledgeWorld: ShrecknetShell._openKnowledgeWorld,
       openKnowledgeSource: ShrecknetShell._openKnowledgeSource,
       queryKnowledge: ShrecknetShell._queryKnowledge,
+      toggleKnowledgePane: ShrecknetShell._toggleKnowledgePane,
+      copyKnowledgeAnswer: ShrecknetShell._copyKnowledgeAnswer,
+      shareKnowledgeAnswer: ShrecknetShell._shareKnowledgeAnswer,
       askElder: ShrecknetShell._askElder,
+      clearElderContext: ShrecknetShell._clearElderContext,
       createChronicle: ShrecknetShell._createChronicle,
       openChronicle: ShrecknetShell._openChronicle,
       saveChronicle: ShrecknetShell._saveChronicle,
@@ -55,6 +62,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       searchScenes: ShrecknetShell._searchScenes,
       selectTextSource: ShrecknetShell._selectTextSource,
       showOnChat: ShrecknetShell._showOnChat,
+      toggleReaderFocus: ShrecknetShell._toggleReaderFocus,
       showImageToPlayers: ShrecknetShell._showImageToPlayers,
       goBack: ShrecknetShell._goBack,
       goForward: ShrecknetShell._goForward,
@@ -72,12 +80,15 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     this.connectionTested = false;
     this.notice = null;
     this.isLoading = false;
+    this.readerFocus = false;
+    this.explorerPanelState = new Map();
     this.folders = [];
     this.activeTextSourceByEntity = new Map();
     this.resource = { kind: "home", title: this.connection.worldName || "Shrecknet" };
     this.pageCache = new Map();
     this.relationshipCardsByInstance = new Map();
     this.propertyNamesByEntityDefinition = new Map();
+    this.atlasDefinitionsByOntology = new Map();
     this.resourceObjectUrls = [];
     this.resourceObjectUrlsByKey = new Map();
     this.assetPathByObjectUrl = new Map();
@@ -86,6 +97,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     this.elderAgentId = null;
     this.elderChatId = null;
     this.elderHistory = [];
+    this.knowledgeSessions = new Map();
     this.knowledgeWorldChoices = [];
     this.knowledgeSources = [];
     this.knowledgeResults = null;
@@ -101,6 +113,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       }
     }
     return {
+      readerFocus: this.readerFocus,
       configured: Boolean(this.connection.serverUrl && this.connection.worldId),
       canConfigure: game.user.isGM,
       authenticated: Boolean(this.session?.user),
@@ -128,8 +141,16 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
         ...agent,
         selected: String(agent.id) === String(this.elderAgentId),
       })),
-      elderHistory: this.elderHistory,
+      elderIdentity: (() => {
+        const agent = (this.resource.agents || []).find((a) => String(a.id) === String(this.elderAgentId));
+        return agent ? { ...agent, avatarUrl: safeImageUrl(this.client.resolveUrl(agent.avatar_url)) } : null;
+      })(),
+      elderContext: this.elderContextInstanceId ? { id: this.elderContextInstanceId, name: this.elderContextName } : null,
+      elderDraft: this.elderDraft || "",
+      elderHistory: this.elderHistory.map((message) => ({ ...message, isUser: message.role === "user", citations: presentElderSources(message.citations) })),
+      isAskingElder: Boolean(this.isAskingElder),
       knowledgeResults: this.knowledgeResults,
+      knowledge: this._knowledgeContext(),
       canShowChronicleImages: game.user.isGM,
       folders: this.folders,
       notice: this.notice,
@@ -143,6 +164,12 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   _onRender(context, options) {
     super._onRender(context, options);
     const root = this.element instanceof HTMLElement ? this.element : this.element?.[0];
+    const explorer = root?.querySelector(".shrecknet-atlas-explorer");
+    root?.querySelectorAll("details[data-explorer-panel]").forEach((panel) => {
+      const key = panel.dataset.explorerPanel;
+      panel.open = this.explorerPanelState.get(key) ?? (explorer.clientWidth >= 1100);
+      panel.addEventListener("toggle", () => this.explorerPanelState.set(key, panel.open));
+    });
     root?.querySelectorAll("form[data-shrecknet-submit]").forEach((form) => {
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -151,6 +178,23 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
         if (typeof handler === "function") handler.call(this, event, form);
       });
     });
+    const knowledge = this.resource.world && this.knowledgeSessions.get(this.resource.world.id);
+    root?.querySelector("[data-knowledge-draft]")?.addEventListener("input", (event) => { knowledge.draft = event.target.value; });
+    root?.querySelector("[data-knowledge-search]")?.addEventListener("input", (event) => {
+      const search = event.target.value.toLocaleLowerCase();
+      root.querySelectorAll("[data-book-title]").forEach((card) => { card.hidden = !card.dataset.bookTitle.toLocaleLowerCase().includes(search); });
+    });
+    root?.querySelectorAll("[data-knowledge-source]").forEach((input) => input.addEventListener("change", () => {
+      if (knowledge.busy) return;
+      if (input.checked) knowledge.selected.add(input.value); else knowledge.selected.delete(input.value);
+      void this.render();
+    }));
+    const log = root?.querySelector(".shrecknet-knowledge-log");
+    if (log) log.scrollTop = log.scrollHeight;
+    const draft = root?.querySelector("[data-elder-draft]");
+    draft?.addEventListener("input", () => { this.elderDraft = draft.value; });
+    const conversation = root?.querySelector(".shrecknet-elder-history");
+    if (conversation) conversation.scrollTop = conversation.scrollHeight;
     root?.querySelectorAll("select[data-elder-select]").forEach((select) => {
       select.addEventListener("change", (event) => this.constructor._selectElder.call(this, event, select));
     });
@@ -198,14 +242,14 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     const text = nonBlank(entity.text);
     const generatedText = nonBlank(entity.autogenerated_text);
     const hasBothTextSources = Boolean(text && generatedText);
-    const activeTextSource = hasBothTextSources ? this.activeTextSourceByEntity.get(entity.entity_instance_id) || "text" : text ? "text" : generatedText ? "generated" : null;
-    const avatarUrl = this.client.resolveUrl(entity.node_avatar_url);
+    const activeTextSource = selectedTextSource(entity, this.activeTextSourceByEntity);
+    const avatarUrl = safeImageUrl(this.client.resolveUrl(entity.node_avatar_url));
     return {
       ...entity,
       avatarUrl,
       showAvatar: Boolean(avatarUrl && avatarUrl !== pageImageUrl),
-      textHtml: text ? await this._enrichHtml(text) : null,
-      generatedTextHtml: generatedText ? await this._enrichHtml(generatedText) : null,
+      textHtml: text ? (await this._presentDocument(await this._enrichHtml(text))).contentHtml : null,
+      generatedTextHtml: generatedText ? (await this._presentDocument(await this._enrichHtml(generatedText))).contentHtml : null,
       hasText: Boolean(text), hasGeneratedText: Boolean(generatedText), hasBothTextSources,
       showText: activeTextSource === "text", showGeneratedText: activeTextSource === "generated",
       relationships: (entity.relationships || []).map((relationship) => ({
@@ -226,8 +270,27 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     return {
       ...page,
       displayName: recordName(page),
-      imageUrl: this.client.resolveUrl(image),
+      imageUrl: safeImageUrl(this.client.resolveUrl(image)),
     };
+  }
+
+  async _loadAtlasDefinitions(instance) {
+    const key = instance.ontology_id;
+    let definitions = this.atlasDefinitionsByOntology.get(key);
+    if (!definitions) {
+      const types = await this.client.listEntityTypes(key, { displayedOnly: false });
+      definitions = {
+        types: new Map(types.map((type) => [String(type.id), type.name])),
+        relationships: new Map(), loadedEntities: new Set(),
+      };
+    }
+    const ids = [...new Set(instance.entities.map((entity) => entity.definition_id))]
+      .filter((id) => !definitions.loadedEntities.has(id));
+    const relationships = await Promise.all(ids.map((id) => this.client.listEntityRelationships(key, id)));
+    relationships.flat().forEach((item) => definitions.relationships.set(String(item.id), item.name));
+    ids.forEach((id) => definitions.loadedEntities.add(id));
+    this.atlasDefinitionsByOntology.set(key, definitions);
+    return definitions;
   }
 
   async _resolveRelationshipCards(instance) {
@@ -241,10 +304,14 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       this.relationshipCardsByInstance.set(instance.instance_id, empty);
       return empty;
     }
-    const resolved = await this.client.resolveEntities(instance.ontology_id, targetIds);
+    const [resolved, definitions] = await Promise.all([
+      this.client.resolveEntities(instance.ontology_id, targetIds), this._loadAtlasDefinitions(instance),
+    ]);
     const cards = new Map(resolved.results.map((record) => [record.entity_instance_id, {
       instanceId: record.instance_id,
-      name: record.entity_alias || record.instance_name || "Untitled record",
+      name: record.instance_name || record.entity_alias || "Untitled record",
+      typeId: record.entity_definition_id,
+      typeName: definitions.types.get(String(record.entity_definition_id)) || "Unknown type",
       imageUrl: this.client.resolveUrl(record.avatar_url),
     }]));
     this.relationshipCardsByInstance.set(instance.instance_id, cards);
@@ -269,9 +336,14 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     return this._objectUrl(key, await loadBlob());
   }
 
-  // Chronicle markup is rendered in Foundry and chat, so keep only a safe document subset.
   async _presentChronicle(chronicle) {
-    const document = new DOMParser().parseFromString(chronicle.content || "", "text/html");
+    return this._presentDocument(chronicle.content, { chronicle, baseUrl: this._serviceUrl("shreckRpg") });
+  }
+
+  // Reader and Chronicle markup share a safe HTML subset; only Chronicles
+  // resolve protected assets using their owning document and player session.
+  async _presentDocument(html, { chronicle = null, baseUrl = this.connection.serverUrl } = {}) {
+    const document = new DOMParser().parseFromString(html || "", "text/html");
     const allowedTags = new Set(["A", "B", "BLOCKQUOTE", "BR", "CODE", "DEL", "DIV", "EM", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "I", "IMG", "INS", "LI", "OL", "P", "PRE", "S", "SPAN", "STRONG", "TABLE", "TBODY", "TD", "TH", "THEAD", "TR", "U", "UL"]);
     const images = [];
     for (const element of [...document.body.querySelectorAll("*")]) {
@@ -291,7 +363,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       const linkValue = element.getAttribute("href");
       if (linkValue) {
         try {
-          const url = new URL(linkValue, this._serviceUrl("shreckRpg"));
+          const url = new URL(linkValue, baseUrl);
           if (!["https:", "mailto:"].includes(url.protocol) || url.username || url.password) element.removeAttribute("href");
           else element.setAttribute("href", url.href);
         } catch (_) { element.removeAttribute("href"); }
@@ -299,7 +371,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       if (element.tagName !== "IMG") continue;
       const source = element.getAttribute("src") || "";
       const match = source.match(/^\/chronicles\/(\d+)\/assets\/([a-f0-9]{32})$/);
-      if (match && Number(match[1]) === Number(chronicle.id)) {
+      if (chronicle && match && Number(match[1]) === Number(chronicle.id)) {
         const objectUrl = await this._loadObjectUrl(source, () =>
           this.client.getChronicleAsset(this._serviceUrl("shreckRpg"), chronicle.id, source),
         );
@@ -308,7 +380,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
         images.push({ url: objectUrl, sourceUrl: source, title: element.getAttribute("alt") || chronicle.title });
       } else {
         try {
-          const url = new URL(source);
+          const url = chronicle ? new URL(source) : new URL(source, baseUrl);
           if (url.protocol !== "https:" || url.username || url.password) element.remove();
           else element.setAttribute("src", url.href);
         } catch (_) { element.remove(); }
@@ -327,6 +399,20 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   async _presentResource() {
+    if (this.resource.kind === "knowledgeLibrary") {
+      const resource = this.resource;
+      resource.sources = await Promise.all(resource.sources.map(async (source) => {
+        if (!source.cover_url) return source;
+        try {
+          const coverUrl = await this._loadObjectUrl(
+            `shreckworld:${resource.world.id}:${source.id}`,
+            () => this.client.getKnowledgeCover(this._serviceUrl("shreckWorld"), resource.world.id, source.id),
+          );
+          return { ...source, coverUrl };
+        } catch (_) { return { ...source, coverUrl: null }; }
+      }));
+      return this.resource;
+    }
     if (this.resource.kind === "chronicle" && this.resource.chronicle) {
       const { contentHtml, images } = await this._presentChronicle(this.resource.chronicle);
       return { ...this.resource, contentHtml, images };
@@ -344,6 +430,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     const relationshipCards = await this._resolveRelationshipCards(instance);
     await this._loadPropertyNames(instance);
     const pageCard = this._presentPageCard(instance);
+    const definitions = await this._loadAtlasDefinitions(instance);
     const entities = await Promise.all(instance.entities.map((entity) =>
       this._presentEntity(entity, relationshipCards, instance.ontology_id, pageCard.imageUrl),
     ));
@@ -356,6 +443,8 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
         ...instance,
         displayName: pageCard.displayName,
         pageImageUrl: pageCard.imageUrl,
+        typeNames: [...new Set(instance.entities.map((entity) => definitions.types.get(String(entity.definition_id))).filter(Boolean))].join(" · "),
+        relationshipGroups: groupRelationships(instance.entities, relationshipCards, definitions.relationships),
         entities,
         related_content,
         scenes: instance.scenes || [],
@@ -364,6 +453,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   async close(options = {}) {
+    this.elderRequestToken = null;
     this._releaseObjectUrls();
     return super.close(options);
   }
@@ -433,7 +523,12 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
 
   async _handleError(error) {
     if (error instanceof ShrecknetApiError && error.isAuthenticationError) {
-      this.client.clearSession();
+      this.knowledgeSessions.clear();
+    this.elderDraft = "";
+    this.elderHistory = [];
+    this.elderChatId = null;
+    this.elderRequestToken = null;
+    this.client.clearSession();
       this.session = null;
       this.folders = [];
       this.chronicleRecipients = [];
@@ -530,7 +625,16 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   static async _signOut() {
+    this.elderDraft = "";
+    this.elderHistory = [];
+    this.elderChatId = null;
+    this.elderRequestToken = null;
     this.client.clearSession();
+    this.pageCache.clear();
+    this.relationshipCardsByInstance.clear();
+    this.propertyNamesByEntityDefinition.clear();
+    this.atlasDefinitionsByOntology.clear();
+    this.activeTextSourceByEntity.clear();
     this.session = null;
     this.folders = [];
     this._releaseObjectUrls();
@@ -564,9 +668,8 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
         || { id: worldId, name: "ShreckWorld" };
       const sources = await this._withLoading(() => this.client.listKnowledgeSources(this._serviceUrl("shreckWorld"), worldId));
       this.knowledgeSources = sources;
-      this._releaseObjectUrls();
       this.resource = {
-        kind: "knowledgeLibrary", title: world.name, world, sources,
+        kind: "knowledgeLibrary", title: world.name, world, sources: this.knowledgeSources,
         breadcrumbs: [this._homeBreadcrumb(true), { label: "ShreckWorld", action: "openKnowledgeWorlds" }, { label: world.name }],
       };
       this.history.navigate(this.resource);
@@ -574,41 +677,91 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     } catch (error) { await this._handleError(error); }
   }
 
-  static async _openKnowledgeSource(event, target) {
-    const sourceId = getActionTarget(event, target).dataset.sourceId;
-    const world = this.resource.world;
-    const source = this.knowledgeSources.find((item) => item.id === sourceId);
-    if (!world || !source) return this._handleError(new Error("The selected ShreckWorld source is unavailable."));
-    this.resource = {
-      kind: "knowledgeSource", title: source.title, world, source,
-      breadcrumbs: [...this.resource.breadcrumbs.slice(0, 2), { label: world.name, action: "openKnowledgeWorld", worldId: world.id }, { label: source.title }],
-    };
-    this.history.navigate(this.resource);
-    try { await this.render(); } catch (error) { await this._handleError(error); }
+  _knowledgeSession(worldId) {
+    if (!this.knowledgeSessions.has(worldId)) this.knowledgeSessions.set(worldId, { selected: new Set(), turns: [], draft: "", pane: "companion", busy: false });
+    return this.knowledgeSessions.get(worldId);
   }
 
-  static async _queryKnowledge(event, target) {
-    const data = this._form(event, target);
-    const query = String(data.get("query") || "").trim();
+  _knowledgeContext() {
+    if (!this.resource.world || !this.resource.kind.startsWith("knowledge")) return null;
     const world = this.resource.world;
-    const sourceId = String(data.get("libraryItemId") || "");
-    if (!query || !world) return this._handleError(new Error("Enter a question and select a ShreckWorld first."));
+    const state = this._knowledgeSession(world.id);
+    const sources = this.resource.sources || [];
+    return {
+      ...state, showBooks: state.pane === "books",
+      manageUrl: knowledgeReaderUrl(this.connection.serverUrl, world.id),
+      scope: state.selected.size ? sources.filter((s) => state.selected.has(s.id)).map((s) => s.title).join(", ") : "All books",
+      books: sources.map((source) => ({ ...source,
+        selected: state.selected.has(source.id), readerUrl: knowledgeReaderUrl(this.connection.serverUrl, world.id, source.id),
+        readiness: source.index_status === "ready" && source.embedding_status === "ready" ? "Indexed · query availability checked when searching" : `${source.index_status} · ${source.embedding_status}`,
+      })),
+      turns: state.turns.map((turn, index) => ({ ...turn, index,
+        citations: turn.citations.map((citation) => ({ ...citation,
+          readerUrl: citation.library_item_id ? knowledgeReaderUrl(this.connection.serverUrl, world.id, citation.library_item_id) : null,
+        })),
+      })),
+    };
+  }
+
+  static async _openKnowledgeSource(event, target) {
+    const id = getActionTarget(event, target).dataset.sourceId;
+    if (this.knowledgeSources.some((source) => source.id === id)) window.open(knowledgeReaderUrl(this.connection.serverUrl, this.resource.world.id, id), "_blank", "noopener,noreferrer");
+  }
+
+  static async _toggleKnowledgePane() {
+    const state = this._knowledgeSession(this.resource.world.id);
+    state.pane = state.pane === "books" ? "companion" : "books";
+    await this.render();
+  }
+
+  static async _copyKnowledgeAnswer(event, target) {
     try {
-      const result = await this._withLoading(() => this.client.queryKnowledge(
-        this._serviceUrl("shreckWorld"), world.id, query, sourceId || null,
-      ));
-      this.knowledgeResults = result;
-      this._releaseObjectUrls();
-      this.resource = {
-        kind: "knowledgeResults", title: `Evidence: ${query}`, world, query, sourceId,
-        breadcrumbs: [...this.resource.breadcrumbs.slice(0, 2), { label: world.name, action: "openKnowledgeWorld", worldId: world.id }, { label: "Evidence" }],
-      };
-      this.history.navigate(this.resource);
-      await this.render();
+      const turn = this._knowledgeSession(this.resource.world.id).turns[Number(getActionTarget(event, target).dataset.turn)];
+      if (turn) await navigator.clipboard.writeText(formatKnowledgeTurn(turn));
     } catch (error) { await this._handleError(error); }
   }
 
+  static async _shareKnowledgeAnswer(event, target) {
+    try {
+      const turn = this._knowledgeSession(this.resource.world.id).turns[Number(getActionTarget(event, target).dataset.turn)];
+      if (!turn) return;
+      if (game.user.can && !game.user.can("MESSAGE_CREATE")) throw new Error("You do not have permission to create Foundry chat messages.");
+      const container = document.createElement("div");
+      container.textContent = formatKnowledgeTurn(turn);
+      await ChatMessage.create({ content: `<div style="white-space: pre-wrap">${container.innerHTML}</div>`, speaker: ChatMessage.getSpeaker() });
+    } catch (error) { await this._handleError(error); }
+  }
+
+  static async _queryKnowledge(event, target) {
+    const query = String(this._form(event, target).get("query") || "").trim();
+    const world = this.resource.world;
+    if (!query || !world) return this._handleError(new Error("Enter a question and select a ShreckWorld first."));
+    const state = this._knowledgeSession(world.id);
+    if (state.busy) return;
+    const sourceIds = [...state.selected];
+    const session = this.session;
+    state.draft = query;
+    state.busy = true;
+    this.notice = null;
+    await this.render();
+    try {
+      const result = await this.client.queryKnowledge(this._serviceUrl("shreckWorld"), world.id, query, sourceIds, { answer: true });
+      if (this.session !== session) return;
+      state.turns.push(presentKnowledgeTurn(query, result, sourceIds));
+      state.draft = "";
+    } catch (error) { if (this.session === session) await this._handleError(error); }
+    finally { state.busy = false; await this.render(); }
+  }
+
+  static async _clearElderContext() {
+    if (this.isAskingElder) return;
+    this.elderContextInstanceId = null;
+    this.elderContextName = null;
+    await this.render();
+  }
+
   static async _openElder() {
+    if (this.resource.kind === "elder" || this.isAskingElder) return;
     const app = this;
     try {
       const world = await app._withLoading(() => app.client.getWorld(app.connection.worldId));
@@ -623,9 +776,10 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       app.elderContextInstanceId = app.resource.instance?.instance_id
         || app.resource.scene?.instance_id
         || null;
+      app.elderContextName = app.resource.title || "Focused Atlas page";
       app.resource = {
-        kind: "elder", title: "Ask an Elder", agents,
-        breadcrumbs: [app._homeBreadcrumb(true), { label: "Ask an Elder" }],
+        kind: "elder", title: "Elder Companion", agents,
+        breadcrumbs: [app._homeBreadcrumb(true), { label: "Elder Companion" }],
       };
       if (app.elderAgentId) await app._loadElderHistory(app.elderAgentId);
       app._releaseObjectUrls();
@@ -644,14 +798,12 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     }
     const detail = await this.client.getElderChat(this.elderChatId);
     const history = detail?.history || detail?.messages || detail?.chat?.history || [];
-    this.elderHistory = history.map((message) => ({
-      role: message.role || message.type || "assistant",
-      content: message.content || message.query || message.answer || "",
-      citations: message.metadata?.sources || message.metadata?.context || message.citations || message.sources || [],
-    }));
+    this.elderHistory = presentElderHistory(history);
   }
 
   static async _selectElder(event, target) {
+    if (this.isAskingElder) return;
+    this.elderDraft = "";
     const agentId = target.value;
     this.elderAgentId = agentId || null;
     this.elderChatId = null;
@@ -663,20 +815,49 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   static async _askElder(event, target) {
+    if (this.isAskingElder) return;
     const query = String(this._form(event, target).get("query") || "").trim();
     if (!query || !this.elderAgentId) return this._handleError(new Error("Choose an Elder and enter a question."));
+    const requestToken = Symbol("elder-question");
+    this.elderRequestToken = requestToken;
+    const agentId = this.elderAgentId;
+    const session = this.session;
+    const instanceId = this.elderContextInstanceId;
+    let chatId = this.elderChatId;
+    const isActive = () => this.elderRequestToken === requestToken && this.session === session && this.resource.kind === "elder"
+      && String(this.elderAgentId) === String(agentId) && this.elderChatId === chatId;
+    this.isAskingElder = true;
+    this.notice = null;
     try {
       await this._withLoading(async () => {
-        if (!this.elderChatId) {
-          const chat = await this.client.createElderChat(this.elderAgentId, this.connection.worldName);
-          this.elderChatId = chat.id || chat.chat_id;
-          if (!this.elderChatId) throw new Error("Shrecknet did not return an Elder chat identifier.");
+        if (!chatId) {
+          const chat = await this.client.createElderChat(agentId, this.connection.worldName);
+          const createdChatId = chat.id || chat.chat_id;
+          if (!createdChatId) throw new Error("Shrecknet did not return an Elder chat identifier.");
+          if (this.session !== session || this.resource.kind !== "elder" || String(this.elderAgentId) !== String(agentId)) return;
+          chatId = createdChatId;
+          this.elderChatId = chatId;
         }
-        await this.client.askElder(this.elderAgentId, this.elderChatId, query, this.elderContextInstanceId);
-        await this._loadElderHistory(this.elderAgentId);
+        const history = await submitElderTurn(this.client, {
+          agentId, chatId, query, instanceId, isActive,
+          onRecover: () => {
+            if (isActive()) {
+              this.notice = "The connection was interrupted. Checking this conversation for Elder's saved reply…";
+              void this.render();
+            }
+          },
+        });
+        if (history && isActive()) {
+          this.elderHistory = presentElderHistory(history);
+          this.elderDraft = "";
+          this.notice = null;
+        }
       });
+    } catch (error) { if (isActive()) await this._handleError(error); }
+    finally {
+      this.isAskingElder = false;
       await this.render();
-    } catch (error) { await this._handleError(error); }
+    }
   }
 
   static async _openChronicles() {
@@ -1038,24 +1219,35 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     await this.render();
   }
 
+  static async _toggleReaderFocus() {
+    this.readerFocus = !this.readerFocus;
+    await this.render();
+  }
+
   static async _showOnChat(event, target) {
     const app = this;
-    const entityId = getActionTarget(event, target).dataset.entityId;
-    const entity = app.resource.instance?.entities.find((item) => item.entity_instance_id === entityId);
-    if (!entity) return app._handleError(new Error("The selected document section is unavailable."));
-    const text = nonBlank(entity.text);
-    const generatedText = nonBlank(entity.autogenerated_text);
-    const source = text && generatedText ? app.activeTextSourceByEntity.get(entityId) || "text" : text ? "text" : "generated";
-    const html = source === "text" ? await app._enrichHtml(text) : await app._enrichHtml(generatedText);
-    const imageUrl = app.client.resolveUrl(entity.node_avatar_url)
-      || app._presentPageCard(app.resource.instance).imageUrl;
-    const escape = foundry.utils?.escapeHTML || ((value) => String(value));
-    const title = escape(app.resource.instance.name || app.resource.title);
-    const section = escape(entity.alias || "Record");
-    await ChatMessage.create({
-      content: `<article class="shrecknet-chat-record"><h2>${title}</h2><p>${section} · ${source === "text" ? "Text" : "Generated text"}</p>${imageUrl ? `<img src="${escape(imageUrl)}" alt="" style="max-width: 100%;">` : ""}<div>${html || ""}</div></article>`,
-      speaker: ChatMessage.getSpeaker(),
-    });
+    if (app.sharingAtlasPage) return;
+    if (app.resource.kind !== "instance") return;
+    app.sharingAtlasPage = true;
+    const selections = new Map(app.activeTextSourceByEntity);
+    try {
+      const { instance: page } = await app._presentResource();
+      const sections = await Promise.all(page.entities.map(async (entity) => {
+        const source = selectedTextSource(entity, selections);
+        const html = source === "text" ? entity.textHtml : source === "generated" ? entity.generatedTextHtml : "";
+        const safe = await app._presentDocument(html);
+        return { name: entity.alias || "Record", source, html: safe.contentHtml };
+      }));
+      // Share a snapshot; related page bodies are never fetched for chat.
+      await ChatMessage.create({
+        content: renderAtlasChat(page, sections),
+        speaker: ChatMessage.getSpeaker(),
+      });
+    } catch (error) {
+      await app._handleError(error);
+    } finally {
+      app.sharingAtlasPage = false;
+    }
   }
 
   static async _showImageToPlayers(event, target) {

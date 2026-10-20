@@ -58,9 +58,30 @@
 .shrecknet-form label { display: grid; gap: .3rem; }
 .shrecknet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .6rem; padding: .75rem; }
 .shrecknet-folder { display: grid; grid-template-rows: 7rem auto auto; gap: .45rem; min-height: 11rem; padding: .55rem; overflow: hidden; text-align: left; }
-.shrecknet-folder img { width: 100%; height: 7rem; object-fit: cover; }
+.shrecknet-folder img { width: 100%; height: 7rem; object-fit: contain; }
 .shrecknet-folder-placeholder { display: grid; place-items: center; height: 7rem; color: var(--shrecknet-muted); font-size: 2rem; border: 1px dashed var(--shrecknet-border); }
 .shrecknet-folder small { color: var(--shrecknet-muted); }
+/* Foundry buttons have a fixed control height and single-line labels. Cards
+   must size to their image and complete name instead. Scope to the application
+   so these rules take precedence over native button styles. */
+.shrecknet button.shrecknet-folder,
+.shrecknet button.shrecknet-page-card {
+  display: grid;
+  box-sizing: border-box;
+  height: auto;
+  max-height: none;
+  min-width: 0;
+  align-content: start;
+  white-space: normal;
+  line-height: 1.35;
+}
+.shrecknet-folder strong,
+.shrecknet-folder small,
+.shrecknet-page-card > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .shrecknet-list { list-style: none; padding: .75rem; margin: 0; }
 .shrecknet-list li { margin: .35rem 0; }
 .shrecknet-record { padding: 1rem; font-family: var(--shrecknet-font-content); border-bottom: 1px solid var(--shrecknet-border); }
@@ -133,3 +154,126 @@
   .shrecknet-history { gap: .15rem; }
   .shrecknet-toolbar form { gap: .25rem; }
 }
+
+/* Atlas adapts to its resizable workspace rather than the browser viewport. */
+.shrecknet-atlas-explorer { container: atlas / inline-size; padding: 1rem; }
+.shrecknet-atlas-header { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+.shrecknet-atlas-header > img { width: 4rem; height: 4rem; object-fit: contain; }
+.shrecknet-atlas-header > div:first-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.shrecknet-atlas-header h2 { margin: 0; padding: 0; }
+.shrecknet-atlas-header p { margin: .25rem 0; color: var(--shrecknet-muted); }
+.shrecknet-atlas-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.shrecknet-atlas-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
+.shrecknet-atlas-columns > details { min-width: 0; border: 1px solid var(--shrecknet-border); border-radius: .5rem; background: var(--shrecknet-panel); }
+.shrecknet-atlas-columns summary { padding: .7rem; cursor: pointer; overflow-wrap: anywhere; }
+.shrecknet-atlas-panel-content { padding: .5rem; max-height: 60vh; overflow: auto; }
+.shrecknet-atlas-panel-content ul { padding: 0; list-style: none; }
+.shrecknet-atlas-panel-content li { margin-bottom: .35rem; }
+.shrecknet-atlas-panel-content button { width: 100%; height: auto; min-height: 2.25rem; white-space: normal; line-height: 1.4; padding: .5rem; text-align: left; overflow-wrap: anywhere; }
+.shrecknet-atlas-panel-content button small { display: block; color: var(--shrecknet-muted); }
+.shrecknet-atlas-panel-content h3 { padding: 0; }
+.shrecknet-atlas-context .shrecknet-properties div { grid-template-columns: minmax(0, 1fr); gap: .3rem; }
+.shrecknet-atlas-reading { min-width: 0; grid-row: 2; }
+.shrecknet-atlas-reading .shrecknet-record { display: flow-root; padding: .5rem 0 1rem; }
+.shrecknet-atlas-reading h3 { padding: 0; }
+.shrecknet-atlas-reading .shrecknet-document-text { max-height: none; overflow: visible; overflow-wrap: anywhere; }
+.shrecknet-atlas-reading .shrecknet-document-text img { float: none; max-width: 100%; margin: .5rem 0; }
+.shrecknet-atlas-reading .shrecknet-section-avatar { width: 5rem; max-height: 6rem; object-fit: contain; }
+.shrecknet-atlas-reading .shrecknet-tabs { flex-wrap: wrap; margin-inline: 0; }
+.shrecknet-atlas-explorer.is-reading-focused .shrecknet-atlas-columns > details { display: none; }
+.shrecknet-atlas-explorer.is-reading-focused .shrecknet-atlas-columns { grid-template-columns: minmax(0, 1fr); }
+.shrecknet-atlas-explorer.is-reading-focused .shrecknet-atlas-reading { grid-column: 1; grid-row: 1; }
+@container atlas (min-width: 750px) {
+  .shrecknet-atlas-columns { grid-template-columns: minmax(0, 1fr) 15rem; }
+  .shrecknet-atlas-reading { grid-column: 1; grid-row: 1 / span 2; }
+  .shrecknet-atlas-navigation, .shrecknet-atlas-context { grid-column: 2; }
+}
+@container atlas (min-width: 1100px) {
+  .shrecknet-atlas-columns { grid-template-columns: 15rem minmax(0, 1fr) 15rem; }
+  .shrecknet-atlas-navigation { grid-column: 1; grid-row: 1; }
+  .shrecknet-atlas-reading { grid-column: 2; grid-row: 1; }
+  .shrecknet-atlas-context { grid-column: 3; grid-row: 1; }
+}
+@container atlas (max-width: 749px) {
+  .shrecknet-atlas-columns { position: relative; }
+  .shrecknet-atlas-navigation { grid-row: 1; }
+  .shrecknet-atlas-context { grid-row: 2; }
+  .shrecknet-atlas-reading { grid-row: 3; }
+}
+
+/* Elder has one scrolling conversation between fixed companion controls. */
+.shrecknet-content.is-elder-content { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+.shrecknet-elder-page { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: .85rem; padding: .85rem 1rem; }
+.shrecknet-elder-identity { display: flex; align-items: center; gap: .8rem; flex: 0 0 auto; }
+.shrecknet-elder-identity img, .shrecknet-elder-emblem { width: 4rem; height: 4rem; object-fit: cover; border-radius: .8rem; flex: 0 0 auto; }
+.shrecknet-elder-emblem { display: grid; place-items: center; background: var(--shrecknet-surface); color: var(--shrecknet-accent); font-size: 2rem; }
+.shrecknet-elder-identity > div { flex: 1; min-width: 0; }
+.shrecknet-elder-identity h2 { margin: 0 0 .25rem; font-size: 1.2rem; }
+.shrecknet-elder-identity p { margin: 0 0 .25rem; max-height: 3em; overflow: auto; }
+.shrecknet-elder-identity small { color: var(--shrecknet-accent); }
+.shrecknet-elder-identity label { max-width: 35%; min-width: 0; }
+.shrecknet-elder-identity select { width: 100%; }
+.shrecknet-elder-context { flex: 0 0 auto; border-radius: .8rem; background: var(--shrecknet-surface); padding: .75rem; }
+.shrecknet-elder-context > div { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: .45rem 0; }
+.shrecknet-elder-context span { padding: .2rem .5rem; border-radius: .4rem; background: var(--shrecknet-panel); }
+.shrecknet-elder-context small, .shrecknet-elder-composer small { color: var(--shrecknet-muted); }
+.shrecknet-elder-history { display: flex; flex-direction: column; flex: 1; min-height: 0; max-height: none; overflow: auto; gap: 1rem; padding: .25rem 0; }
+.shrecknet-elder-message { border: 0; background: transparent; border-radius: .85rem; padding: .65rem .75rem; overflow-wrap: anywhere; flex: 0 0 auto; }
+.shrecknet-elder-message > strong { color: var(--shrecknet-accent); font-size: .8rem; }
+.shrecknet-elder-message.role-user { align-self: flex-end; max-width: 85%; margin-left: 8%; background: var(--shrecknet-surface); }
+.shrecknet-elder-message.role-user > strong { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.shrecknet-elder-sources { margin-top: .6rem; font-size: .85rem; }
+.shrecknet-elder-sources summary { cursor: pointer; color: var(--shrecknet-accent); }
+.shrecknet-elder-sources article { margin-top: .5rem; padding: .75rem; background: var(--shrecknet-panel); border: 1px solid var(--shrecknet-border); border-radius: .6rem; }
+.shrecknet-elder-sources blockquote { margin: .5rem 0; white-space: pre-wrap; }
+.shrecknet-elder-welcome { margin: auto; text-align: center; color: var(--shrecknet-muted); }
+.shrecknet-elder-welcome > span { font-size: 2rem; color: var(--shrecknet-accent); }
+.shrecknet-elder-composer { flex: 0 0 auto; border: 1px solid var(--shrecknet-border); border-radius: .85rem; background: var(--shrecknet-panel); padding: .65rem; }
+.shrecknet-elder-composer textarea { width: 100%; min-height: 3rem; max-height: 8rem; resize: vertical; border: 0; background: transparent; }
+.shrecknet-elder-composer > div { display: flex; align-items: center; justify-content: space-between; }
+.shrecknet-elder-composer button { flex: 0 0 auto; width: 2rem; background: var(--shrecknet-accent); color: var(--shrecknet-bg); border-radius: .6rem; }
+
+/* The bookshelf and rules log follow the available Foundry content width. */
+.shrecknet-content.is-knowledge-content { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; container-type: inline-size; }
+.shrecknet-knowledge { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: .85rem; gap: .85rem; }
+.shrecknet-knowledge-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.shrecknet-knowledge-heading h2, .shrecknet-knowledge-heading p, .shrecknet-rules-companion h3 { margin: 0 0 .25rem; }
+.shrecknet-knowledge-heading p { color: var(--shrecknet-muted); }
+.shrecknet-knowledge-columns { display: flex; flex: 1; min-height: 0; gap: .7rem; }
+.shrecknet-bookshelf, .shrecknet-rules-companion { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-radius: .85rem; background: var(--shrecknet-panel); padding: .8rem; gap: .8rem; }
+.shrecknet-bookshelf { width: 30%; flex: 0 0 auto; resize: horizontal; overflow: auto; max-width: 55%; min-width: 12rem; }
+.shrecknet-rules-companion { flex: 1; }
+.shrecknet-bookshelf h3 { margin: .2rem 0; }
+.shrecknet-bookshelf input[type=search] { width: 100%; }
+.shrecknet-book-list { flex: 1; min-height: 0; overflow: auto; }
+.shrecknet-book { display: flex; align-items: flex-start; gap: .6rem; margin-bottom: .6rem; padding: .6rem; border: 1px solid transparent; border-radius: .65rem; background: var(--shrecknet-surface); overflow-wrap: anywhere; }
+.shrecknet-book[hidden] { display: none; }
+.shrecknet-book.is-selected { border-color: var(--shrecknet-accent); }
+.shrecknet-book > div { flex: 1; min-width: 0; }
+.shrecknet-book img, .shrecknet-book-cover { width: 2.8rem; height: 4rem; border-radius: .35rem; object-fit: contain; }
+.shrecknet-book-cover { display: grid; place-items: center; background: var(--shrecknet-bg); color: var(--shrecknet-accent); font-size: 1.5rem; }
+.shrecknet-book small { display: block; color: var(--shrecknet-muted); margin-top: .2rem; }
+.shrecknet-book label { display: flex; align-items: center; gap: .3rem; margin-top: .4rem; font-size: .8rem; }
+.shrecknet-manage-library { padding-top: .6rem; }
+.shrecknet-rules-companion > header { display: flex; align-items: center; gap: .6rem; }
+.shrecknet-rules-companion .shrecknet-elder-emblem { width: 2.5rem; height: 2.5rem; }
+.shrecknet-book-context { padding: .65rem; border-radius: .6rem; background: var(--shrecknet-surface); overflow-wrap: anywhere; }
+.shrecknet-book-context small { display: block; color: var(--shrecknet-muted); margin-top: .3rem; }
+.shrecknet-knowledge-log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 1.1rem; }
+.shrecknet-rules-turn { flex: 0 0 auto; overflow-wrap: anywhere; }
+.shrecknet-rules-question { width: fit-content; max-width: 85%; margin: 0 0 1rem auto; padding: .7rem; border-radius: .8rem; background: var(--shrecknet-surface); }
+.shrecknet-rules-answer, .shrecknet-rule-citation blockquote { white-space: pre-wrap; line-height: 1.55; }
+.shrecknet-rule-citation { margin: .6rem 0; padding: .7rem; background: var(--shrecknet-surface); border-radius: .6rem; }
+.shrecknet-rule-citation summary { cursor: pointer; }
+.shrecknet-rule-citation blockquote { margin: .5rem 0; }
+.shrecknet-answer-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.shrecknet-knowledge-toggle { display: none; }
+@container (max-width: 650px) {
+  .shrecknet-knowledge-columns { display: flex; flex-direction: column; }
+  .shrecknet-knowledge-toggle { display: block; }
+  .show-books .shrecknet-rules-companion, .show-companion .shrecknet-bookshelf { display: none; }
+  .shrecknet-bookshelf { resize: none; width: auto; max-width: none; flex: 1; }
+}
+
+.shrecknet-knowledge a { color: var(--shrecknet-text); text-decoration: none; }
+.shrecknet-knowledge a:hover { color: var(--shrecknet-accent); text-decoration: underline; }

@@ -4,6 +4,7 @@ version = "0.5.7"
 description = "Shrecknet core platform (world graph, ontology, agents, identity)"
 requires-python = ">=3.10"
 dependencies = [
+  "shreckconfig>=0.1,<0.2",
   "shreckdoc>=0.1,<0.2",
   "fastapi>=0.110,<0.112",
   "uvicorn[standard]>=0.27,<0.31",

@@ -7,6 +7,7 @@ x-shrecknet-image: &shrecknet-image
     dockerfile: Dockerfile
     additional_contexts:
       shreckdoc: ./shreckdoc
+      shreckconfig: ./shreckconfig
 
 x-shrecknet-env: &shrecknet-env
   PYTHONUNBUFFERED: "1"
@@ -357,6 +358,12 @@ services:
     ports:
       - "8100:8100" # API, /docs, /openapi.json, /health
     volumes:
+      - type: bind
+        source: ./.env
+        target: /configs/browser.env
+        read_only: true
+        bind:
+          create_host_path: false
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/app/media
       - hf-model-cache:/hf-cache
@@ -511,6 +518,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         shreckdoc: ./shreckdoc
+        shreckconfig: ./shreckconfig
     restart: "no"
     init: true
     user: "0:0"
@@ -530,6 +538,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         shreckdoc: ./shreckdoc
+        shreckconfig: ./shreckconfig
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
@@ -553,6 +562,12 @@ services:
     ports:
       - "8121:8120" # host:container; keep the service port internal
     volumes:
+      - type: bind
+        source: ./.env
+        target: /configs/browser.env
+        read_only: true
+        bind:
+          create_host_path: false
       - ./shreckworld/databases:/data
       - ./shreckworld/media:/app/media
       - hf-model-cache:/hf-cache:ro
@@ -578,6 +593,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         shreckdoc: ./shreckdoc
+        shreckconfig: ./shreckconfig
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"

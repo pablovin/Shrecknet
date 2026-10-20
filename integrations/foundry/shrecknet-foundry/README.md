@@ -48,9 +48,14 @@ The World-browser search searches page names across every ontology in the
 configured World. Results are loaded as complete pages, so opening a result does
 not require a second content request.
 
-Readers can post the currently selected Text or Generated text source to Foundry
-chat with its page name and image. A GM can also choose **Show players** on a
-Shrecknet image to open it for every connected player.
+The Atlas Explorer centers reading between collapsible relationship/scene and
+properties panels, with a focus-reading option and layouts that follow the
+resizable workspace width. **Show in chat** shares the page name, image, each
+section's selected Original or Generated text, and relationships grouped by type
+with target page names and entity types. Related pages' body text is not shared.
+This is the Atlas page's only content-sharing action. GM image reveal remains
+available in other module views. See the [canonical Foundry documentation](https://github.com/pablovin/Shrecknet/blob/main/Documentation/Deployment/FOUNDRY_MODULE.md#atlas-explorer)
+for source-selection, chat visibility, metadata caching, and compatibility rules.
 
 Folders, search results, and related records render as image cards that open the
 underlying page. The browser displays a loading indicator while it fetches
@@ -77,10 +82,16 @@ detail view provides direct Previous scene and Next scene links.
 - **Elder** lists Elders assigned to the connected Atlas ontologies. It can
   include the currently viewed Atlas record or Narrative Scene as context.
   Conversations are private to the signed-in Shrecknet user and display returned
-  history and citations.
-- **ShreckWorld** lists accessible knowledge worlds and source metadata. Queries
-  search all sources or one selected source. Results show the backend answer and
-  extractive citations; evidence is not presented as an Elder-generated answer.
+  history and citations. Returned answers display directly; interrupted query
+  connections recover saved replies from the same owned chat without repeating
+  generation. Recovery is bounded to about ten minutes. See the canonical
+  Foundry operations guide for proxy requirements and recovery limits.
+- **ShreckWorld** pairs an accessible book library with a grounded rules companion.
+  Queries search all books or selected books; answers show support status and
+  expandable citations. Covers and titles open the Shrecknet web reader in a new
+  tab. Compact windows switch between Books and Companion. See the canonical
+  [Foundry documentation](https://github.com/pablovin/Shrecknet/blob/main/Documentation/Deployment/FOUNDRY_MODULE.md#shreckworld-bookshelf-and-rules-companion)
+  for history lifetime, sharing, reader links, and backend CORS deployment.
 - **Chronicles** supports reading, creating, editing, sharing, and deleting
   documents according to the signed-in user's ShreckRPG permissions. Sharing
   controls appear only when the backend grants the `share` capability. Saves use
@@ -107,7 +118,8 @@ base defaults to `/shreckworld-api`; the ShreckRPG base defaults to
   `GET /shreckworlds/{shreckworld_id}/library-items`,
   `GET /shreckworlds/{shreckworld_id}/library-items/{library_item_id}/cover`,
   and `POST /shreckworlds/{shreckworld_id}/query` with the optional
-  `library_item_id` source scope.
+  `library_item_ids` selection (or legacy `library_item_id`), `mode="answer"`,
+  `retrieval_strategy="planned"`, and `response_detail="concise"`.
 - Chronicles: `GET` and `POST /chronicles`,
   `GET`, `PUT`, and `DELETE /chronicles/{chronicle_id}`,
   `GET /chronicles/recipients`,

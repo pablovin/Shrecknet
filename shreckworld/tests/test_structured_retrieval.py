@@ -112,7 +112,9 @@ def test_multiple_source_scope_and_query_coverage(api, runtime, monkeypatch):
     assert both_scope_forms.status_code == 422
 
 
-def test_grounded_answer_mode_returns_validated_claims_and_explicit_model_failure(api, runtime, monkeypatch):
+def test_grounded_answer_mode_returns_validated_claims_and_explicit_model_failure(
+    api, runtime, monkeypatch, caplog,
+):
     _, item_id, job_id = queued_job(api, monkeypatch, content=b"Mounted combat uses Horsemanship.")
     run(item_id, job_id)
     _, unindexed_id, _ = queued_job(api, monkeypatch, title="Unindexed")
@@ -155,6 +157,17 @@ def test_grounded_answer_mode_returns_validated_claims_and_explicit_model_failur
     failed = query(api, library_item_ids=[item_id, unindexed_id], mode="answer")
     assert failed.status_code == 503
     assert failed.json()["detail"] == "Grounded answer synthesis is unavailable"
+
+    from app.services.grounded_answer import GroundedAnswerInvalid
+    def invalid_output(**kwargs):
+        raise GroundedAnswerInvalid("invalid_structure")
+    monkeypatch.setattr("app.api.routers.shreckworlds.synthesize_grounded_answer", invalid_output)
+    rejected = query(api, library_item_ids=[item_id, unindexed_id], mode="answer")
+    assert rejected.status_code == 502
+    assert rejected.json()["detail"] == (
+        "Grounded answer synthesis returned invalid structured output or evidence references"
+    )
+    assert "reason=invalid_structure" in caplog.text
 
 
 def test_real_qdrant_projection_search_counts_and_retired_cleanup(api, runtime, monkeypatch):

@@ -5,11 +5,14 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.routers import llm_status
+from app.core.config_store import CHARACTER_AGENT_MODEL_FIELDS, COMPANION_MODEL_FIELDS
 
 
 def _settings() -> SimpleNamespace:
     target = SimpleNamespace(provider="openai", name="gpt-5-nano")
     return SimpleNamespace(
+        companion_enabled=False,
+        **{field: target for field in (*CHARACTER_AGENT_MODEL_FIELDS, *COMPANION_MODEL_FIELDS)},
         model_architect_scene_chunking=target,
         model_architect_entity_proposal=target,
         model_architect_milestone_proposal=target,
@@ -52,6 +55,8 @@ async def test_llm_status_reachable_but_not_operational(monkeypatch) -> None:
     assert payload["shreckllm"]["reachable"] is True
     assert payload["shreckllm"]["operational"] is False
     assert payload["services"]["architect"] is False
+    assert payload["services"]["companion_agent"] is False
+    assert all(field in payload["model_targets"] for field in COMPANION_MODEL_FIELDS)
 
 
 @pytest.mark.asyncio

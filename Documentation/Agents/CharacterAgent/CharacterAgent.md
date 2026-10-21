@@ -762,3 +762,12 @@ defines v5 arithmetic, historical replay, baseline representation, and client
 compatibility. New evidence may upgrade a current profile; reads do not rewrite
 historical states or existing portraits. Roll back using compatible profile readers
 or a pre-upgrade backup, never by changing version labels.
+
+## Shared subjective memory retrieval
+
+`app/services/character_memory_service.py` owns deterministic memory rendering,
+embedding/lexical ranking and owned-perspective retrieval. Decision-making imports
+its ID-free projection; Character Companion uses the same ranking with provenance.
+The former `jobs/character_agent/memory.py` remains a compatibility re-export.
+Companion loads precomputed identity and effective traits without running embodiment
+or decision-making. See [Character Companion](../Companion/Companion.md).

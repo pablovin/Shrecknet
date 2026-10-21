@@ -37,6 +37,7 @@ from app.api.routers import (
     ontologies,
     ontology_instances,
     personal_companion_agents,
+    character_companion,
     setup,
     service_email,
     users,
@@ -44,7 +45,7 @@ from app.api.routers import (
 )
 from app.services.pdf_embedding_service import PdfEmbeddingService
 from app.core.config_store import get_settings, update_settings
-from app.core.config_store import CHARACTER_AGENT_MODEL_FIELDS, LLMModelTarget
+from app.core.config_store import COMPANION_MODEL_FIELDS, CHARACTER_AGENT_MODEL_FIELDS, LLMModelTarget
 from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
 from app.db.init_db import init_db_async
 from app.db.init_jobs_db import init_jobs_db
@@ -233,6 +234,7 @@ async def _run_llm_prewarm() -> None:
         settings.model_librarian_synthesis,
         getattr(settings, "model_librarian_character_incorporation", settings.model_librarian_synthesis),
         *[getattr(settings, field, settings.model_elder_planner) for field in CHARACTER_AGENT_MODEL_FIELDS],
+        *([getattr(settings, field) for field in COMPANION_MODEL_FIELDS[:2]] if settings.companion_enabled else []),
         settings.model_agents_repair_json,
         settings.model_architect_scene_chunking,
         settings.model_architect_entity_proposal,
@@ -328,9 +330,13 @@ async def lifespan(_: FastAPI):
             await PdfEmbeddingService(neo4j_session).ensure_vector_index()
     except Exception:
         logger.exception("Unable to ensure Neo4j startup graph/index state")
+    from app.services.companion_dispatch_service import dispatch_loop
+    companion_dispatch = asyncio.create_task(dispatch_loop())
     try:
         yield
     finally:
+        companion_dispatch.cancel()
+        await asyncio.gather(companion_dispatch, return_exceptions=True)
         try:
             await stop_embedding_runtime()
         except Exception:
@@ -402,6 +408,8 @@ app.include_router(media_admin.router)
 app.include_router(libraries.router)
 app.include_router(ontology_instances.router)
 app.include_router(personal_companion_agents.router)
+app.include_router(character_companion.router)
+app.include_router(character_companion.retrieval_router)
 app.include_router(events.router)
 app.include_router(foundry_integrations.router)
 app.include_router(contracts.router)

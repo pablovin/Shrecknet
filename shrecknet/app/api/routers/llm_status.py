@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 
 from app.api.deps import get_current_user
-from app.core.config_store import CHARACTER_AGENT_MODEL_FIELDS, get_settings
+from app.core.config_store import COMPANION_MODEL_FIELDS, CHARACTER_AGENT_MODEL_FIELDS, get_settings
 from app.services.shreckllm_status_service import (
     get_all_provider_validations,
     get_provider_model_catalog,
@@ -73,6 +73,7 @@ async def get_service_status(
             "elder": shreckllm_status["operational"],
             "librarian": shreckllm_status["operational"],
             "novelist": shreckllm_status["operational"],
+            "companion_agent": bool(settings.companion_enabled and shreckllm_status["operational"] and settings.model_companion_synthesis.name),
             "character_agent": shreckllm_status["operational"],
         },
         "providers": providers,
@@ -90,6 +91,6 @@ async def get_service_status(
             "model_librarian_planner": _target_status(settings.model_librarian_planner),
             "model_librarian_synthesis": _target_status(settings.model_librarian_synthesis),
             "model_librarian_character_incorporation": _target_status(getattr(settings, "model_librarian_character_incorporation", settings.model_librarian_synthesis)),
-            **{field: _target_status(getattr(settings, field)) for field in CHARACTER_AGENT_MODEL_FIELDS},
+            **{field: _target_status(getattr(settings, field)) for field in (*CHARACTER_AGENT_MODEL_FIELDS, *COMPANION_MODEL_FIELDS)},
         },
     }

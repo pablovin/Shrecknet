@@ -39,9 +39,9 @@ class AsyncShrecknetClient:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
-    async def raw_request(self, method: str, path: str, *, params: dict[str, Any] | None = None, json: dict[str, Any] | None = None) -> Any:
+    async def raw_request(self, method: str, path: str, *, params: dict[str, Any] | None = None, json: dict[str, Any] | None = None, headers: dict[str, str] | None = None, files: dict | None = None) -> Any:
         """Execute a raw HTTP request and map Shrecknet errors to SDK exceptions."""
-        response = await self._client.request(method=method, url=path, params=params, json=json, headers=self._headers())
+        response = await self._client.request(method=method, url=path, params=params, json=json, headers={**self._headers(), **(headers or {})}, files=files)
         detail = None
         try:
             payload = response.json()

@@ -108,6 +108,7 @@ async def get_provider_model_catalog(settings: Settings) -> dict[str, Any]:
                 discovered_models = raw.get("discovered_models")
                 models = raw.get("models")
                 clean_providers[str(provider_id)] = {
+                    "capabilities": raw.get("capabilities", {}),
                     "configured_models": [str(model) for model in configured_models] if isinstance(configured_models, list) else [],
                     "discovered_models": [str(model) for model in discovered_models] if isinstance(discovered_models, list) else [],
                     "models": [str(model) for model in models] if isinstance(models, list) else [],

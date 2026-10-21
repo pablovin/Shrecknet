@@ -24,12 +24,15 @@ def configure_celery_app() -> None:
         Queue("ontology_linking"),
         Queue("architect"),
         Queue("character_agent"),
+        Queue("companion"),
+        Queue("companion_rapport"),
     )
     celery_app.conf.task_routes = {
         "architect.analyze_instance": {"queue": "architect"},
         "architect.generate_entities": {"queue": "architect"},
         "character_agent.generate_embodiment": {"queue": "character_agent"},
         "character_agent.decision_making": {"queue": "character_agent"},
+        "companion.process_outbox": {"queue": "companion"},
     }
     celery_app.conf.task_always_eager = settings.celery_task_always_eager
     celery_app.conf.task_eager_propagates = True
@@ -140,6 +143,9 @@ def _clear_librarian_ingestion_locks_on_worker_start() -> None:
 @worker_ready.connect
 def _start_stale_reaper(sender=None, **_kwargs) -> None:  # pragma: no cover - startup hook
     global _stale_reaper_thread_started
+    if str(getattr(sender, "hostname", "")).startswith("companion"):
+        # Dedicated companion workers must not purge other queues on startup.
+        return
     try:
         from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
 

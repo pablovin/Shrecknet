@@ -179,3 +179,28 @@ class OllamaClient:
             raise DependencyUnavailableError(f"ollama request failed ({response.status_code})")
 
         return response.json()
+
+    async def stream(self, request):
+        import json
+        from app.streaming import provider_messages
+        messages, _ = provider_messages(request, self.provider_id)
+        payload = {"model": request.model, "messages": messages, "stream": True,
+                   "think": request.reasoning, "options": {"temperature": request.temperature, "num_predict": request.max_tokens}}
+        if self.keep_alive:
+            payload["keep_alive"] = self.keep_alive
+        async with self._client.stream("POST", "/api/chat", json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("error"):
+                    raise DependencyUnavailableError("ollama streaming failed")
+                text = (row.get("message") or {}).get("content")
+                if text:
+                    yield {"type": "delta", "text": text}
+                if row.get("done"):
+                    yield {"type": "usage", "usage": {"prompt_tokens": row.get("prompt_eval_count"), "completion_tokens": row.get("eval_count")}}
+                    yield {"type": "finish", "reason": row.get("done_reason", "stop")}
+                    yield {"type": "done"}
+                    return

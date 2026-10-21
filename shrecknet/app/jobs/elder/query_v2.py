@@ -299,8 +299,8 @@ class ElderQueryV2:
         trace.append(TraceStep(step="retrieval_plan", data=plan.model_dump()))
 
         retrieval_started = time.monotonic()
-        executor = ElderRetrievalExecutor(self.graph_retriever)
-        step_results, waves, retrieval_debug = await executor.execute(
+        from app.services.elder_retrieval_service import retrieve_plan
+        step_results, waves, retrieval_debug = await retrieve_plan(self.graph_retriever,
             plan=plan,
             ontology_ids=ontology_ids,
             instance_id=request.instance_id,

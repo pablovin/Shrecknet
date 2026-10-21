@@ -1,3 +1,4 @@
+from .character_companion import CharacterCompanionAPI, CompanionModelConfig, CompanionModelConfigUpdate, CompanionSelection, CompanionRapport, CompanionTurn, CompanionEvent
 from .browser_auth import BrowserAuthAPI, BrowserSession, BrowserRegistration
 from .shreckworld import (
     ShreckWorldAPI, SelectedPassage, KnowledgeWorld, KnowledgeSource, KnowledgeCitation, KnowledgeAnswer,
@@ -33,6 +34,7 @@ class Shrecknet:
         self.ontology_instances = OntologyInstancesAPI(self.client)
         self.agents = AgentsAPI(self.client)
         self.character_agents = CharacterAgentsAPI(self.client)
+        self.character_companion = CharacterCompanionAPI(self.client)
         self.personal_companion = PersonalCompanionAPI(self.client)
         self.shreckllm = ShreckLLMAPI(self.client, base_url=shreckllm_base_url, timeout=timeout)
         self.jobs = JobsAPI(self.client)

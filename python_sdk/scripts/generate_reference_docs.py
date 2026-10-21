@@ -76,7 +76,12 @@ def main(only: set[str] | None = None) -> None:
     shreckworld_mod = ast.parse(_get_source(ROOT / "shrecknet_client" / "shreckworld.py"))
     resources_mod = ast.parse(_get_source(ROOT / "shrecknet_client" / "resources.py"))
 
+    companion_mod = ast.parse(_get_source(ROOT / "shrecknet_client" / "character_companion.py"))
+    companion_class = _find_class(companion_mod, "CharacterCompanionAPI")
+
     pages = {
+        "character-companion.md": _class_page("CharacterCompanionAPI", companion_class,
+            [node.name for node in companion_class.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_")]),
         "shreckworld.md": _class_page("ShreckWorldAPI", _find_class(shreckworld_mod, "ShreckWorldAPI"),
             ["worlds", "sources", "query", "start_agent_query", "agent_job", "model_settings",
              "update_model_settings", "resolve_action", "readiness",
@@ -90,7 +95,7 @@ def main(only: set[str] | None = None) -> None:
         "async-client.md": _class_page(
             "AsyncShrecknetClient",
             _find_class(client_mod, "AsyncShrecknetClient"),
-            ["set_token", "clear_token", "raw_request", "bootstrap_status", "register_user", "login", "me"],
+            ["user_summaries", "set_token", "clear_token", "raw_request", "bootstrap_status", "register_user", "login", "me"],
         ),
         "shrecknet.md": _class_page(
             "Shrecknet",
@@ -120,7 +125,7 @@ def main(only: set[str] | None = None) -> None:
 
     if only is None or "index.md" in only:
         (OUT_DIR / "index.md").write_text(
-        """# API Reference (Generated)\n\nGenerated from SDK source docstrings and method signatures.\n\n- [AsyncShrecknetClient](./async-client.md)\n- [Shrecknet](./shrecknet.md)\n- [ShreckWorldAPI](./shreckworld.md)\n- [CharacterAgentsAPI](./character-agents.md)\n- [WorldsAPI](./worlds.md)\n- [OntologiesAPI](./ontologies.md)\n- [OntologyInstancesAPI](./ontology-instances.md)\n""",
+        """# API Reference (Generated)\n\nGenerated from SDK source docstrings and method signatures.\n\n- [AsyncShrecknetClient](./async-client.md)\n- [Shrecknet](./shrecknet.md)\n- [ShreckWorldAPI](./shreckworld.md)\n- [CharacterAgentsAPI](./character-agents.md)\n- [CharacterCompanionAPI](./character-companion.md)\n- [WorldsAPI](./worlds.md)\n- [OntologiesAPI](./ontologies.md)\n- [OntologyInstancesAPI](./ontology-instances.md)\n""",
         encoding="utf-8",
     )
 

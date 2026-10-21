@@ -118,3 +118,5 @@ python scripts/chat_cli.py --base-url http://localhost:8110
 cd shreckLLM
 pytest
 ```
+
+See [incremental chat streaming](Documentation/Chat/Streaming.md) for the internal `/chat/stream` contract.

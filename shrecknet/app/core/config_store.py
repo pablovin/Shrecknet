@@ -55,7 +55,12 @@ CHARACTER_AGENT_MODEL_FIELDS = (
     "model_character_agent_psychological_interpretation",
     "model_character_agent_decision_making",
 )
+COMPANION_MODEL_FIELDS = (
+    "model_companion_routing", "model_companion_synthesis",
+    "model_companion_interim", "model_companion_rapport_update",
+)
 LLM_TARGET_FIELDS = (
+    *COMPANION_MODEL_FIELDS,
     "model_architect_scene_chunking",
     "model_architect_entity_proposal",
     "model_architect_milestone_proposal",
@@ -327,6 +332,26 @@ class Settings(BaseSettings):
     model_orchestrator_synthesis: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )
+    companion_enabled: bool = False
+    companion_model_routing_enabled: bool = False
+    companion_interim_enabled: bool = False
+    model_companion_routing: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
+    model_companion_synthesis: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
+    model_companion_interim: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
+    model_companion_rapport_update: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
+    companion_tool_timeout_s: float = Field(4, ge=0.1, le=60)
+    companion_retrieval_timeout_s: float = Field(8, ge=0.1, le=120)
+    companion_turn_timeout_s: int = Field(180, ge=10, le=1800)
+    companion_event_retention_days: int = Field(7, ge=1, le=90)
+    companion_rapport_max_attempts: int = Field(3, ge=1, le=10)
+    companion_max_evidence_tokens: int = Field(10000, ge=100, le=32000)
+    companion_output_tokens: int = Field(2000, ge=128, le=16000)
+    companion_shreckworld_url: str = ""
+    companion_chronicles_url: str = ""
+    companion_web_search_url: str = ""
+    companion_web_search_token: str = ""
+    companion_web_enabled: bool = False
+    companion_image_models: list[str] = Field(default_factory=lambda: ["openrouter/deepseek/deepseek-v4.1-flash"])
     companion_agent_trace_enabled: bool = False
     embedding_model_id: str = "intfloat/multilingual-e5-small"
     embedding_dimension: int = 384

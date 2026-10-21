@@ -33,7 +33,7 @@ class AuthSessionRepository:
     async def revoke_user(self, user_id: int, now: int) -> None:
         await self.session.execute(update(AuthSession).where(AuthSession.user_id == user_id).values(revoked_at=now))
 
-    async def rate_limit(self, key: str, now: int, window: int, maximum: int) -> bool:
+    async def rate_limit(self, key: str, now: int, window: int, maximum: int, *, commit: bool = True) -> bool:
         # Expired counters can be replaced; unique-key upsert serializes increments.
         await self.session.execute(delete(AuthRateLimit).where(AuthRateLimit.expires_at <= now))
         bind = self.session.get_bind()
@@ -41,7 +41,8 @@ class AuthSessionRepository:
         stmt = insert(AuthRateLimit).values(key=key, count=1, expires_at=now + window)
         await self.session.execute(stmt.on_conflict_do_update(index_elements=["key"], set_={"count": AuthRateLimit.count + 1}))
         count = await self.session.scalar(select(AuthRateLimit.count).where(AuthRateLimit.key == key))
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
         return count <= maximum
 
     async def cleanup(self, now: int) -> None:

@@ -199,25 +199,12 @@ class OpenAIClient:
                 out.append(model_id)
         return sorted(set(out))
 
-    async def chat(
-        self,
-        *,
-        model: str,
-        messages: list[ChatMessage],
-        temperature: float,
-        reasoning: bool = False,
-        reasoning_effort: ReasoningEffort | None = None,
-        max_tokens: int | None = None,
-        response_format: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        if self._client is None:
-            raise DependencyUnavailableError(f"{self.provider_id} is not configured")
-
+    def _chat_kwargs(self, model, messages, temperature, reasoning=False, reasoning_effort=None, max_tokens=None, response_format=None):
         # OpenRouter receives latency-first provider routing in extra_body.
         execution_model = model
         kwargs: dict[str, Any] = {
             "model": execution_model,
-            "messages": [m.model_dump() for m in messages],
+            "messages": [m.model_dump(exclude_none=True) for m in messages],
         }
         # GPT-5-family chat models may reject non-default temperature values.
         # Omit the parameter entirely for those models so the provider default is used.
@@ -240,6 +227,24 @@ class OpenAIClient:
             # DeepInfra calls its normal, non-surcharged service tier "default".
             # Keep this explicit so requests never opt into priority inference.
             kwargs["extra_body"] = {"service_tier": "default"}
+
+        return kwargs
+
+    async def chat(
+        self,
+        *,
+        model: str,
+        messages: list[ChatMessage],
+        temperature: float,
+        reasoning: bool = False,
+        reasoning_effort: ReasoningEffort | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if self._client is None:
+            raise DependencyUnavailableError(f"{self.provider_id} is not configured")
+
+        kwargs = self._chat_kwargs(model, messages, temperature, reasoning, reasoning_effort, max_tokens, response_format)
 
         try:
             resp = await self._client.chat.completions.create(**kwargs)
@@ -306,3 +311,23 @@ class OpenAIClient:
             },
             "raw": resp,
         }
+
+    async def stream(self, request):
+        if self._client is None:
+            raise DependencyUnavailableError(f"{self.provider_id} is not configured")
+        kwargs = self._chat_kwargs(request.model, request.messages, request.temperature,
+                                   request.reasoning, request.reasoning_effort, request.max_tokens)
+        kwargs.update(stream=True, stream_options={"include_usage": True})
+        stream = await self._client.chat.completions.create(**kwargs)
+        try:
+            async for chunk in stream:
+                for choice in chunk.choices or []:
+                    if choice.delta.content:
+                        yield {"type": "delta", "text": choice.delta.content}
+                    if choice.finish_reason:
+                        yield {"type": "finish", "reason": choice.finish_reason}
+                if chunk.usage:
+                    yield {"type": "usage", "usage": chunk.usage.model_dump()}
+            yield {"type": "done"}
+        finally:
+            await stream.close()

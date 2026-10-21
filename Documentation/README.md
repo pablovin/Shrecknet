@@ -27,6 +27,15 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [Behavioral identity synthesis plan](./Agents/CharacterAgent/Behavioral%20Identity%20Synthesis%20Plan.md) — synthesis and evaluation implementation record; live comparison and pilot protocol remain pending
 - [Personality-conditioned decision-making plan](./Agents/CharacterAgent/Personality-Conditioned%20Decision%20Making%20Plan.md) — numerical context and situational deliberation implementation record; isolated comparison tooling is implemented, live evaluation and pilot remain pending
 
+## Character Companion
+
+- [Character Companion](./Agents/Companion/Companion.md) — implemented behavior, ownership, deployment, privacy, recovery and remaining acceptance gates
+
+- [Unified Character Companion backend plan](./Agents/Companion/Companion%20Backend%20Plan.md) — proposed cross-repository reuse audit, architecture, rapport/evidence contracts, migration, and testable delivery milestones; design baseline and acceptance checklist
+- [Character Companion validation](./Agents/Companion/Validation.md) — repeatable checks, verified coverage and deployment acceptance gates
+- [Character Companion frontend API](./Agents/Companion/Frontend%20API.md) — selection, chat, private image, rapport, recovery/cancellation, and SSE contracts
+- [Companion Agent model configuration](./Agents/Companion/Model%20Configuration.md) — four independent model roles, frontend configuration/status integration, SDK scope, and rollout
+
 ## Elder
 
 - [Elder query and retrieval](./Agents/Elder/Elder.md) — current runtime and stable contract

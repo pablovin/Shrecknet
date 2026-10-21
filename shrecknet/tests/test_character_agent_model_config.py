@@ -251,3 +251,34 @@ def test_effort_is_preserved_when_normalizing_legacy_target(isolated_config):
     store({key: {'provider': 'openrouter', 'name': 'legacy', 'reasoning_effort': 'low'}})
     result = getattr(config.load_settings(), key)
     assert result.reasoning is False and result.reasoning_effort == 'low'
+
+@pytest.mark.asyncio
+async def test_companion_roles_save_independently_and_require_explicit_enablement(isolated_config):
+    before = config.get_settings().model_character_agent_decision_making.model_dump()
+    schema = configurations.get_config_schema()
+    group = next(group for group in schema['groups'] if group['id'] == 'companion_agent')
+    assert set(config.COMPANION_MODEL_FIELDS) <= set(group['fields'])
+    assert not config.get_settings().companion_enabled
+    for field in config.COMPANION_MODEL_FIELDS:
+        assert getattr(config.get_settings(),field).name == 'deepseek/deepseek-v4.1-flash'
+        assert getattr(config.get_settings(),field).provider == 'openrouter'
+        assert schema['field_meta'][field]['type'] == 'llm_target'
+    config.update_settings({'model_companion_synthesis':{'provider':'','name':''}})
+    with pytest.raises(HTTPException):
+        configurations._validate_updates({'companion_enabled':True})
+    values = {field:target(f'companion-{index}',bool(index%2)) for index,field in enumerate(config.COMPANION_MODEL_FIELDS)}
+    await configurations.put_config(values)
+    reloaded = config.reload_settings()
+    assert all(getattr(reloaded,field).model_dump()==value for field,value in values.items())
+    assert reloaded.model_character_agent_decision_making.model_dump() == before
+    assert not reloaded.companion_enabled
+
+
+def test_companion_explicit_blank_and_custom_targets_survive_default_updates(isolated_config):
+    custom=target('my-other-model',True)
+    blank={'provider':'','name':'','reasoning':False,'reasoning_effort':None}
+    store({'model_companion_synthesis':custom,'model_companion_rapport_update':blank})
+    loaded=config.load_settings()
+    assert loaded.model_companion_synthesis.model_dump()==custom
+    assert loaded.model_companion_rapport_update.model_dump()==blank
+    assert loaded.model_companion_routing.name=='deepseek/deepseek-v4.1-flash'

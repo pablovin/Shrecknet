@@ -35,6 +35,7 @@ COPY --from=shreckdoc / /tmp/shreckdoc
 RUN pip install --no-deps /tmp/shreckdoc
 
 COPY app ./app
+COPY scripts ./scripts
 COPY default ./default
 
 RUN pip install --no-cache-dir -e . \

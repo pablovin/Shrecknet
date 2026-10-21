@@ -96,3 +96,11 @@ Render `answer` as the answer and `sources[]` as provenance. Treat timing keys, 
 - `shrecknet/app/jobs/elder/query_v2.py` — orchestration
 - `shrecknet/app/jobs/elder/grounding.py`, `planner.py`, `executor.py`, and `evidence.py` — pipeline stages
 - `shrecknet/app/jobs/elder/schemas.py` and `v2_schemas.py` — public and internal contracts
+
+## Retrieval reuse
+
+`app/services/elder_retrieval_service.py` exposes the established deterministic
+`ElderRetrievalExecutor`. Elder and Character Companion call this same owner;
+Companion supplies a bounded hybrid-search plan and does not run Elder synthesis.
+See [Character Companion](../Companion/Companion.md) for independent tool deadlines,
+normalized evidence and final citation validation.

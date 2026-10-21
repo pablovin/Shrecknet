@@ -92,6 +92,34 @@ class ShreckLLMClient:
     async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
         await self.aclose()
 
+    async def stream_chat(self, *, model: LLMModelTarget, messages: list[dict], max_tokens: int = 2000, usage_tag: str = "companion.synthesis"):
+        """Yield upstream tokens, closing the provider connection on cancellation."""
+        import json
+        await self.ensure_provider_ready(model.provider)
+        payload = {"provider_id": model.provider, "model": model.name, "reasoning": model.reasoning,
+                   "reasoning_effort": model.reasoning_effort, "messages": messages, "max_tokens": max_tokens,
+                   "metadata": {"usage_tag": usage_tag}}
+        self.last_response_metadata = {}
+        done = False
+        async with self._http.stream("POST", "/chat/stream", json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                event = json.loads(line[6:])
+                if event.get("type") == "error":
+                    raise RuntimeError("provider_stream_failed")
+                if event.get("type") == "delta":
+                    yield event["text"]
+                elif event.get("type") == "usage":
+                    self.last_response_metadata = event
+                elif event.get("type") == "finish" and event.get("reason") not in {"stop", "end_turn", None}:
+                    raise RuntimeError("provider_output_incomplete")
+                elif event.get("type") == "done":
+                    done = True
+        if not done:
+            raise RuntimeError("provider_stream_interrupted")
+
     async def chat(
         self,
         model: str | LLMModelTarget,

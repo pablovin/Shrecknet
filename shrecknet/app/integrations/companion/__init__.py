@@ -1,0 +1,1 @@
+"""Retrieval-only companion adapters."""

@@ -25,6 +25,7 @@ from app.schemas import (
     OpenAIValidationResponse,
     ServiceStatusResponse,
 )
+from app.streaming import StreamChatRequest
 from app.service import ChatService
 from app.service import PROVIDER_MODEL_FALLBACKS
 
@@ -919,3 +920,23 @@ async def remove_provider_model(
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
     return await _refresh_and_validate_providers(service, [provider_key])
+
+
+@router.post("/chat/stream")
+async def incremental_chat(payload: StreamChatRequest,
+                           service: ChatService = Depends(get_service)):
+    import json
+    from fastapi.responses import StreamingResponse
+    from app.streaming import stream_chat
+    if service.registry.get(payload.provider_id) is None:
+        raise HTTPException(400, "Streaming provider is not configured")
+    async def events():
+        iterator = stream_chat(service, payload)
+        try:
+            async for event in iterator:
+                yield "data: " + json.dumps(event) + "\n\n"
+        except Exception:
+            yield 'data: {"type":"error","code":"provider_stream_failed"}\n\n'
+        finally:
+            await iterator.aclose()
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.api.deps import oauth2_scheme
 
 import hashlib
 import logging
@@ -516,6 +517,32 @@ def resolve_world_action(shreckworld_id: str, payload: ActionResolutionRequest, 
         _item_or_404(session, shreckworld_id, payload.library_item_id)
     with _semantic_errors():
         return resolve_action(session, shreckworld_id=shreckworld_id, request=payload)
+
+
+
+
+@query_router.post("/{shreckworld_id}/companion-evidence", response_model=ShreckWorldQueryResponse)
+async def companion_evidence(shreckworld_id: str, payload: ShreckWorldQueryRequest,
+                             token: str = Depends(oauth2_scheme),
+                             session: Session = Depends(get_db)):
+    from app.services.companion_retrieval import authorize
+    await authorize(token, shreckworld_id, payload)
+    return query(shreckworld_id, payload, session)
+
+@query_router.post("/{shreckworld_id}/companion-validate")
+async def validate_companion_sources(shreckworld_id: str, payload: dict, token: str = Depends(oauth2_scheme), session: Session = Depends(get_db)):
+    from app.services.companion_retrieval import authorize
+    references=payload.get('references')
+    if not isinstance(references,list) or len(references)>20:
+        raise HTTPException(422,'Bounded references required')
+    ids=[reference.get('library_item_id') for reference in references]
+    request=ShreckWorldQueryRequest(query='validate',library_item_ids=list(dict.fromkeys(ids)))
+    await authorize(token,shreckworld_id,request)
+    for reference in references:
+        item=_item_or_404(session,shreckworld_id,reference['library_item_id'])
+        if reference.get('source_sha256') and reference['source_sha256']!=item.source_sha256:
+            raise HTTPException(409,'Source changed')
+    return {'valid':True}
 
 
 router.include_router(admin_router)

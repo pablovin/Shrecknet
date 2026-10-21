@@ -75,3 +75,10 @@ __all__ = [
     "MigrationRun",
     "IdMapping",
 ]
+
+# Additive companion tables participate in the existing main-database bootstrap.
+from app.models.character_companion import (
+    CompanionSelection, CompanionRapport, CompanionChat, CompanionTurn,
+    CompanionMessage, CompanionEvent, CompanionOutbox, CompanionRapportAudit,
+    CompanionAttachment, CompanionIdempotency, CompanionImport,
+)

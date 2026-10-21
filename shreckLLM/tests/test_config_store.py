@@ -85,7 +85,7 @@ def test_fresh_bootstrap_registers_openai_compatible_providers_and_enforces_limi
     assert deepinfra.models == []
     openrouter = runtime.provider_defaults["openrouter"]
     assert openrouter.base_url == "https://openrouter.ai/api/v1"
-    assert openrouter.models == []
+    assert openrouter.models == ["deepseek/deepseek-v4.1-flash"]
     assert runtime.provider_limits["ollama_cloud"]["max_concurrent"] == 1
     assert runtime.provider_limits["openai"]["max_concurrent"] == 10
     assert runtime.provider_limits["anthropic"]["max_concurrent"] == 10

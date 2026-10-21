@@ -13,7 +13,7 @@ from pydantic import ValidationError as PydanticValidationError
 from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.llm.structured_output import strict_json_schema
-from app.jobs.character_agent.memory import select_relevant_memories
+from app.services.character_memory_service import select_relevant_memories
 from app.jobs.character_agent.prompts import DECISION_MAKING_PROMPT, GENERIC_DECISION_MAKING_PROMPT
 from app.jobs.character_agent.schemas import CharacterDeliberation
 from app.schemas.character_traits import DecisionPersonalityContext

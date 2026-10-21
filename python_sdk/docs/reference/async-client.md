@@ -6,7 +6,7 @@ Low-level async HTTP client for Shrecknet APIs.
 
 ### `user_summaries(self, ids)`
 
-Resolve 1–100 positive user IDs into typed `PublicUserSummary` records (ID, username, full name, and optional avatar). Duplicates collapse and missing users are omitted. See [the workflow](../core_workflows/public-user-summaries.md).
+Read up to 100 public profiles; missing IDs are omitted by the service.
 
 ### `set_token(self, token)`
 
@@ -16,7 +16,7 @@ Set bearer token used for authenticated requests.
 
 Clear bearer token for subsequent requests.
 
-### `raw_request(self, method, path)`
+### `raw_request(self, method, path, *, params=None, json=None, headers=None, files=None)`
 
 Execute a raw HTTP request and map Shrecknet errors to SDK exceptions.
 
@@ -24,7 +24,7 @@ Execute a raw HTTP request and map Shrecknet errors to SDK exceptions.
 
 Return whether at least one user already exists in Shrecknet.
 
-### `register_user(self)`
+### `register_user(self, *, username, password, email, full_name='World Keeper', timezone='UTC', role='admin', entity_ids=None)`
 
 Register a user through `/users/` for bootstrap or standard onboarding.
 

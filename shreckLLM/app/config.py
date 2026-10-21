@@ -75,7 +75,7 @@ class Settings(BaseSettings):
         "openrouter": {
             "kind": "cloud",
             "auth_strategy": "api_key",
-            "models": [],
+            "models": ["deepseek/deepseek-v4.1-flash"],
             "base_url": "https://openrouter.ai/api/v1",
             "api_key": "",
             "provider_type": "needs_api",

@@ -12,6 +12,7 @@ from . import (
     novelist,
     ontology_instance_clear,
     companion_orchestrator,
+    character_companion,
     librarian_embedding_package,
     character_embodiment,
     character_agent_decision_making,

@@ -137,5 +137,33 @@
   "jwt_audience": "shreckrpg",
   "jwt_kid": "shrecknet-dev-rsa-1",
   "jwt_access_token_expiry_minutes": 525600,
-  "character_agent_embodiment_validation_retries": 1
+  "character_agent_embodiment_validation_retries": 1,
+  "model_companion_routing": {
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
+    "reasoning": false,
+    "reasoning_effort": null
+  },
+  "model_companion_synthesis": {
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
+    "reasoning": false,
+    "reasoning_effort": null
+  },
+  "model_companion_interim": {
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
+    "reasoning": false,
+    "reasoning_effort": null
+  },
+  "model_companion_rapport_update": {
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
+    "reasoning": false,
+    "reasoning_effort": null
+  },
+  "companion_enabled": false,
+  "companion_image_models": [
+    "openrouter/deepseek/deepseek-v4.1-flash"
+  ]
 }

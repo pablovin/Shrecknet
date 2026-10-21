@@ -55,3 +55,5 @@ Official documentation for the async Shrecknet Python SDK.
 - [CharacterAgent dispositions and evidence](character_agents.md)
 
 - [ShreckWorld reader and rule review](core_workflows/shreckworld-reader.md) — Typed read-only knowledge access with the current Shrecknet identity.
+
+- [Character Companion](character_companion.md) — selection, durable conversations, SSE and model roles.

@@ -16,7 +16,7 @@ from app.api.deps import get_current_active_admin_or_world_builder, get_current_
 from app.celery_app import configure_celery_app
 from app.core.config_store import (
     BOOTSTRAP_ENV_FIELDS,
-    CHARACTER_AGENT_MODEL_FIELDS,
+    CHARACTER_AGENT_MODEL_FIELDS, COMPANION_MODEL_FIELDS,
     LLM_TARGET_FIELDS,
     VALIDATION_RETRIES,
     LLMModelTarget,
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 MAX_GOOGLE_SERVICE_ACCOUNT_BYTES = 1024 * 1024
 GOOGLE_SERVICE_DIR = Path("secrets") / "google"
 GOOGLE_SERVICE_FILENAME = "service_account.json"
-SECRET_CONFIG_FIELDS = {"smtp_password", "smtp_service_token"}
+SECRET_CONFIG_FIELDS = {"smtp_password", "smtp_service_token", "companion_web_search_token"}
 
 
 def _first_available_llm_target(provider_validations: dict[str, Any]) -> LLMModelTarget | None:
@@ -85,6 +85,8 @@ def _reconcile_llm_targets(
     }
     reconciled = dict(updates)
     for field_name in LLM_TARGET_FIELDS:
+        if field_name in COMPANION_MODEL_FIELDS:
+            continue  # Companion roles require explicit operator choices.
         raw_target = reconciled.get(field_name, getattr(current, field_name, None))
         if isinstance(raw_target, LLMModelTarget):
             provider, name = raw_target.provider, raw_target.name
@@ -212,7 +214,7 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
             "model_librarian_planner",
             "model_librarian_synthesis",
             "model_librarian_character_incorporation",
-            *CHARACTER_AGENT_MODEL_FIELDS,
+            *CHARACTER_AGENT_MODEL_FIELDS, *COMPANION_MODEL_FIELDS,
             "character_agent_embodiment_debug_artifacts_enabled",
             "model_orchestrator_routing",
             "model_orchestrator_synthesis",
@@ -360,6 +362,25 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
 
 # Settings that should not be editable from the frontend runtime config UI because they
 # are bootstrap/infrastructure concerns and typically require service re-provisioning.
+FIELD_UI_META.update({
+    "model_companion_routing": {"type":"llm_target","label":"Companion routing","help":"Optional lightweight routing for ambiguous requests."},
+    "model_companion_synthesis": {"type":"llm_target","label":"Companion synthesis","help":"One embodied streaming response; image interpretation when needed."},
+    "model_companion_interim": {"type":"llm_target","label":"Companion interim reactions","help":"Optional brief known-context commentary during retrieval."},
+    "model_companion_rapport_update": {"type":"llm_target","label":"Companion rapport updates","help":"Asynchronous character-conditioned relational evaluation."},
+    "companion_web_search_token": {"type":"string","secret":True,"help":"Write-only credential for the configured web retrieval provider."},
+    "companion_enabled": {"type":"boolean","help":"Enable Character Companion after configuring synthesis and rapport models."},
+    "companion_model_routing_enabled": {"type":"boolean","help":"Use the optional routing model for ambiguous requests."},
+    "companion_interim_enabled": {"type":"boolean","help":"Enable optional transient comments; disabled by default."},
+    "companion_web_enabled": {"type":"boolean","help":"Enable configured external web retrieval; disabled by default."},
+    "companion_tool_timeout_s": {"type":"number","help":"Independent retrieval deadline per source, seconds."},
+    "companion_retrieval_timeout_s": {"type":"number","help":"Overall parallel retrieval deadline, seconds."},
+    "companion_turn_timeout_s": {"type":"integer","help":"Total worker execution deadline, seconds."},
+    "companion_event_retention_days": {"type":"integer","help":"Replay-log retention in days; completed snapshots remain."},
+    "companion_rapport_max_attempts": {"type":"integer","help":"Attempts before an audited failed evaluation advances the pair cursor."},
+    "companion_max_evidence_tokens": {"type":"integer","help":"Evidence context budget estimated with the shared tokenizer and UTF-8 fallback."},
+    "companion_output_tokens": {"type":"integer","help":"Maximum synthesis output tokens."},
+})
+
 FRONTEND_LOCKED_FIELDS: set[str] = {
     "email_service_configured",
     "smtp_service_token",
@@ -422,6 +443,14 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
             Settings(**merged)
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail="Invalid embodiment validation retry limit; expected an integer from 0 through 3") from exc
+    if merged.get("companion_enabled"):
+        required = ["model_companion_synthesis", "model_companion_rapport_update"]
+        if merged.get("companion_model_routing_enabled"):
+            required.append("model_companion_routing")
+        if merged.get("companion_interim_enabled"):
+            required.append("model_companion_interim")
+        if any(not merged[field].get("provider") or not merged[field].get("name") for field in required):
+            raise HTTPException(400, detail="Companion requires its enabled model roles to be configured")
     if merged["email_verification_enabled"]:
         required = ("smtp_host", "smtp_sender_email")
         missing = [field for field in required if not str(merged[field]).strip()]
@@ -584,6 +613,7 @@ def get_config_schema() -> dict[str, Any]:
         {"id": "elder", "label": "Elder Agent", "fields": ["model_elder_planner", "model_elder_synthesis", "model_elder_character_incorporation", "elder_debug_artifacts_enabled", "elder_query_embedding_timeout_s", "embedding_runtime_enabled", "embedding_runtime_queue_max_size", "embedding_runtime_batch_max_size", "embedding_runtime_batch_wait_ms", "embedding_runtime_cache_size", "embedding_runtime_request_timeout_s", "embedding_runtime_startup_timeout_s", "embedding_runtime_fail_open_health", "embedding_model_id", "embedding_dimension", "embedding_device", "semantic_embedding_strategy", "semantic_embedding_version", "semantic_embedding_long_text_threshold_tokens", "semantic_embedding_chunk_target_tokens", "semantic_embedding_chunk_overlap_tokens"]},
         {"id": "novelist", "label": "Novelist Agent", "fields": ["model_novelist_analysis", "model_novelist_writer", "novelist_analysis_context_tokens", "novelist_writer_context_tokens"]},
         {"id": "librarian", "label": "Librarian Agent", "fields": ["model_librarian_planner", "model_librarian_synthesis", "model_librarian_character_incorporation", "librarian_debug_artifacts_enabled"]},
+        {"id": "companion_agent", "label": "Companion Agent", "fields": [*COMPANION_MODEL_FIELDS, "companion_enabled", "companion_model_routing_enabled", "companion_interim_enabled", "companion_web_enabled", "companion_tool_timeout_s", "companion_retrieval_timeout_s", "companion_turn_timeout_s", "companion_output_tokens", "companion_max_evidence_tokens", "companion_image_models"]},
         {"id": "character_agent", "label": "Character Agent", "fields": [*CHARACTER_AGENT_MODEL_FIELDS, "character_agent_embodiment_validation_retries", "character_agent_embodiment_debug_artifacts_enabled"]},
         {"id": "security_tokens", "label": "Security Tokens", "fields": ["jwt_issuer", "jwt_audience", "jwt_kid", "jwt_access_token_expiry_minutes"]},
         {"id": "legacy_migration", "label": "Legacy Migration", "fields": ["old_database_url"]},
@@ -609,6 +639,8 @@ def get_config_schema() -> dict[str, Any]:
     field_meta = dict(FIELD_UI_META)
     for field_name in LLM_TARGET_FIELDS:
         row = dict(field_meta.get(field_name, {}))
+        row.setdefault("type", "llm_target")
+        row.setdefault("help", "Independent Companion Agent model target." if field_name in COMPANION_MODEL_FIELDS else "Agent model target.")
         row["value_fields"] = {
             "provider": {"type": "string", "required": True},
             "name": {"type": "string", "required": True},
@@ -662,6 +694,8 @@ async def _put_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     # A blank secret returned by GET means "keep the stored secret", not erase it.
     payload = dict(payload)
+    if payload.get("companion_web_search_token") == "":
+        payload.pop("companion_web_search_token")
     if payload.get("smtp_password") == "":
         payload.pop("smtp_password")
     updates = _validate_updates(payload)

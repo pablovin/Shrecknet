@@ -865,7 +865,7 @@ class ChatService:
                     "discovered_models": [],
                     "models": self.normalize_provider_models(list(cfg.models)) if cfg else [],
                 }
-            providers_payload[provider_id] = catalog
+            providers_payload[provider_id] = {**catalog, "capabilities": {"streaming": True, "images": None, "structured_output": None}}
 
         return {
             "providers": providers_payload,

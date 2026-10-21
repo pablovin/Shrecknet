@@ -242,3 +242,14 @@ origins/dimensions produce no guessed geometry. `evidence_text` carries bounded
 parent/window display evidence and `content_url` anchors the authenticated source.
 E5/contextual prefixes are never cited. Selected-passage and book-scope contracts
 remain unchanged; semantic token-budget errors return `422`.
+
+## Character Companion delegated evidence
+
+`POST /shreckworlds/{id}/companion-evidence` reuses evidence-only querying for the
+unified Character Companion. `POST /shreckworlds/{id}/companion-validate` rechecks
+book/source references before final publication. Both require a short-lived,
+turn-bound bearer retrieval grant authorized against Shrecknet; normal browser
+access tokens are not interchangeable with these grants. Scope limits the
+ShreckWorld and optional library IDs. Configure the trusted Shrecknet origin and
+keep these server-to-server requests on the internal network. Existing reader and
+query routes remain unchanged. See [Character Companion](../Agents/Companion/Companion.md).

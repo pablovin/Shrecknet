@@ -175,3 +175,29 @@ class AnthropicClient:
             },
             "raw": data,
         }
+
+    async def stream(self, request):
+        import json
+        from app.streaming import provider_messages
+        if self._client is None:
+            raise DependencyUnavailableError("anthropic is not configured")
+        messages, system = provider_messages(request, "anthropic")
+        payload = {"model": request.model, "messages": messages, "max_tokens": request.max_tokens, "stream": True, "system": system}
+        async with self._client.stream("POST", "/v1/messages", json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                row = json.loads(line[6:])
+                if row.get("type") == "error":
+                    raise DependencyUnavailableError("anthropic streaming failed")
+                if row.get("type") == "content_block_delta" and row.get("delta", {}).get("type") == "text_delta":
+                    yield {"type": "delta", "text": row["delta"]["text"]}
+                if row.get("usage"):
+                    yield {"type": "usage", "usage": row["usage"]}
+                if row.get("type") == "message_delta" and row.get("delta", {}).get("stop_reason"):
+                    reason=row["delta"]["stop_reason"]
+                    yield {"type":"finish","reason":"stop" if reason=="end_turn" else reason}
+                if row.get("type") == "message_stop":
+                    yield {"type": "done"}
+                    return

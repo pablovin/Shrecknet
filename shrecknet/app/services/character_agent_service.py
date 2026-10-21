@@ -42,7 +42,7 @@ from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONA
 from app.services.character_trait_service import apply_manual_edits, POLICY_VERSION, trait_history_details, merge_evidence
 from app.services.character_trait_analysis import decision_personality_context
 from app.graphrag.embedding_service import EmbeddingService
-from app.jobs.character_agent.memory import render_memory_document
+from app.services.character_memory_service import render_memory_document
 from app.core.config_store import get_settings
 
 logger = logging.getLogger(__name__)
@@ -581,6 +581,16 @@ class CharacterAgentService:
         )
         return [CharacterAgentRead.model_validate(_agent_data(_props(row, "agent"), allow_legacy_profile=True)) async for row in result]
 
+    async def search_companion_candidates(self, ontology_id, search, skip, limit, public_only=True):
+        rows = await self.graph.run(
+            "MATCH (agent:CharacterAgent) WHERE agent.status='active' "
+            "AND ($ontology_id IS NULL OR agent.ontology_id=$ontology_id) "
+            "AND (NOT $public_only OR agent.visibility='public') "
+            "AND toLower(agent.name) CONTAINS toLower($search) "
+            "RETURN agent ORDER BY agent.created_at DESC, agent.id SKIP $skip LIMIT $limit",
+            ontology_id=ontology_id, search=search, public_only=public_only, skip=skip, limit=limit)
+        return [CharacterAgentRead.model_validate(_agent_data(_props(row, "agent"), allow_legacy_profile=True)) async for row in rows]
+
     async def get_agent(self, node_id: str, public_only: bool = False) -> CharacterAgentRead:
         row = await self._one(
             "MATCH (node:CharacterAgent {id: $node_id}) "
@@ -593,7 +603,7 @@ class CharacterAgentService:
             raise HTTPException(status_code=404, detail="CharacterAgent not found")
         return CharacterAgentRead.model_validate(_agent_data(_props(row), allow_legacy_profile=True))
 
-    async def load_query_snapshot(self, node_id: str, public_only: bool = False) -> dict[str, Any]:
+    async def load_query_snapshot(self, node_id: str, public_only: bool = False, *, include_memories: bool = True) -> dict[str, Any]:
         """Load identity, owned memories, and validated personality context."""
         row = await self._one(
             """
@@ -602,6 +612,7 @@ class CharacterAgentService:
             CALL {
               WITH agent
               OPTIONAL MATCH (agent)-[:HAS_PERSPECTIVE]->(perspective:ScenePerspective)
+              WHERE $include_memories
               WITH perspective
               ORDER BY perspective.updated_at DESC, perspective.id ASC
               RETURN collect(CASE WHEN perspective IS NULL THEN null ELSE {
@@ -626,7 +637,7 @@ class CharacterAgentService:
             }
             RETURN agent, [item IN memories WHERE item IS NOT NULL] AS memories
             """,
-            node_id=node_id, public_only=public_only,
+            node_id=node_id, public_only=public_only, include_memories=include_memories,
         )
         if not row:
             raise HTTPException(status_code=404, detail="CharacterAgent not found")

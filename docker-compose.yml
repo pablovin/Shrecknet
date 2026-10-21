@@ -392,13 +392,13 @@ services:
       retries: 5
       start_period: 60s
 
-  # Single Celery worker for all background jobs (simpler and easier to operate)
-  shrecknet_worker:
+  # Existing domain jobs; Companion queues are isolated in the optional profile.
+  shrecknet_worker: &shrecknet-worker
     <<: *shrecknet-image
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
-    command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=${SHRECKNET_CELERY_CONCURRENCY:-2}"
+    command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --queues=ontology_linking,architect,character_agent --concurrency=${SHRECKNET_CELERY_CONCURRENCY:-2}"
     environment: *shrecknet-env
     env_file:
       - ./configs/compose.env
@@ -424,6 +424,16 @@ services:
         condition: service_started
       shreckllm:
         condition: service_healthy
+
+  shrecknet_companion_worker:
+    <<: *shrecknet-worker
+    profiles: [companion]
+    command: celery -A app.celery_app:celery_app worker --loglevel=info --queues=companion --concurrency=2 --hostname=companion@%h
+
+  shrecknet_companion_rapport_worker:
+    <<: *shrecknet-worker
+    profiles: [companion]
+    command: celery -A app.celery_app:celery_app worker --loglevel=info --queues=companion_rapport --concurrency=1 --hostname=companion-rapport@%h
 
   shrecknet_auth_session_cleanup:
     <<: *shrecknet-image

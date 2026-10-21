@@ -241,6 +241,8 @@ class UserService:
         return updated
 
     async def delete_user(self, user: User) -> None:
+        from app.repositories.character_companion_repository import CompanionRepository
+        await CompanionRepository(self.session).delete_user_records(user.id)
         await self.repository.remove(user)
         await self.session.commit()
 

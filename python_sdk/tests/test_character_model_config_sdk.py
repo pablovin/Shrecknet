@@ -23,7 +23,7 @@ async def test_model_configuration_read_and_partial_update_use_shrecknet_config(
     initial = await api.get_model_config()
     assert client.calls[-1][:2] == ('GET', '/config/')
     assert initial.model_character_agent_decision_making.reasoning is False
-    change = LLMModelTarget(provider='openrouter', name='selected-model', reasoning=True, reasoning_effort='low')
+    change = LLMModelTarget(provider='openrouter', name='selected-model', reasoning=True, reasoning_effort='low', web_search_enabled=True)
     result = await api.update_model_config(CharacterAgentModelConfigUpdate(
         model_character_agent_psychological_interpretation=change))
     assert client.calls[-1] == ('PUT', '/config/', {'json': {

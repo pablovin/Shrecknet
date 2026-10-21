@@ -13,7 +13,7 @@ from app.core.config_store import get_settings, COMPANION_MODEL_FIELDS
 from app.db.session import AsyncSessionCompat, get_sessionmaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.integrations.companion.retrieval import CompanionRetrieval
+from app.integrations.companion.retrieval import CompanionRetrieval, web_available
 from app.jobs.companion.prompts import ROUTER, SYNTHESIS, RAPPORT, IMAGE_INTERPRETATION, INTERIM
 from app.jobs.companion.contracts import Answer, RapportProposal, provisional_text
 from app.jobs.elder.context_budget import estimate_tokens
@@ -67,6 +67,13 @@ async def mutate(turn_id, lease, *, stage=None, delta=None, event=None, payload=
         await session.commit()
 
 
+def turn_target(target, turn):
+    """Per-turn denial also fences optional routing, interim, and rapport searches."""
+    if getattr(target, "web_search_enabled", False) and turn.request.get("tools", {}).get("web", "disabled") == "disabled":
+        return target.model_copy(update={"web_search_enabled": False})
+    return target
+
+
 async def route(turn, llm, recent):
     s = get_settings()
     query = turn.request["text"].lower().strip(" !?.")
@@ -75,7 +82,7 @@ async def route(turn, llm, recent):
     candidates = set(allowed if allowed is not None else ["atlas", "character_memory", "shreckworld", "chronicle", "web"])
     if turn.request["tools"]["web"] == "disabled":
         candidates.discard("web")
-    if not s.companion_web_enabled or not getattr(s, "companion_web_search_url", None):
+    if not web_available(s):
         candidates.discard("web")
     tools = set()
     if turn.request["tools"]["web"] != "require" and query in {"hi", "hello", "hey", "thanks", "thank you", "how are you", "good morning", "good night", "bonjour", "ciao", "olá"}:
@@ -92,7 +99,7 @@ async def route(turn, llm, recent):
         tools.add("web")
     if not tools and s.companion_model_routing_enabled and s.model_companion_routing.name:
         try:
-            raw = await asyncio.wait_for(llm.chat(model=s.model_companion_routing, messages=[{"role": "system", "content": ROUTER}, {"role": "user", "content": json.dumps({"query": query, "context": context, "recent": recent, "available_tools": sorted(candidates)})}], usage_tag="companion.routing"), s.companion_tool_timeout_s)
+            raw = await asyncio.wait_for(llm.chat(model=turn_target(s.model_companion_routing, turn), messages=[{"role": "system", "content": ROUTER}, {"role": "user", "content": json.dumps({"query": query, "context": context, "recent": recent, "available_tools": sorted(candidates)})}], usage_tag="companion.routing"), s.companion_tool_timeout_s)
             parsed = json.loads(raw)
             proposed = parsed.get("tools", [])
             if not isinstance(proposed, list) or any(not isinstance(tool, str) for tool in proposed):
@@ -138,11 +145,11 @@ async def execute_turn(turn, lease):
             tools = sorted({row["source_type"] for row in previous["evidence"]
                             if row["source_type"] in {"atlas","character_memory","shreckworld","chronicle","web"}
                             and (permitted is None or row["source_type"] in permitted)
-                            and (row["source_type"] != "web" or (turn.request["tools"]["web"] != "disabled" and settings.companion_web_enabled))})
+                            and (row["source_type"] != "web" or (turn.request["tools"]["web"] != "disabled" and web_available(settings)))})
         retrieval_query = turn.request["text"]
         if images and tools:
             interpreted = ""
-            async for part in llm.stream_chat(model=settings.model_companion_synthesis,
+            async for part in llm.stream_chat(model=settings.model_companion_synthesis.model_copy(update={"web_search_enabled": False}),
                     messages=[{"role":"system","content":IMAGE_INTERPRETATION}, {"role":"user","content":[{"type":"text","text":json.dumps({"query":retrieval_query,"context":turn.request.get("context")})},*images]}],
                     max_tokens=1200, usage_tag="companion.image_interpretation"):
                 interpreted += part
@@ -154,7 +161,7 @@ async def execute_turn(turn, lease):
             retrieval_query += " " + " ".join(observations["retrieval_terms"])
         async def interim():
             try:
-                text=await llm.chat(model=settings.model_companion_interim,messages=[{"role":"system","content":INTERIM},{"role":"user","content":json.dumps({"identity_description":identity["character_agent"]["identity_description"],"query":turn.request["text"]})}],usage_tag="companion.interim",max_tokens=100)
+                text=await llm.chat(model=turn_target(settings.model_companion_interim, turn),messages=[{"role":"system","content":INTERIM},{"role":"user","content":json.dumps({"identity_description":identity["character_agent"]["identity_description"],"query":turn.request["text"]})}],usage_tag="companion.interim",max_tokens=100)
                 await mutate(turn.id,lease,event="companion.interim",payload={"text":text[:400],"provisional":True})
             except Exception:
                 pass
@@ -202,7 +209,7 @@ async def execute_turn(turn, lease):
         await mutate(turn.id, lease, stage="synthesizing")
         content = [{"type": "text", "text": serialized}, *images] if images else serialized
         raw, delivered, pending = "", "", ""
-        async for chunk in llm.stream_chat(model=settings.model_companion_synthesis, messages=[{"role": "system", "content": SYNTHESIS}, {"role": "user", "content": content}], max_tokens=settings.companion_output_tokens):
+        async for chunk in llm.stream_chat(model=settings.model_companion_synthesis.model_copy(update={"web_search_enabled": False}), messages=[{"role": "system", "content": SYNTHESIS}, {"role": "user", "content": content}], max_tokens=settings.companion_output_tokens):
             if not raw:
                 metrics["synthesis_first_token_ms"]=round((time.monotonic()-started)*1000,2)
             raw += chunk
@@ -260,7 +267,7 @@ async def evaluate_rapport(turn, lease=None):
             data = {"turn_id": turn.id, "generation": generation, "base_version": base_version, "completion_sequence": turn.completion_sequence,
                     "scores": scores, "messages": messages, **(turn.identity or {})}
             data["identity_description"] = data.pop("character_agent", {}).get("identity_description")
-            raw = await llm.chat(model=settings.model_companion_rapport_update, messages=[{"role": "system", "content": RAPPORT}, {"role": "user", "content": json.dumps(data)}], usage_tag="companion.rapport_update", max_tokens=2000)
+            raw = await llm.chat(model=turn_target(settings.model_companion_rapport_update, turn), messages=[{"role": "system", "content": RAPPORT}, {"role": "user", "content": json.dumps(data)}], usage_tag="companion.rapport_update", max_tokens=2000)
             proposal = RapportProposal.model_validate_json(raw)
         except Exception:
             error = "evaluation_failed"

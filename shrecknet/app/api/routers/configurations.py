@@ -650,6 +650,7 @@ def get_config_schema() -> dict[str, Any]:
                 "label": "Reasoning",
                 "help": "Request provider-native model reasoning when supported.",
             },
+            "web_search_enabled": {"type": "boolean", "default": False, "label": "Web search", "help": "Allow provider-managed web search for supported models; additional charges may apply."},
             "reasoning_effort": {
                 "type": "string",
                 "nullable": True,

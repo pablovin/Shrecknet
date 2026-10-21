@@ -2,6 +2,10 @@
 
 Welcome to the Shrecknet documentation! This directory contains all organized documentation for the project.
 
+## Shared model configuration
+
+- [Agent web search](Architecture/LLM_WEB_SEARCH.md) — shared model option, gateway capabilities, frontend controls, source contracts, and deployment
+
 ## Authentication
 
 - [Public user profile summaries](API/PUBLIC_USER_SUMMARIES.md) — bounded authenticated roster reads for names and avatars

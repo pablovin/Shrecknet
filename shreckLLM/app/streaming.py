@@ -55,6 +55,7 @@ class StreamChatRequest(BaseModel):
     model: str = Field(min_length=1)
     messages: list[StreamMessage] = Field(min_length=1, max_length=100)
     reasoning: bool = False
+    web_search_enabled: bool = False
     reasoning_effort: ReasoningEffort | None = None
     temperature: float = Field(0.7, ge=0, le=2)
     max_tokens: int = Field(2000, ge=1, le=16000)
@@ -82,6 +83,8 @@ async def stream_chat(service, request):
     adapter = service.registry.get(request.provider_id)
     if adapter is None or request.provider_id not in service._runtime.provider_defaults:
         raise InvalidModelError("Streaming provider is not configured")
+    from app.web_search import validate_web_search
+    await validate_web_search(adapter, request.model, request.web_search_enabled)
     sem = service._provider_semaphores.get(request.provider_id)
     async with service.limiter.slot(wait_timeout_s=service._runtime.max_queue_wait_seconds):
         acquired = False

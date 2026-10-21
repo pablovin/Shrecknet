@@ -197,9 +197,10 @@ class OpenAIClient:
             model_id = getattr(item, "id", None)
             if isinstance(model_id, str) and model_id:
                 out.append(model_id)
+        self.model_parameters = {item.id: getattr(item, "supported_parameters", None) for item in items if getattr(item, "id", None)}
         return sorted(set(out))
 
-    def _chat_kwargs(self, model, messages, temperature, reasoning=False, reasoning_effort=None, max_tokens=None, response_format=None):
+    def _chat_kwargs(self, model, messages, temperature, reasoning=False, reasoning_effort=None, max_tokens=None, response_format=None, web_search_enabled=False):
         # OpenRouter receives latency-first provider routing in extra_body.
         execution_model = model
         kwargs: dict[str, Any] = {
@@ -228,6 +229,12 @@ class OpenAIClient:
             # Keep this explicit so requests never opt into priority inference.
             kwargs["extra_body"] = {"service_tier": "default"}
 
+        if web_search_enabled:
+            if self.provider_id != "openrouter":
+                raise ProviderBadRequestError("web_search_unsupported")
+            from app.web_search import search_tools
+            kwargs["tools"] = search_tools()
+            kwargs.setdefault("extra_body", {})["max_tool_calls"] = 1
         return kwargs
 
     async def chat(
@@ -240,11 +247,12 @@ class OpenAIClient:
         reasoning_effort: ReasoningEffort | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        web_search_enabled: bool = False,
     ) -> dict[str, Any]:
         if self._client is None:
             raise DependencyUnavailableError(f"{self.provider_id} is not configured")
 
-        kwargs = self._chat_kwargs(model, messages, temperature, reasoning, reasoning_effort, max_tokens, response_format)
+        kwargs = self._chat_kwargs(model, messages, temperature, reasoning, reasoning_effort, max_tokens, response_format, web_search_enabled)
 
         try:
             resp = await self._client.chat.completions.create(**kwargs)
@@ -282,6 +290,8 @@ class OpenAIClient:
                 raise ProviderBadRequestError(f"{self.provider_id} rejected request") from exc
             raise DependencyUnavailableError(f"{self.provider_id} request failed") from exc
 
+        from app.web_search import annotations
+        citations = []
         text = ""
         choices = getattr(resp, "choices", None) or []
         finish_reason = None
@@ -289,6 +299,7 @@ class OpenAIClient:
             first = choices[0]
             finish_reason = getattr(first, "finish_reason", None)
             message = getattr(first, "message", None)
+            citations = annotations(message)
             content = getattr(message, "content", None)
             if isinstance(content, str):
                 text = content
@@ -309,6 +320,7 @@ class OpenAIClient:
                 else None,
                 "total_tokens": int(total_tokens) if isinstance(total_tokens, int) else None,
             },
+            "annotations": citations,
             "raw": resp,
         }
 
@@ -316,12 +328,16 @@ class OpenAIClient:
         if self._client is None:
             raise DependencyUnavailableError(f"{self.provider_id} is not configured")
         kwargs = self._chat_kwargs(request.model, request.messages, request.temperature,
-                                   request.reasoning, request.reasoning_effort, request.max_tokens)
+                                   request.reasoning, request.reasoning_effort, request.max_tokens, web_search_enabled=request.web_search_enabled)
         kwargs.update(stream=True, stream_options={"include_usage": True})
         stream = await self._client.chat.completions.create(**kwargs)
         try:
             async for chunk in stream:
                 for choice in chunk.choices or []:
+                    from app.web_search import annotations
+                    citations = annotations(choice.delta)
+                    if citations:
+                        yield {"type": "annotations", "annotations": citations}
                     if choice.delta.content:
                         yield {"type": "delta", "text": choice.delta.content}
                     if choice.finish_reason:

@@ -1,5 +1,6 @@
 """Authenticated Character Companion transport; business rules live in services."""
 from __future__ import annotations
+from app.integrations.companion.retrieval import web_available
 import asyncio
 import json
 import time
@@ -52,7 +53,7 @@ async def capabilities(actor=Depends(get_current_user)):
     return {"contract_version": 1, "enabled": s.companion_enabled and s.enable_ai_agents,
             "streaming": bool(s.model_companion_synthesis.name), "images": f"{s.model_companion_synthesis.provider}/{s.model_companion_synthesis.name}" in s.companion_image_models,
             "event_versions": [1], "tools": {key: {"available": value, "reason": None if value else "not_configured"} for key, value in
-                {"atlas": True, "character_memory": True, "shreckworld": bool(s.companion_shreckworld_url), "chronicle": bool(s.companion_chronicles_url), "web": bool(s.companion_web_enabled and s.companion_web_search_url)}.items()},
+                {"atlas": True, "character_memory": True, "shreckworld": bool(s.companion_shreckworld_url), "chronicle": bool(s.companion_chronicles_url), "web": web_available(s)}.items()},
             "model_roles": {field: {"configured": bool(getattr(s, field).name), "available": None} for field in COMPANION_MODEL_FIELDS},
             "limits": {"image_bytes": 10485760, "images_per_turn": 4, "turn_image_bytes": 20971520, "text_characters": 8000}}
 

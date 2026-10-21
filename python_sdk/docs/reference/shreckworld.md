@@ -51,3 +51,10 @@ Poll a specific attempt, or the latest attempt when job_id is omitted.
 ### `aclose(self)`
 
 No description.
+
+## Model-target search option
+
+`LLMModelTarget` (Shrecknet) and `ShreckWorldModelTarget` (ShreckWorld) accept
+`web_search_enabled: bool = False`. Saved targets preserve the option independently
+of reasoning. See [shared agent web search](../../../Documentation/Architecture/LLM_WEB_SEARCH.md)
+for capability discovery and supported provider behavior.

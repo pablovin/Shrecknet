@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 from redis.asyncio import Redis
 
+from app.web_search import capability
 from app.concurrency import RequestLimiter
 from app.config import Settings
 from app.config_store import ProviderDefaults, ProviderState, RuntimeConfig, get_runtime_config, reload_runtime_config, update_runtime_config
@@ -420,6 +421,7 @@ class ChatService:
             "configured_models": configured_models,
             "discovered_models": discovered_models,
             "models": merged_models,
+            "model_capabilities": {model: {"web_search": capability(adapter, model)} for model in merged_models},
         }
 
     async def validate_provider_models(
@@ -865,7 +867,7 @@ class ChatService:
                     "discovered_models": [],
                     "models": self.normalize_provider_models(list(cfg.models)) if cfg else [],
                 }
-            providers_payload[provider_id] = {**catalog, "capabilities": {"streaming": True, "images": None, "structured_output": None}}
+            providers_payload[provider_id] = {**catalog, "capabilities": {"streaming": True, "images": None, "structured_output": None, "web_search": provider_id == "openrouter"}}
 
         return {
             "providers": providers_payload,
@@ -1415,6 +1417,7 @@ class ChatService:
                         resolved_model=resolved_model,
                         provider_request_id=result["result"].get("provider_request_id"),
                         finish_reason=result["result"].get("finish_reason"),
+                        annotations=result["result"].get("annotations", []),
                         model=resolved_model,
                         usage=ChatUsage.model_validate(result["result"]["usage"]),
                         latency_ms=latency_ms,
@@ -1462,6 +1465,7 @@ class ChatService:
             resolved_model=resolved_model,
             provider_request_id=result["result"].get("provider_request_id"),
             finish_reason=result["result"].get("finish_reason"),
+            annotations=result["result"].get("annotations", []),
             model=resolved_model,
             usage=ChatUsage.model_validate(result["result"]["usage"]),
             latency_ms=latency_ms,
@@ -1485,6 +1489,8 @@ class ChatService:
         if not resolved_model:
             raise InvalidModelError(f"model is required for provider_id: {provider_id}")
 
+        from app.web_search import validate_web_search
+        await validate_web_search(adapter, resolved_model, request.web_search_enabled)
         combined_messages = [*history, *request.messages]
         adapter_kwargs: dict[str, Any] = {
             "model": resolved_model,
@@ -1493,6 +1499,8 @@ class ChatService:
             "reasoning": request.reasoning,
             "max_tokens": request.max_tokens,
         }
+        if request.web_search_enabled:
+            adapter_kwargs["web_search_enabled"] = True
         if request.reasoning_effort is not None:
             adapter_kwargs["reasoning_effort"] = request.reasoning_effort
         if request.response_format is not None:

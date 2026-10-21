@@ -19,3 +19,8 @@ This endpoint uses the gateway's existing internal-network trust boundary. Keep 
 behind the same service network/proxy controls as `/chat`; it is not a browser API.
 The Character Companion uses this path for provisional deltas, then validates and
 commits a separate final result in Shrecknet.
+
+The optional `web_search_enabled` request flag defaults to false. Supported OpenRouter
+requests may additionally emit `{type: "annotations", annotations: [...]}` events
+containing provider URL citations. Unsupported enabled requests return HTTP 400
+before streaming. See [shared search](../../../Documentation/Architecture/LLM_WEB_SEARCH.md).

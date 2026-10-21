@@ -164,3 +164,10 @@ credentials. Each nested `LLMModelTarget` carries its own reasoning flag. See
 - [CharacterAgent pipeline](CharacterAgent.md)
 - [Decision making](Query/Query.md)
 - [CharacterAgent endpoints](CharacterAgent%20-%20Endpoints.md)
+
+## Web search
+
+Every role also accepts `web_search_enabled`, default `false`, independent of
+reasoning. The shared frontend control uses gateway model capabilities; see
+[shared agent web search](../../Architecture/LLM_WEB_SEARCH.md) for supported
+providers, source behavior, charges, and deployment.

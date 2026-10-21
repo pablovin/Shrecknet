@@ -1,5 +1,6 @@
 """Companion selection, private chat lifecycle and durable admission rules."""
 from __future__ import annotations
+from app.integrations.companion.retrieval import web_available
 import time
 from uuid import uuid4
 from sqlalchemy import select, update
@@ -157,7 +158,7 @@ class CharacterCompanionService:
         context = {**context, "ontology_id": explicit_ontology or agent.ontology_id,
                    "chronicle_ontology_id": explicit_ontology, "character_ontology_id": agent.ontology_id}
         body["context"] = context
-        if payload.tools.web == "require" and not (settings.companion_web_enabled and getattr(settings, "companion_web_search_url", None)):
+        if payload.tools.web == "require" and not web_available(settings):
             fail(503, "required_tool_unavailable")
         if payload.retry_of_turn_id:
             old = await self.repo.owned(CompanionTurn, str(payload.retry_of_turn_id), actor.id)

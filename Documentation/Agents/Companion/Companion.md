@@ -41,9 +41,13 @@ The worker pipeline is:
 3. For image turns requiring retrieval, interpret the image into bounded visible
    observations and search terms. Interpretation is not published as an answer.
 4. Retrieve allowed sources concurrently with independent tool timeouts and an
-   overall deadline. An optional interim model can react concurrently using only
+   overall deadline. When the synthesis target enables provider search,
+   `WEB_RETRIEVAL` receives only a bounded query; provider citations with source
+   excerpts become external-web evidence. Its generated summary is not evidence.
+   An optional interim model can react concurrently using only
    identity and the question. Its output is provisional and excluded from rapport.
-5. Stage 2 streams one embodied structured synthesis. Text deltas are provisional.
+5. Stage 2 streams one embodied structured synthesis with provider search disabled;
+   image interpretation also disables provider search. Text deltas are provisional.
    Validate segment types, supplied citation IDs, current source access/revisions,
    originating session and character availability before committing the final.
 6. Commit the delivered user/assistant exchange, final event and rapport outbox in

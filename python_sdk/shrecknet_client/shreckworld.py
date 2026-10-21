@@ -331,6 +331,7 @@ class KnowledgeModelTarget(BaseModel):
     provider: str
     name: str
     reasoning: bool = False
+    web_search_enabled: bool = False
     reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
 
 

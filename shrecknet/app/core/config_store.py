@@ -90,6 +90,7 @@ class LLMModelTarget(BaseModel):
     provider: str = "openai"
     name: str = "gpt-5-nano"
     reasoning: bool = False
+    web_search_enabled: bool = False
     reasoning_effort: ReasoningEffort | None = Field(default=None, repr=False)
 
     @classmethod
@@ -605,6 +606,7 @@ def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
                 name=name or "gpt-5-nano",
                 reasoning=reasoning,
                 reasoning_effort=raw_value.get("reasoning_effort"),
+                web_search_enabled=raw_value.get("web_search_enabled", False),
             )
             updates[field_name] = normalized.model_dump()
     for field_name in LLM_TARGET_FIELDS:
@@ -625,6 +627,7 @@ def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
             name=normalized_name,
             reasoning=raw_value.get("reasoning", False),
             reasoning_effort=raw_value.get("reasoning_effort"),
+            web_search_enabled=raw_value.get("web_search_enabled", False),
         ).model_dump()
         if raw_value != normalized:
             updates[field_name] = normalized
@@ -766,6 +769,7 @@ def update_settings(updates: dict[str, Any]) -> Settings:
                     settings_dict[field_name] = LLMModelTarget(
                         provider="", name="", reasoning=raw_value.get("reasoning", False),
                         reasoning_effort=raw_value.get("reasoning_effort"),
+                        web_search_enabled=raw_value.get("web_search_enabled", False),
                     ).model_dump()
                     continue
                 if (provider or "openai") == "openai" and (name or "gpt-5-nano") not in ALLOWED_OPENAI_MODELS:
@@ -775,6 +779,7 @@ def update_settings(updates: dict[str, Any]) -> Settings:
                     name=name or "gpt-5-nano",
                     reasoning=raw_value.get("reasoning", False),
                     reasoning_effort=raw_value.get("reasoning_effort"),
+                    web_search_enabled=raw_value.get("web_search_enabled", False),
                 ).model_dump()
         updated = Settings(**settings_dict).model_dump()
         # Env-only bootstrap fields must never be persisted in runtime DB settings.

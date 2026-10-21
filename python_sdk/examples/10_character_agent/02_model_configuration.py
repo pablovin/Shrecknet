@@ -2,7 +2,7 @@
 
 SHRECKNET_TOKEN=... python 02_model_configuration.py
 SHRECKNET_TOKEN=... python 02_model_configuration.py --role psychological_interpretation \
-    --provider openrouter --model your-configured-model --reasoning --reasoning-effort low
+    --provider openrouter --model your-configured-model --reasoning --reasoning-effort low --web-search
 """
 import argparse
 import asyncio
@@ -18,12 +18,13 @@ async def main():
                                          'psychological_interpretation', 'decision_making'])
     parser.add_argument('--provider')
     parser.add_argument('--model')
+    parser.add_argument('--web-search', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--reasoning', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--reasoning-effort", choices=["minimal", "low", "medium", "high", "xhigh", "max"])
     args = parser.parse_args()
     if args.role and (not args.provider or not args.model):
         parser.error('--role requires --provider and --model')
-    if not args.role and (args.provider or args.model or args.reasoning_effort):
+    if not args.role and (args.provider or args.model or args.reasoning_effort or args.web_search):
         parser.error('--provider, --model, and --reasoning-effort require --role')
     token = os.environ.get('SHRECKNET_TOKEN')
     if not token:
@@ -33,7 +34,7 @@ async def main():
             payload = CharacterAgentModelConfigUpdate(**{
                 f'model_character_agent_{args.role}': LLMModelTarget(
                     provider=args.provider, name=args.model, reasoning=args.reasoning,
-                    reasoning_effort=args.reasoning_effort),
+                    reasoning_effort=args.reasoning_effort, web_search_enabled=args.web_search),
             })
             result = await sdk.character_agents.update_model_config(payload)
         else:

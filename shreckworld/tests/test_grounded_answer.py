@@ -251,7 +251,7 @@ def test_shreckllm_adapter_submits_and_polls_structured_job(monkeypatch):
 
     target = ShreckWorldModelTarget(
         provider="anthropic", name="claude-sonnet-4",
-        reasoning=True, reasoning_effort="high",
+        reasoning=True, reasoning_effort="high", web_search_enabled=True,
     )
     result = shreckllm.generate_grounded_answer(
         query="Explain", evidence=[{"citation_id": "source-1"}], model_target=target,
@@ -264,6 +264,7 @@ def test_shreckllm_adapter_submits_and_polls_structured_job(monkeypatch):
     assert client.payload["model"] == "claude-sonnet-4"
     assert client.payload["reasoning"] is True
     assert client.payload["reasoning_effort"] == "high"
+    assert client.payload["web_search_enabled"] is True
     assert client.payload["max_tokens"] == 4000
     assert client.payload["response_format"] == shreckllm.GROUNDING_RESPONSE_FORMAT
     assert "Requested response detail: detailed" in client.payload["messages"][1]["content"]

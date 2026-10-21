@@ -253,3 +253,10 @@ access tokens are not interchangeable with these grants. Scope limits the
 ShreckWorld and optional library IDs. Configure the trusted Shrecknet origin and
 keep these server-to-server requests on the internal network. Existing reader and
 query routes remain unchanged. See [Character Companion](../Agents/Companion/Companion.md).
+
+## Model-target web search
+
+The administrator synthesizer model target additionally accepts
+`web_search_enabled: false` by default and forwards it to shreckLLM. It is separate
+from world-level search policy. See [shared agent web search](../Architecture/LLM_WEB_SEARCH.md)
+for capability discovery, errors, source handling, and compatible deployment.

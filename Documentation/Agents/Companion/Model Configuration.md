@@ -2,7 +2,7 @@
 
 Companion Agent is a separate configuration group from CharacterAgent embodiment
 and the existing personal companion orchestrator. All four roles use the existing
-`LLMModelTarget` object (`provider`, `name`, `reasoning`, nullable `reasoning_effort`).
+`LLMModelTarget` object (`provider`, `name`, `reasoning`, nullable `reasoning_effort`, `web_search_enabled` default false).
 Names come from the configured provider catalog; these are role assignments rather
 than new provider implementations.
 
@@ -67,11 +67,18 @@ Example partial administrator write (substitute configured IDs):
 | `companion_image_models` | [`openrouter/deepseek/deepseek-v4.1-flash`] | Explicit image-capable `provider/name` targets |
 | `companion_shreckworld_url` | empty | Trusted ShreckWorld internal origin |
 | `companion_chronicles_url` | empty | Trusted RPG internal origin |
-| `companion_web_enabled` | false | Permit explicitly requested web retrieval |
+| `companion_web_enabled` | false | Enable the legacy JSON search integration |
 | `companion_web_search_url` | empty | Configured JSON search provider endpoint |
 | `companion_web_search_token` | empty | Private provider token; redacted on reads |
 
-The web provider receives a POST search request and returns bounded
+Enable `web_search_enabled` on `model_companion_synthesis` to use OpenRouter
+search through the existing gateway credentials. Turn-level web permission still
+applies; provider citations with excerpts enter the normal evidence validator.
+Search is disabled on the final synthesis/image interpretation calls. See
+[shared agent web search](../../Architecture/LLM_WEB_SEARCH.md) for capabilities,
+budgets, errors, compatibility, and deployment.
+
+The legacy JSON web provider receives a POST search request and returns bounded
 `results:[{title,url,snippet}]`. Public HTTP(S) result URLs are checked; private,
 local and non-HTTP(S) URLs are rejected. The backend does not fetch result pages.
 Keep configured origins and credentials in private server configuration. Empty

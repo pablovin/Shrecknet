@@ -15,6 +15,7 @@ class ProviderAdapter(Protocol):
         messages: list[ChatMessage],
         temperature: float,
         reasoning: bool = False,
+        web_search_enabled: bool = False,
         reasoning_effort: ReasoningEffort | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,

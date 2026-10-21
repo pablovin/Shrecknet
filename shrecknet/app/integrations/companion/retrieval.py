@@ -30,6 +30,15 @@ def evidence(tool, identifier, text, *, title="Source", reference=None, scope=No
                     navigation={"kind": tool, "resource_id": str(identifier), "location": reference}).model_dump()
 
 
+def provider_web_enabled(settings):
+    target = getattr(settings, "model_companion_synthesis", None)
+    return bool(getattr(target, "web_search_enabled", False) and getattr(target, "provider", "") == "openrouter")
+
+
+def web_available(settings):
+    return provider_web_enabled(settings) or bool(settings.companion_web_enabled and getattr(settings, "companion_web_search_url", ""))
+
+
 async def safe_web_url(url):
     parsed = urlsplit(url)
     if parsed.scheme not in {"https", "http"} or not parsed.hostname or parsed.username or parsed.password:
@@ -124,8 +133,23 @@ class CompanionRetrieval:
         return [evidence("chronicle", row["chronicle_id"], row["excerpt"], title=row.get("title", "Chronicle"), reference=row, scope={"ontology_id": self.scope.get("ontology_id")}, rank=i) for i, row in enumerate(data["items"], 1)]
 
     async def web(self, query):
-        if not self.settings.companion_web_enabled or not self.settings.companion_web_search_url:
+        if not web_available(self.settings):
             return []
+        if provider_web_enabled(self.settings):
+            from app.integrations.llm.shreckllm_client import ShreckLLMClient
+            from app.jobs.companion.prompts import WEB_RETRIEVAL
+            async with ShreckLLMClient(base_url=self.settings.shreckllm_base_url,
+                                      timeout=self.settings.companion_tool_timeout_s, max_retries=0) as client:
+                data = await client.chat(model=self.settings.model_companion_synthesis,
+                    messages=[{"role": "system", "content": WEB_RETRIEVAL}, {"role": "user", "content": query[:500]}],
+                    usage_tag="companion.web_retrieval", max_tokens=1000, return_metadata=True)
+            results = [row["url_citation"] for row in data.get("annotations", []) if row.get("type") == "url_citation"]
+            rows = []
+            for row in results[:6]:
+                # Only actual provider excerpts are evidence; generated summaries are never sources.
+                if row.get("content") and await safe_web_url(row.get("url", "")):
+                    rows.append(evidence("web", row["url"], row["content"][:4000], title=row.get("title", "Web result"), reference={"url": row["url"]}))
+            return rows
         # Configured retrieval provider must return {results:[{title,url,snippet}]}.
         # No page fetching: unsafe result URLs are discarded, not followed.
         headers = {"Authorization": f"Bearer {self.settings.companion_web_search_token}"} if self.settings.companion_web_search_token else {}

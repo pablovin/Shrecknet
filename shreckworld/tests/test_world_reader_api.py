@@ -21,6 +21,7 @@ def test_shreckworld_model_target_is_admin_configurable_and_persisted(api):
         "name": "claude-sonnet-4",
         "reasoning": True,
         "reasoning_effort": "high",
+        "web_search_enabled": False,
     }
     saved = client.put(
         endpoint, headers=headers,

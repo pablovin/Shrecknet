@@ -69,10 +69,13 @@ class OllamaClient:
         messages: list[ChatMessage],
         temperature: float,
         reasoning: bool = False,
+        web_search_enabled: bool = False,
         reasoning_effort: ReasoningEffort | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        from app.web_search import validate_web_search
+        await validate_web_search(self, model, web_search_enabled)
         del reasoning, reasoning_effort
         options: dict[str, Any] = {"temperature": float(temperature)}
         if max_tokens is not None:

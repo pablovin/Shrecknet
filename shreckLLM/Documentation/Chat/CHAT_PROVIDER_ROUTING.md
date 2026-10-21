@@ -234,3 +234,12 @@ If the same `conversation_id` is used across multiple providers, history remains
 
 ## Future providers
 New providers can be added by implementing adapter methods and registering them by `provider_id` in the registry.
+
+## Shared web-search option
+
+`/chat`, `/chat/jobs`, and `/chat/stream` accept `web_search_enabled` (default false).
+Catalogs include per-model `model_capabilities[model].web_search`. OpenRouter tool-capable
+models are supported; other providers reject enabled requests before execution.
+Normal/job responses preserve URL `annotations`; streaming emits `annotations` events.
+See the [canonical shared contract](../../../Documentation/Architecture/LLM_WEB_SEARCH.md)
+for limits, citation fields, request examples, migration and rollback.

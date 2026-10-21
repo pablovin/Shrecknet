@@ -21,6 +21,7 @@ class ShreckWorldModelTarget(BaseModel):
     provider: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=200)
     reasoning: bool = False
+    web_search_enabled: bool = False
     reasoning_effort: ReasoningEffort | None = None
 
     @field_validator("provider", "name")

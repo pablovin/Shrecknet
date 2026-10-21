@@ -111,12 +111,15 @@ class AnthropicClient:
         messages: list[ChatMessage],
         temperature: float,
         reasoning: bool = False,
+        web_search_enabled: bool = False,
         reasoning_effort: ReasoningEffort | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self._client is None:
             raise DependencyUnavailableError("anthropic is not configured")
+        from app.web_search import validate_web_search
+        await validate_web_search(self, model, web_search_enabled)
         del reasoning, reasoning_effort
         if response_format is not None:
             raise ProviderBadRequestError("anthropic does not support response_format")

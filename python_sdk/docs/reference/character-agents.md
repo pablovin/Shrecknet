@@ -184,3 +184,10 @@ See [the canonical trait contract](../../../Documentation/Agents/CharacterAgent/
 `observation_group_positions` snapshots the earliest recorded event-group position
 across traits, preserving event recency when a stronger retelling becomes the
 representative or historical reads select only contributing perspectives.
+
+## Model-target search option
+
+`LLMModelTarget` (Shrecknet) and `ShreckWorldModelTarget` (ShreckWorld) accept
+`web_search_enabled: bool = False`. Saved targets preserve the option independently
+of reasoning. See [shared agent web search](../../../Documentation/Architecture/LLM_WEB_SEARCH.md)
+for capability discovery and supported provider behavior.

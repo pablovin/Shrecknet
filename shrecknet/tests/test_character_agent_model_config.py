@@ -10,7 +10,7 @@ from app.core import config_store as config
 
 
 def target(name, reasoning=False):
-    return {'provider': 'openrouter', 'name': name, 'reasoning': reasoning, 'reasoning_effort': None}
+    return {'provider': 'openrouter', 'name': name, 'reasoning': reasoning, 'reasoning_effort': None, 'web_search_enabled': False}
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def test_migration_preserves_roles_reasoning_and_is_idempotent(isolated_config, 
     assert stored(isolated_config) == first
 
 
-@pytest.mark.parametrize('canonical', [target('explicit', True), {'provider': '', 'name': '', 'reasoning': True, 'reasoning_effort': None}])
+@pytest.mark.parametrize('canonical', [target('explicit', True), {'provider': '', 'name': '', 'reasoning': True, 'reasoning_effort': None, 'web_search_enabled': False}])
 def test_explicit_new_targets_win_even_when_blank(isolated_config, canonical):
     store({'model_character_agent_deliberation': target('old-decision'),
            'model_character_agent_scene_interpretation': target('old-scene'),
@@ -222,7 +222,7 @@ async def test_embodiment_routes_every_stage_to_its_distinct_target(reasoning):
 @pytest.mark.parametrize("effort", [None, "minimal", "low", "medium", "high", "xhigh", "max"])
 async def test_reasoning_effort_survives_config_save_reload(isolated_config, provider, name, effort):
     key = 'model_character_agent_character_incorporation'
-    value = {'provider': provider, 'name': name, 'reasoning': True, 'reasoning_effort': effort}
+    value = {'provider': provider, 'name': name, 'reasoning': True, 'reasoning_effort': effort, 'web_search_enabled': False}
     result = await configurations.put_config({key: value})
     assert result[key] == value
     assert getattr(config.reload_settings(), key).model_dump() == value
@@ -234,7 +234,7 @@ def test_invalid_reasoning_effort_does_not_persist(isolated_config, effort):
     before = config.get_settings().model_dump()
     with pytest.raises(HTTPException) as exc:
         configurations._validate_updates({'model_character_agent_decision_making':
-            {**target('model'), 'reasoning_effort': effort}})
+            {**target('model'), 'reasoning_effort': effort, 'web_search_enabled': False}})
     assert exc.value.status_code == 400
     assert config.reload_settings().model_dump() == before
 
@@ -276,9 +276,30 @@ async def test_companion_roles_save_independently_and_require_explicit_enablemen
 
 def test_companion_explicit_blank_and_custom_targets_survive_default_updates(isolated_config):
     custom=target('my-other-model',True)
-    blank={'provider':'','name':'','reasoning':False,'reasoning_effort':None}
+    blank={'provider':'','name':'','reasoning':False,'reasoning_effort':None, 'web_search_enabled':False}
     store({'model_companion_synthesis':custom,'model_companion_rapport_update':blank})
     loaded=config.load_settings()
     assert loaded.model_companion_synthesis.model_dump()==custom
     assert loaded.model_companion_rapport_update.model_dump()==blank
     assert loaded.model_companion_routing.name=='deepseek/deepseek-v4.1-flash'
+
+
+@pytest.mark.parametrize('field', config.LLM_TARGET_FIELDS)
+def test_every_agent_persists_independent_web_search_option(isolated_config, field):
+    before = config.get_settings().model_dump()
+    config.update_settings({field: {**target('search-model'), 'web_search_enabled': True}})
+    assert getattr(config.reload_settings(), field).web_search_enabled is True
+    schema = configurations.get_config_schema()
+    assert schema['field_meta'][field]['value_fields']['web_search_enabled']['default'] is False
+    for other in config.LLM_TARGET_FIELDS:
+        if other != field:
+            assert getattr(config.get_settings(), other).model_dump() == before[other]
+    config.update_settings({field: {**target('search-model'), 'web_search_enabled': False}})
+    assert getattr(config.reload_settings(), field).web_search_enabled is False
+
+
+def test_search_survives_legacy_normalization(isolated_config):
+    field = 'model_companion_synthesis'
+    store({field: {'provider': 'openrouter', 'name': 'm', 'web_search_enabled': True}})
+    assert getattr(config.load_settings(), field).web_search_enabled is True
+    assert getattr(config.reload_settings(), field).web_search_enabled is True

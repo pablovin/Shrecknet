@@ -386,3 +386,47 @@ def test_sqlite_timestamps_keep_explicit_utc_on_the_wire():
     from app.repositories.character_companion_repository import utc_iso
     assert utc_iso(datetime(2025,1,1,12))=='2025-01-01T12:00:00+00:00'
     assert utc_iso(datetime(2025,1,1,12,tzinfo=timezone(timedelta(hours=2))))=='2025-01-01T10:00:00+00:00'
+
+
+@pytest.mark.asyncio
+async def test_provider_web_search_uses_annotations_as_evidence_and_never_generated_summary(monkeypatch):
+    from app.integrations.companion import retrieval
+    from app.integrations.llm.shreckllm_client import ShreckLLMClient
+    from app.core.config_store import LLMModelTarget
+    target = LLMModelTarget(provider='openrouter', name='search-model', web_search_enabled=True)
+    settings = SimpleNamespace(model_companion_synthesis=target, companion_web_enabled=False,
+                               shreckllm_base_url='http://gateway', companion_tool_timeout_s=1)
+    monkeypatch.setattr(retrieval, 'get_settings', lambda: settings)
+    calls = []
+    async def chat(self, **kwargs):
+        calls.append(kwargs)
+        return {'text': 'An invented model summary must not become evidence', 'annotations': [
+            {'type': 'url_citation', 'url_citation': {'url': 'https://example.org/source', 'title': 'Actual source', 'content': 'Provider source excerpt'}},
+            {'type': 'url_citation', 'url_citation': {'url': 'http://127.0.0.1/private', 'content': 'Private'}},
+            {'type': 'url_citation', 'url_citation': {'url': 'https://example.org/no-excerpt'}}]}
+    async def safe(url):
+        return url.startswith('https://example.org')
+    monkeypatch.setattr(ShreckLLMClient, 'chat', chat)
+    monkeypatch.setattr(retrieval, 'safe_web_url', safe)
+    adapter = retrieval.CompanionRetrieval(SimpleNamespace(request={}), None)
+    rows = await adapter.web('latest news')
+    assert len(rows) == 1
+    assert rows[0]['excerpt'] == 'Provider source excerpt'
+    assert rows[0]['epistemic_category'] == 'external_web'
+    assert calls[0]['model'].web_search_enabled is True
+    assert calls[0]['return_metadata'] is True
+    assert retrieval.web_available(settings)
+    settings.model_companion_synthesis = target.model_copy(update={'web_search_enabled': False})
+    assert not retrieval.web_available(settings)
+    assert await adapter.web('latest news') == []
+
+
+def test_turn_web_denial_fences_optional_role_settings():
+    from app.core.config_store import LLMModelTarget
+    from app.jobs.companion.runner import turn_target
+    target = LLMModelTarget(provider='openrouter', name='m', web_search_enabled=True)
+    turn = SimpleNamespace(request={'tools': {'web': 'disabled'}})
+    assert turn_target(target, turn).web_search_enabled is False
+    assert target.web_search_enabled is True
+    turn.request['tools']['web'] = 'allow'
+    assert turn_target(target, turn).web_search_enabled is True

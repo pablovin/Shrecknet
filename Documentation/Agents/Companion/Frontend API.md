@@ -96,3 +96,12 @@ Errors use FastAPI `detail`; domain errors have `{code, ...}`. Relevant statuses
 idempotency conflict or chat busy; 410 expired event cursor; 422 invalid input;
 429 rate/concurrency limit; 503 disabled feature, missing models or unavailable DB.
 Retrieval partial failures appear as diagnostics/coverage, not fabricated citations.
+
+## Provider web-search option
+
+Model targets include `web_search_enabled`, default `false`. Enabling it on the
+synthesis target permits OpenRouter retrieval without a separate JSON search URL;
+`tools.web` still gates each turn. Provider source excerpts enter the existing
+evidence/source events and final citation validation. See
+[shared configuration](../../Architecture/LLM_WEB_SEARCH.md) for capability
+discovery, unsupported models, budgets, and rollout.

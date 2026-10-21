@@ -930,6 +930,13 @@ async def incremental_chat(payload: StreamChatRequest,
     from app.streaming import stream_chat
     if service.registry.get(payload.provider_id) is None:
         raise HTTPException(400, "Streaming provider is not configured")
+    from app.web_search import validate_web_search
+    try:
+        await validate_web_search(service.registry.get(payload.provider_id), payload.model, payload.web_search_enabled)
+    except ProviderBadRequestError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    except DependencyUnavailableError as exc:
+        raise HTTPException(503, detail=str(exc)) from exc
     async def events():
         iterator = stream_chat(service, payload)
         try:

@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
     provider_id: str = Field(min_length=1)
     model: str = Field(min_length=1)
     reasoning: bool = False
+    web_search_enabled: bool = False
     reasoning_effort: ReasoningEffort | None = None
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -34,6 +35,7 @@ class ChatUsage(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    annotations: list[dict[str, Any]] = Field(default_factory=list)
     text: str
     provider_id: str
     requested_model: str | None = None

@@ -36,3 +36,8 @@ updates any of the four Companion model roles; it never modifies CharacterAgent 
 See the [runnable example](../examples/12_character_companion/chat.py),
 [HTTP contract](../../Documentation/Agents/Companion/Frontend%20API.md), and
 [operations](../../Documentation/Agents/Companion/Companion.md).
+
+Agent `LLMModelTarget` values also accept `web_search_enabled=False`. Set it on
+Companion synthesis for gateway-backed OpenRouter retrieval; per-turn web permission
+still applies. Unsupported providers/models cannot enable search in the administration
+UI. See [shared agent web search](../../Documentation/Architecture/LLM_WEB_SEARCH.md).

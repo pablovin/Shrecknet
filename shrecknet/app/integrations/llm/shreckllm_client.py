@@ -97,7 +97,7 @@ class ShreckLLMClient:
         import json
         await self.ensure_provider_ready(model.provider)
         payload = {"provider_id": model.provider, "model": model.name, "reasoning": model.reasoning,
-                   "reasoning_effort": model.reasoning_effort, "messages": messages, "max_tokens": max_tokens,
+                   "reasoning_effort": model.reasoning_effort, "web_search_enabled": model.web_search_enabled, "messages": messages, "max_tokens": max_tokens,
                    "metadata": {"usage_tag": usage_tag}}
         self.last_response_metadata = {}
         done = False
@@ -139,6 +139,7 @@ class ShreckLLMClient:
             "model": target.name,
             "reasoning": target.reasoning,
             "reasoning_effort": target.reasoning_effort,
+            "web_search_enabled": target.web_search_enabled,
             "messages": messages,
             "temperature": temperature,
             "conversation_id": conversation_id,
@@ -211,6 +212,7 @@ class ShreckLLMClient:
                     return {
                         "text": text,
                         "usage": usage,
+                        "annotations": data.get("annotations", []),
                         "response_metadata": {
                             "provider_id": provider_id,
                             "resolved_model": resolved_model,
@@ -350,6 +352,7 @@ class ShreckLLMClient:
             return LLMModelTarget(
                 provider=provider, name=name, reasoning=reasoning,
                 reasoning_effort=model.get("reasoning_effort"),
+                web_search_enabled=model.get("web_search_enabled", False),
             )
         return LLMModelTarget(provider="openai", name="gpt-5-nano")
 

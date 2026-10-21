@@ -170,3 +170,27 @@ async def test_chat_polling_has_no_caller_generation_deadline(monkeypatch) -> No
     assert answer == "answer"
     assert observed_timeout is None
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_search_flag_and_provider_citations_cross_the_shared_client(monkeypatch):
+    client = ShreckLLMClient(base_url='http://test')
+    captured = []
+    async def ready(_): pass
+    async def submit(payload):
+        captured.append(payload)
+        return 'job'
+    citation = {'type':'url_citation', 'url_citation': {'url':'https://example.org','content':'Source excerpt'}}
+    async def wait(*_, **__):
+        return {'text':'Answer', 'usage':{}, 'annotations':[citation]}
+    monkeypatch.setattr(client, 'ensure_provider_ready', ready)
+    monkeypatch.setattr(client, 'submit_chat_job', submit)
+    monkeypatch.setattr(client, 'wait_for_chat_job', wait)
+    try:
+        result = await client.chat(model={'provider':'openrouter','name':'m','web_search_enabled':True},
+            messages=[{'role':'user','content':'news'}], return_metadata=True)
+        assert captured[0]['web_search_enabled'] is True
+        assert captured[0]['reasoning'] is False
+        assert result['annotations'] == [citation]
+    finally:
+        await client.aclose()

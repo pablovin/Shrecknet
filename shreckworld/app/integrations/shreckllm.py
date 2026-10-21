@@ -112,6 +112,7 @@ def generate_grounded_answer(
         "model": model_target.name,
         "reasoning": model_target.reasoning,
         "reasoning_effort": model_target.reasoning_effort,
+        "web_search_enabled": model_target.web_search_enabled,
         "messages": [
             {"role": "system", "content": GROUNDING_SYSTEM_PROMPT},
             {
@@ -218,6 +219,7 @@ def generate_shreckworld_structured_output(
         "model": model_target.name,
         "reasoning": model_target.reasoning,
         "reasoning_effort": model_target.reasoning_effort,
+        "web_search_enabled": model_target.web_search_enabled,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},

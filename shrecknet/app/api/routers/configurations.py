@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from app.api.agent_feature_gate import require_shreckllm_operational_for_agents_enable
-from app.api.deps import get_current_active_admin_or_world_builder, get_current_admin_user
+from app.api.deps import get_current_active_admin_or_world_builder, get_current_admin_user, get_current_user
 from app.celery_app import configure_celery_app
 from app.core.config_store import (
     BOOTSTRAP_ENV_FIELDS,
@@ -29,7 +29,7 @@ from app.core.config_store import (
 )
 from app.services.shreckllm_status_service import get_all_provider_validations
 from app.services.email_service import EmailDeliveryError, EmailService, get_email_service_status
-from app.schemas.user import PublicRegistrationConfig
+from app.schemas.user import PublicRegistrationConfig, AuthenticatedCapabilities
 from app.schemas.foundry_integration_config import FoundryIntegrationConfigSummary
 
 router = APIRouter(prefix="/config", tags=["config"])
@@ -521,6 +521,11 @@ def _get_config_payload() -> dict[str, Any]:
             payload[key] = ""
     payload["email_service_configured"] = bool(get_email_service_status()["configured"])
     return payload
+
+
+@router.get("/capabilities", response_model=AuthenticatedCapabilities, dependencies=[Depends(get_current_user)])
+def get_authenticated_capabilities() -> AuthenticatedCapabilities:
+    return AuthenticatedCapabilities(enable_ai_agents=get_settings().enable_ai_agents)
 
 
 @router.get("/public", response_model=PublicRegistrationConfig)

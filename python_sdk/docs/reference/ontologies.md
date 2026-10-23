@@ -41,3 +41,5 @@ Return world stats for one or multiple ontologies.
 All operations require authenticated world graph access. See the [backend Living Folio contract](../../../Documentation/API/SCENE_GRAPH_API.md#living-folio-page-reads) for page projections, authorization, empty/error behavior, and rollout requirements. These models are available from `shrecknet_client.atlas`.
 
 Example: [read a Living Folio page](../../examples/02_ontology_management/03_read_living_folio.py).
+
+World graph and discovery reads are available to every authenticated role, including players without entity assignments. Private perspectives remain restricted to administrators. See [Scene Graph API](../../../Documentation/API/SCENE_GRAPH_API.md) for the authorization contract.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -47,7 +48,7 @@ class _SqlSession:
         self.get_calls.append((model, identifier))
         return object()
 
-    async def scalar(self, query):  # pragma: no cover - privileged roles bypass it
+    async def scalar(self, query):  # Assignments must not gate world reads.
         raise AssertionError(query)
 
 
@@ -66,13 +67,24 @@ async def test_scene_graph_entities_are_deduplicated_and_batch_hydrated():
 
 
 @pytest.mark.asyncio
-async def test_scene_graph_read_access_uses_configured_sql_session_for_privileged_user():
+@pytest.mark.parametrize("role", list(UserRole))
+async def test_scene_graph_read_access_allows_every_authenticated_role_without_assignment(role):
     sql_session = _SqlSession()
     service = OntologyInstanceService(sql_session=sql_session, graph_session=None)
 
     await service.assert_ontology_graph_read_access(
         ontology_id=7,
-        actor=SimpleNamespace(id=4, role=UserRole.WRITER),
+        actor=SimpleNamespace(id=4, role=role),
     )
 
     assert sql_session.get_calls[0][1] == 7
+
+
+@pytest.mark.asyncio
+async def test_scene_graph_read_access_rejects_missing_world():
+    session = SimpleNamespace(get=AsyncMock(return_value=None))
+    service = OntologyInstanceService(sql_session=session, graph_session=None)
+    with pytest.raises(ValueError, match="Ontology not found"):
+        await service.assert_ontology_graph_read_access(
+            ontology_id=999, actor=SimpleNamespace(id=4, role=UserRole.PLAYER),
+        )

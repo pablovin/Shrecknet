@@ -8,6 +8,8 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## Authentication
 
+- [Authenticated capabilities](API/AUTHENTICATED_CAPABILITIES.md) — allowlisted feature flags for all signed-in roles
+
 - [Public user profile summaries](API/PUBLIC_USER_SUMMARIES.md) — bounded authenticated roster reads for names and avatars
 - [Browser authentication and sessions](API/BROWSER_AUTHENTICATION.md) — ShreckOS cookie contracts, eligibility, rotation/revocation, private configuration, migration, and SDK integration
 

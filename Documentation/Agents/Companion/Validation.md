@@ -114,3 +114,33 @@ provider reports them. Proposed latency targets are not measured guarantees.
 Curated human evaluation must assess character fidelity, semantic grounding,
 uncertainty, source/image prompt injection resistance and rapport quality; schema
 and citation-ID tests do not establish these qualities.
+
+## Browser-session worker recovery (2026-10-23)
+
+A local frontend turn failed while still queued because the Companion worker
+inherited `SHRECKNET_BROWSER_SECURE_COOKIES=true` for an HTTP loopback origin.
+The API overrode stale cookie settings, but the worker did not. The shared
+Compose environment now applies the same public-origin-derived browser settings
+to API and workers; see [browser authentication deployment](../../API/BROWSER_AUTHENTICATION.md#worker-cookie-mode-parity).
+Both Companion workers were recreated with the corrected environment and current
+API image. Their browser settings load successfully with loopback HTTP cookies.
+No user messages or character state were rewritten.
+
+The first session-backed probe then reached synthesis and found the configured
+OpenRouter provider inactive. Re-enabling the existing provider with its existing
+credential restored model access. A second disposable-account probe used an actual
+SQL browser session (`sid` in its access token), selected an existing canonical
+character, admitted a greeting through the HTTP API, and observed a completed turn
+in 2.52 seconds. Probe accounts, sessions, and private Companion records were
+removed afterward. This verifies session revalidation and the actual worker/model
+path; it is not a latency percentile or a complete browser UI regression run.
+
+`tests/test_browser_auth.py tests/test_character_companion.py -o addopts='' -q`
+passed all 40 tests from `shrecknet/` with a writable temporary media/config root.
+The first test command without `SHRECKNET_MEDIA_ROOT` could not collect because
+its configured `/app` media directory is not writable on the host; rerunning with
+`SHRECKNET_MEDIA_ROOT=/tmp/shrecknet-browser-fix-media` and
+`SHRECKNET_DATA_DIR=/tmp/shrecknet-browser-fix-config` passed. Rendered Compose
+configuration confirms API, domain worker, and both Companion workers derive
+cookie settings from the same public origin. No database migration is required.
+Old failed turns remain historical failures; retry by sending a new message.

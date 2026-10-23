@@ -114,3 +114,9 @@ class ServiceEmailSendRequest(BaseModel):
     user_id: int = Field(gt=0)
     subject: str = Field(min_length=1, max_length=998)
     message: str = Field(min_length=1, max_length=100_000)
+
+
+class AuthenticatedCapabilities(BaseModel):
+    """Allowlisted feature flags available to every signed-in user."""
+
+    enable_ai_agents: bool

@@ -12,6 +12,9 @@ x-shrecknet-image: &shrecknet-image
 x-shrecknet-env: &shrecknet-env
   PYTHONUNBUFFERED: "1"
   SHRECKNET_PUBLIC_ORIGIN: ${SHRECKNET_PUBLIC_ORIGIN:-http://localhost}
+  SHRECKNET_BROWSER_ENABLED: ${SHRECKNET_BROWSER_ENABLED:-true}
+  SHRECKNET_BROWSER_ALLOWED_ORIGINS: ""
+  SHRECKNET_BROWSER_SECURE_COOKIES: ""
   SHRECKNET_EMBEDDING_DEVICE: ${SHRECKNET_EMBEDDING_DEVICE:-cpu}
   HF_HOME: /hf-cache
   SENTENCE_TRANSFORMERS_HOME: /hf-cache/sentence_transformers
@@ -346,11 +349,7 @@ services:
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8100
-    environment:
-      <<: *shrecknet-env
-      SHRECKNET_BROWSER_ENABLED: ${SHRECKNET_BROWSER_ENABLED:-true}
-      SHRECKNET_BROWSER_ALLOWED_ORIGINS: ""
-      SHRECKNET_BROWSER_SECURE_COOKIES: ""
+    environment: *shrecknet-env
     env_file:
       - ./configs/compose.env
       - ./configs/neo4j.env

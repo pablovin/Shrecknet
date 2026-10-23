@@ -2829,22 +2829,10 @@ class OntologyInstanceService:
         if ontology is None:
             raise ValueError("Ontology not found")
 
-        role = actor.role.value if hasattr(actor.role, "value") else str(actor.role)
-        if role.lower() in {UserRole.ADMIN.value, UserRole.WORLD_BUILDER.value, UserRole.WRITER.value}:
-            return
-
-        allowed = await self.sql_session.scalar(
-            select(OntologyEntity.id)
-            .join(OntologyEntity.players)
-            .where(
-                OntologyEntity.ontology_id == ontology_id,
-                User.id == actor.id,
-            )
-            .limit(1)
-        )
-        if allowed is None:
-            # Do not disclose whether the requested world has a graph.
-            raise PermissionError("You do not have access to this world")
+        # Authentication is enforced by the route dependency. World discovery and
+        # graph reading share the same signed-in audience; entity assignments
+        # govern authoring, not read access. Private perspectives remain filtered
+        # by the individual projections.
 
     async def get_scene_graph(
         self, *, ontology_id: int, scene_id: str, include_private_perspectives: bool

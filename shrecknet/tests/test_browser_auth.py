@@ -239,3 +239,16 @@ async def test_validation_errors_never_echo_passwords(client, browser_settings):
     assert response.status_code == 422
     assert "secret-text" not in response.text
     assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize('origin,secure', [('http://localhost:5174', False), ('https://shrecknet.club', True)])
+def test_empty_compose_overrides_infer_browser_settings_for_workers(monkeypatch, origin, secure):
+    monkeypatch.setenv('SHRECKNET_PUBLIC_ORIGIN', origin)
+    monkeypatch.setenv('SHRECKNET_BROWSER_ENABLED', 'true')
+    monkeypatch.setenv('SHRECKNET_BROWSER_SECRET', Fernet.generate_key().decode())
+    monkeypatch.setenv('SHRECKNET_BROWSER_ALLOWED_ORIGINS', '')
+    monkeypatch.setenv('SHRECKNET_BROWSER_SECURE_COOKIES', '')
+    settings = BrowserAuthSettings()
+    assert settings.enabled is True
+    assert settings.allowed_origins == [origin]
+    assert settings.secure_cookies is secure

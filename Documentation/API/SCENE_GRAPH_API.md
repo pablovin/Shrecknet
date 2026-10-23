@@ -9,10 +9,14 @@ is unchanged and remains available for compatibility.
 
 ## Authorization
 
-The request requires an authenticated user. Admins, world builders, and writers
-may read a world graph. A player may read it only when assigned to an entity in
-the requested ontology. Requests outside that scope return `403`; an unknown
-ontology or a scene not belonging to the requested ontology returns `404`.
+Every authenticated user, including a player without entity assignments, may read
+any existing world graph. An unknown ontology or a scene not belonging to the
+requested ontology returns `404`. Authentication is still required; authoring
+permissions are unchanged. This also applies to discovery, sources, Folio reads,
+World Web, and Elder cards through the shared world-read boundary.
+
+Deploy the updated Shrecknet service to enable this policy; no data migration is
+required. Rolling back restores the previous assignment requirement for players.
 
 Character Agent perspective visibility is checked inside the projection. Admins
 receive perspectives owned by public and private agents. Other authorized users

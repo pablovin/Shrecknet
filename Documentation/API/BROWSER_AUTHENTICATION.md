@@ -89,3 +89,22 @@ PYTHONPATH=. python scripts/export_browser_auth_openapi.py --output /path/to/shr
 ```
 
 Focused tests are `shrecknet/tests/test_browser_auth.py`, `python_sdk/tests/test_browser_auth_sdk.py`, and `shreckworld/tests/test_browser_session_auth.py`, plus the RPG consumer's browser-auth tests in its repository. `shrecknet/tests/browser_auth_server.py` is a temporary loopback-only real-route integration harness, not a production entry point.
+
+
+## Worker cookie-mode parity
+
+The root Compose `x-shrecknet-env` anchor sets browser authentication controls for
+both the API and all domain/Companion workers. Empty
+`SHRECKNET_BROWSER_ALLOWED_ORIGINS` and `SHRECKNET_BROWSER_SECURE_COOKIES` overrides
+make every process derive those values from `SHRECKNET_PUBLIC_ORIGIN`, overriding
+stale legacy values in env files. Workers revalidate originating browser sessions
+before Companion execution, so they must load the same valid browser configuration
+as the API even though they do not issue cookies. A mismatched secure-cookie setting
+on a local HTTP deployment can fail a turn at the queued stage before model access.
+
+After changing Compose browser settings, recreate the affected worker containers;
+`docker compose restart` retains their old environment. For Companion use
+`docker compose --profile companion up -d --no-deps --force-recreate
+shrecknet_companion_worker shrecknet_companion_rapport_worker`. No database migration
+or character regeneration is needed. Previously failed turns remain failed; send a
+new message after the fix. Rebuilding the API image alone does not recreate workers.

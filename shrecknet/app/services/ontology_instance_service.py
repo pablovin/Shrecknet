@@ -62,6 +62,11 @@ from app.schemas.character_agent import (
 
 from neo4j.time import DateTime as Neo4jDateTime
 
+
+class FolioEditConflict(ValueError):
+    """The page revision no longer matches the editor snapshot."""
+
+
 logger = logging.getLogger(__name__)
 
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -1731,44 +1736,47 @@ class OntologyInstanceService:
         }
 
     async def update_instance(
-        self, instance_id: str, payload: OntologyInstanceUpdate
+        self, instance_id: str, payload: OntologyInstanceUpdate, *,
+        expected_updated_at: datetime | None = None,
+        edit_fields: set[str] | None = None,
     ) -> OntologyInstanceRead:
         if payload.scenes is not None:
             raise ValueError(
                 "Scenes and milestones must be updated via scene-specific endpoints"
             )
 
-        current = await self.get_instance(instance_id)
+        current = (await self.get_instance(instance_id) if expected_updated_at is None
+                   else await self.get_instance(instance_id, include_scenes=False, include_relationships=False))
         timestamp = _format_dt(datetime.utcnow())
 
-        await self.graph_session.run(
-            """
-            MATCH (i:OntologyInstance {instance_id: $instance_id})
-            SET i.name = coalesce($name, i.name),
-                i.updated_at = $updated_at
-            """,
-            instance_id=instance_id,
-            name=payload.name,
-            updated_at=timestamp,
-        )
-
         if payload.entities is None:
-            instance = await self.get_instance(instance_id)
+            await self.graph_session.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})
+                SET i.name = coalesce($name, i.name),
+                    i.updated_at = $updated_at
+                """,
+                instance_id=instance_id,
+                name=payload.name,
+                updated_at=timestamp,
+            )
+
+            instance = (await self.get_instance(instance_id) if expected_updated_at is None
+                        else await self.get_instance(instance_id, include_scenes=False, include_relationships=False))
 
             # Notifications are owned by ShreckRPG; Shrecknet keeps core update only.
             _enqueue_link_instance(instance.instance_id)
             return instance
 
         definitions = await self._load_entity_definitions(current.ontology_id)
-        entities_payload = self._sanitize_entities_payload_for_update(
-            payload.entities, definitions
-        )
+        entities_payload = (self._sanitize_entities_payload_for_update(payload.entities, definitions)
+                            if edit_fields is None else payload.entities)
         current_entity_ids = [
             entity.entity_instance_id
             for entity in current.entities
             if _normalize_optional_str(entity.entity_instance_id)
         ]
-        if len(current_entity_ids) != 1:
+        if expected_updated_at is None and len(current_entity_ids) != 1:
             raise ValueError(
                 "Instance update requires exactly one existing entity in single-entity mode"
             )
@@ -1776,15 +1784,30 @@ class OntologyInstanceService:
             raise ValueError(
                 "Instance update requires exactly one entity payload in single-entity mode"
             )
-        entities_payload = [
-            entities_payload[0].model_copy(
-                update={"entity_instance_id": current_entity_ids[0]}
-            )
-        ]
+        if expected_updated_at is None:
+            entities_payload = [
+                entities_payload[0].model_copy(
+                    update={"entity_instance_id": current_entity_ids[0]}
+                )
+            ]
 
         tx = await self.graph_session.begin_transaction()
         impacted_entity_ids: set[str] = set()
         try:
+            if expected_updated_at is not None:
+                # A dependent write acquires the page lock before comparing its revision.
+                locked = await tx.run("""
+                    MATCH (i:OntologyInstance {instance_id: $instance_id})
+                    SET i.updated_at = i.updated_at
+                    RETURN i.updated_at AS revision
+                    """, instance_id=instance_id)
+                record = await locked.single()
+                if record is None or _parse_dt(record["revision"]) != expected_updated_at:
+                    raise FolioEditConflict("This page changed. Reload before saving again.")
+            await tx.run("""
+                MATCH (i:OntologyInstance {instance_id: $instance_id})
+                SET i.name = coalesce($name, i.name), i.updated_at = $updated_at
+                """, instance_id=instance_id, name=payload.name, updated_at=timestamp)
             existing_entities_result = await tx.run(
                 """
                 MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)
@@ -1870,12 +1893,12 @@ class OntologyInstanceService:
                 valid_property_ids = set(definition["properties"].keys())
                 valid_relationship_ids = set(definition["relationships"].keys())
                 for prop in entity_payload.properties:
-                    if prop.definition_id not in valid_property_ids:
+                    if (edit_fields is None or "properties" in edit_fields) and prop.definition_id not in valid_property_ids:
                         raise ValueError(
                             f"Property definition {prop.definition_id} does not belong to entity"
                         )
                 for rel in entity_payload.relationships:
-                    if rel.definition_id not in valid_relationship_ids:
+                    if (edit_fields is None or "relationships" in edit_fields) and rel.definition_id not in valid_relationship_ids:
                         raise ValueError(
                             f"Relationship definition {rel.definition_id} does not belong to entity"
                         )
@@ -1920,6 +1943,19 @@ class OntologyInstanceService:
                 created_iso,
                 updated_iso,
             ) in updates_payload:
+                if edit_fields is not None:
+                    values: dict[str, Any] = {"updated_at": timestamp, "last_updated_date": timestamp}
+                    for field in edit_fields - {"relationships"}:
+                        values[field] = json.dumps(prop_map) if field == "properties" else getattr(entity_payload, field)
+                    if "text" in edit_fields:
+                        values["text_linked"] = entity_payload.text
+                    if "autogenerated_text" in edit_fields:
+                        values["autogenerated_text_linked"] = entity_payload.autogenerated_text
+                    await tx.run("""
+                        MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance {entity_instance_id: $entity_instance_id})
+                        SET e += $changes
+                        """, instance_id=instance_id, entity_instance_id=entity_node_id, changes=values)
+                    continue
                 await tx.run(
                     """
                     MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance {entity_instance_id: $entity_instance_id})
@@ -1957,6 +1993,8 @@ class OntologyInstanceService:
                 )
 
             for entity_node_id, entity_payload, _, _, _ in updates_payload:
+                if edit_fields is not None and "relationships" not in edit_fields:
+                    continue
                 relationship_definitions = definitions[entity_payload.definition_id][
                     "relationships"
                 ]
@@ -2192,7 +2230,8 @@ class OntologyInstanceService:
             await tx.commit()
             await tx.close()
 
-            instance = await self.get_instance(instance_id)
+            instance = (await self.get_instance(instance_id) if expected_updated_at is None
+                        else await self.get_instance(instance_id, include_scenes=False, include_relationships=False))
 
             # Notifications are owned by ShreckRPG; Shrecknet keeps core update only.
 

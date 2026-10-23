@@ -4,8 +4,9 @@ from sqlalchemy import select
 from app.models.agent import Agent
 from app.models.user import User
 from app.models.ontology import OntologyRelationship
-from app.schemas.atlas import AtlasAuthor, AtlasFolioDetailRead, AtlasRelationshipPage
-from app.services.ontology_instance_service import OntologyInstanceService
+from app.schemas.atlas import AtlasAuthor, AtlasFolioDetailRead, AtlasRelationshipPage, AtlasFolioPatch
+from app.schemas.ontology_instance import OntologyInstanceEntityCreate, OntologyInstanceUpdate
+from app.services.ontology_instance_service import OntologyInstanceService, FolioEditConflict
 
 
 _RELATIONSHIPS = """
@@ -46,6 +47,26 @@ class AtlasFolioService:
             **detail.model_dump(),
             "folio_projection": {"scenes": "omitted", "relationships": "omitted"},
         })
+
+    async def patch(self, ontology_id: int, page_id: str, payload: AtlasFolioPatch) -> AtlasFolioDetailRead:
+        await self.assert_page(ontology_id, page_id)
+        current = await self.instances.get_instance(page_id, include_scenes=False, include_relationships=False)
+        if current.updated_at != payload.expected_updated_at:
+            raise FolioEditConflict("This page changed. Reload before saving again.")
+        entity = next((row for row in current.entities if row.entity_instance_id == payload.entity_instance_id), None)
+        if entity is None:
+            raise ValueError("Entity does not belong to this page")
+        changes = payload.model_dump(exclude_unset=True, exclude={"expected_updated_at", "entity_instance_id", "name"})
+        original = entity.model_dump(exclude={"relationships"})
+        merged = OntologyInstanceEntityCreate.model_validate({**original, **changes})
+        updated = await self.instances.update_instance(page_id, OntologyInstanceUpdate(
+            name=payload.name, entities=[merged],
+        ), expected_updated_at=payload.expected_updated_at, edit_fields=set(changes))
+        # Return the same bounded projection as GET; no scenes or relationship array.
+        result = updated.model_dump()
+        result["entities"] = [{**row, "relationships": []} for row in result["entities"]]
+        return AtlasFolioDetailRead.model_validate({**result,
+            "folio_projection": {"scenes": "omitted", "relationships": "omitted"}})
 
     async def authors(self, ontology_id: int, page_id: str) -> list[AtlasAuthor]:
         await self.assert_page(ontology_id, page_id)

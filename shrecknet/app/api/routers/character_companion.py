@@ -17,8 +17,8 @@ from app.core.security import decode_access_token
 from app.models.character_companion import CompanionChat, CompanionTurn, CompanionMessage, CompanionRapport, CompanionRapportAudit, CompanionEvent
 from app.repositories.character_companion_repository import fail, record, cursor, decode_cursor, utc_iso
 from app.schemas.character_companion import Page, CandidateRead, SelectionRead, RapportRead, ChatRead, MessageRead, TurnQueued, TurnRead, AttachmentRead, RapportAuditRead
-from app.schemas.character_companion import SelectionWrite, VersionWrite, ChatCreate, ChatUpdate, TurnCreate, TERMINAL
-from app.services.character_companion_service import CharacterCompanionService
+from app.schemas.character_companion import SelectionWrite, VersionWrite, ChatCreate, ChatUpdate, ChatPage, TurnCreate, TERMINAL
+from app.services.character_companion_service import CharacterCompanionService, MAX_COMPANION_CHATS
 from app.services.companion_attachment_service import CompanionAttachmentService, private_root
 
 
@@ -52,6 +52,7 @@ async def capabilities(actor=Depends(get_current_user)):
     s = get_settings()
     return {"contract_version": 1, "enabled": s.companion_enabled and s.enable_ai_agents,
             "streaming": bool(s.model_companion_synthesis.name), "images": f"{s.model_companion_synthesis.provider}/{s.model_companion_synthesis.name}" in s.companion_image_models,
+            "chat_sessions": {"max_chats": MAX_COMPANION_CHATS, "limit_scope": "user"},
             "event_versions": [1], "tools": {key: {"available": value, "reason": None if value else "not_configured"} for key, value in
                 {"atlas": True, "character_memory": True, "shreckworld": bool(s.companion_shreckworld_url), "chronicle": bool(s.companion_chronicles_url), "web": web_available(s)}.items()},
             "model_roles": {field: {"configured": bool(getattr(s, field).name), "available": None} for field in COMPANION_MODEL_FIELDS},
@@ -114,11 +115,11 @@ async def reset(character_id: str, payload: VersionWrite, key=Depends(idempotenc
     return await svc.reset(actor, character_id, payload, key)
 
 
-@router.get("/chats", response_model=Page[ChatRead])
+@router.get("/chats", response_model=ChatPage)
 async def chats(character_agent_id: str | None = None, cursor_value: str | None = Query(None, alias="cursor"), limit: int = Query(20, ge=1, le=100), actor=Depends(get_current_user), svc=Depends(service)):
     offset = decode_cursor(cursor_value, actor.id)
     rows = await svc.repo.page(CompanionChat, actor.id, character_id=character_agent_id, offset=offset, limit=limit)
-    return {"items": [record(row) for row in rows[:limit]], "next_cursor": cursor(actor.id, offset + limit) if len(rows) > limit else None}
+    return {"items": [record(row) for row in rows[:limit]], "next_cursor": cursor(actor.id, offset + limit) if len(rows) > limit else None, "usage": await svc.chat_usage(actor)}
 
 
 @router.post("/chats", status_code=201, response_model=ChatRead)

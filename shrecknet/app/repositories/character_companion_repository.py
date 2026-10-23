@@ -50,6 +50,38 @@ class CompanionRepository:
     def __init__(self, session):
         self.session = session
 
+    async def conversation_context(self, chat_id, user_id, *, max_exchanges=6, max_characters=48000):
+        """Bounded recent complete exchanges; never slice an individual message."""
+        turns = list((await self.session.execute(select(CompanionTurn.id).join(
+            CompanionChat, CompanionChat.id == CompanionTurn.chat_id
+        ).where(CompanionTurn.chat_id == chat_id, CompanionTurn.user_id == user_id,
+                CompanionTurn.status == "completed", CompanionChat.deleted.is_(False)
+        ).order_by(CompanionTurn.created_at.desc(), CompanionTurn.id.desc()).limit(max_exchanges))).scalars())
+        rows = list((await self.session.execute(select(CompanionMessage).where(
+            CompanionMessage.turn_id.in_(turns), CompanionMessage.committed.is_(True)
+        ).order_by(CompanionMessage.role.desc()))).scalars())
+        recent, used = [], 0
+        for turn_id in turns:
+            exchange = [{"role": row.role, "content": row.content} for row in rows if row.turn_id == turn_id]
+            if [row["role"] for row in exchange] != ["user", "assistant"]:
+                continue
+            size = sum(len(row["content"]) for row in exchange)
+            if used + size > max_characters:
+                break
+            recent = exchange + recent
+            used += size
+        return recent
+
+    async def lock_chat_quota(self, user_id):
+        # A real write serializes quota decisions on SQLite and PostgreSQL.
+        # The user exists even before a Companion selection is established.
+        from app.models.user import User
+        await self.session.execute(update(User).where(User.id == user_id).values(username=User.username))
+
+    async def chat_count(self, user_id):
+        return (await self.session.execute(select(func.count()).select_from(CompanionChat).where(
+            CompanionChat.user_id == user_id, CompanionChat.deleted.is_(False)))).scalar_one()
+
     async def owned(self, model, identifier, user_id, *, allow_deleted=False):
         row = (await self.session.execute(select(model).where(model.id == identifier, model.user_id == user_id))).scalars().first()
         if row is None or (isinstance(row, CompanionChat) and row.deleted and not allow_deleted):
@@ -74,7 +106,9 @@ class CompanionRepository:
         return row
 
     async def events(self, user_id, after=0, turn_id=None, limit=100):
-        query = select(CompanionEvent).where(CompanionEvent.user_id == user_id, CompanionEvent.id > after)
+        query = select(CompanionEvent).where(CompanionEvent.user_id == user_id, CompanionEvent.id > after,
+            (CompanionEvent.chat_id.is_(None)) | CompanionEvent.chat_id.in_(
+                select(CompanionChat.id).where(CompanionChat.user_id == user_id, CompanionChat.deleted.is_(False))))
         if turn_id:
             query = query.where(CompanionEvent.turn_id == turn_id)
         return list((await self.session.execute(query.order_by(CompanionEvent.id).limit(limit))).scalars())

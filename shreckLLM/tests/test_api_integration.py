@@ -1137,3 +1137,47 @@ def test_unconfigured_usage_tag_uses_same_model_automatic_hedge(tmp_path, monkey
     finally:
         # No background workers were started by this direct policy test.
         service._chat_jobs.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fail_all', [False, True])
+async def test_warmup_failure_does_not_disable_validated_provider(monkeypatch, tmp_path, fail_all):
+    import app.config_store as config_store
+    from app.errors import ProviderBadRequestError
+    settings = Settings(redis_url='redis://localhost:6379/15', data_dir=str(tmp_path))
+    monkeypatch.setattr(config_store, '_cache', None)
+    monkeypatch.setattr(config_store, 'get_settings', lambda: settings)
+    service = ChatService(settings)
+    service._runtime.provider_defaults['ollama'].models = ['working', 'requires-reasoning']
+    await service._set_provider_state('ollama', active=True, last_error=None)
+    async def chat(**kwargs):
+        if fail_all or kwargs['model'] == 'requires-reasoning':
+            raise ProviderBadRequestError('model requires reasoning')
+    monkeypatch.setattr(service._ollama, 'chat', chat)
+    try:
+        await service.prewarm_active_providers()
+        assert service._runtime.provider_states['ollama'].active is True
+        assert 'requires-reasoning' in service._runtime.provider_states['ollama'].last_error
+        # Persistence and provider status must agree after a reload.
+        assert config_store.reload_runtime_config().provider_states['ollama'].active is True
+        assert (await service.provider_validation_status('ollama'))['active'] is True
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_warmup_never_reactivates_provider_disabled_during_probe(monkeypatch, tmp_path):
+    import app.config_store as config_store
+    settings = Settings(redis_url='redis://localhost:6379/15', data_dir=str(tmp_path))
+    monkeypatch.setattr(config_store, '_cache', None)
+    monkeypatch.setattr(config_store, 'get_settings', lambda: settings)
+    service = ChatService(settings)
+    await service._set_provider_state('ollama', active=True, last_error=None)
+    async def chat(**kwargs):
+        await service._set_provider_state('ollama', active=False, last_error=None)
+    monkeypatch.setattr(service._ollama, 'chat', chat)
+    try:
+        await service.prewarm_active_providers()
+        assert service._runtime.provider_states['ollama'].active is False
+    finally:
+        await service.aclose()

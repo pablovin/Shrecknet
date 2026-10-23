@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from app.core.config_store import get_settings, COMPANION_MODEL_FIELDS
 from app.db.session import AsyncSessionCompat, get_sessionmaker
 from app.graph.neo4j import get_driver
-from app.integrations.llm.shreckllm_client import ShreckLLMClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient, LLMProviderUnavailableError
 from app.integrations.companion.retrieval import CompanionRetrieval, web_available
 from app.jobs.companion.prompts import ROUTER, SYNTHESIS, RAPPORT, IMAGE_INTERPRETATION, INTERIM
 from app.jobs.companion.contracts import Answer, RapportProposal, provisional_text
@@ -123,8 +123,7 @@ async def execute_turn(turn, lease):
     async with database() as session:
         repo = CompanionRepository(session)
         rapport = await repo.scores(await repo.pair(turn.user_id, turn.character_agent_id))
-        messages = list((await session.execute(select(CompanionMessage).where(CompanionMessage.chat_id == turn.chat_id, CompanionMessage.committed.is_(True)).order_by(CompanionMessage.created_at.desc()).limit(12))).scalars())
-        recent = [{"role": row.role, "content": row.content[:1300]} for row in reversed(messages)]
+        recent = await repo.conversation_context(turn.chat_id, turn.user_id)
         previous_turn = (await session.execute(select(CompanionTurn).where(
             CompanionTurn.chat_id == turn.chat_id, CompanionTurn.status == "completed"
         ).order_by(CompanionTurn.created_at.desc()).limit(1))).scalars().first()
@@ -204,6 +203,11 @@ async def execute_turn(turn, lease):
         context = {"identity_description": identity["character_agent"]["identity_description"], "personality_context": identity.get("personality_context"),
                    "rapport": rapport, "query": turn.request["text"], "context": turn.request.get("context"), "recent": recent, "evidence": evidence}
         serialized = json.dumps(context, ensure_ascii=False)
+        while context["recent"] and estimate_tokens(serialized) + estimate_tokens(SYNTHESIS) > settings.companion_max_evidence_tokens + 12000:
+            # Drop only complete oldest exchanges to reserve the established
+            # identity/evidence/output budget; never truncate a message.
+            context["recent"] = context["recent"][2:]
+            serialized = json.dumps(context, ensure_ascii=False)
         if estimate_tokens(serialized) + estimate_tokens(SYNTHESIS) > settings.companion_max_evidence_tokens + 12000:
             raise ValueError("identity_context_budget_exceeded")
         await mutate(turn.id, lease, stage="synthesizing")
@@ -350,7 +354,7 @@ async def process_outbox(identifier):
                         failure["validation_rule"] = str(exc)
                     current.metrics = {**(current.metrics or {}), **failure}
                     logger.warning("companion_turn_failed turn_id=%s stage=%s error_type=%s", aggregate, current.status, type(exc).__name__)
-                    await CompanionRepository(session).terminal(current, "failed", error={"code": "companion_execution_failed", "retryable": True}, lease=lease)
+                    await CompanionRepository(session).terminal(current, "failed", error={"code": "llm_provider_unavailable" if isinstance(exc, LLMProviderUnavailableError) else "companion_execution_failed", "retryable": True}, lease=lease)
                     await session.commit()
         else:
             done = False

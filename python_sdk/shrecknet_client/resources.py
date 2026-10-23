@@ -14,6 +14,7 @@ from .atlas import (
     AtlasAuthor,
     AtlasElderCard,
     AtlasFolioDetail,
+    AtlasFolioPatch,
     AtlasRelationshipPage,
     AtlasScenePage,
     AtlasSourcePage,
@@ -208,6 +209,16 @@ class OntologiesAPI:
         path_page_id = quote(page_id, safe="")
         data = await self._client.raw_request(
             "GET", f"/ontologies/{ontology_id}/pages/{path_page_id}/folio"
+        )
+        return AtlasFolioDetail.model_validate(data)
+
+    async def patch_folio(self, ontology_id: int, page_id: str, patch: AtlasFolioPatch) -> AtlasFolioDetail:
+        """Save supplied fields as an admin; HTTP 409 means the revision is stale."""
+        from urllib.parse import quote
+
+        data = await self._client.raw_request(
+            "PATCH", f"/ontologies/{ontology_id}/pages/{quote(page_id, safe='')}/folio",
+            json=patch.model_dump(mode="json", exclude_unset=True),
         )
         return AtlasFolioDetail.model_validate(data)
 

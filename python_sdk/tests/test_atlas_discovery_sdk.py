@@ -104,3 +104,20 @@ async def test_world_web_is_typed_and_preserves_truncation():
     web = await OntologiesAPI(SimpleNamespace(raw_request=request)).world_web(7)
     assert web.nodes[0].page_id == 'page' and web.truncated
     request.assert_awaited_once_with('GET', '/ontologies/7/world-web')
+
+
+@pytest.mark.asyncio
+async def test_folio_patch_only_serializes_supplied_fields():
+    from shrecknet_client.atlas import AtlasFolioPatch
+    request = AsyncMock(return_value={
+        "instance_id": "page-1", "ontology_id": 7, "name": "Changed",
+        "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-02T00:00:00Z",
+        "entities": [], "folio_projection": {"scenes": "omitted", "relationships": "omitted"},
+    })
+    api = OntologiesAPI(SimpleNamespace(raw_request=request))
+    result = await api.patch_folio(7, "page-1", AtlasFolioPatch(
+        expected_updated_at="2026-01-01T00:00:00Z", entity_instance_id="node-1", node_avatar_url=None))
+    assert result.name == "Changed"
+    args = request.call_args
+    assert args.args == ("PATCH", "/ontologies/7/pages/page-1/folio")
+    assert args.kwargs["json"] == {"expected_updated_at": "2026-01-01T00:00:00Z", "entity_instance_id": "node-1", "node_avatar_url": None}

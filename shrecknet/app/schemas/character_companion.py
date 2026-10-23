@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Tool = Literal["atlas", "shreckworld", "chronicle", "web", "character_memory"]
 DIMENSIONS = {"connection": 25, "coordination": 20, "trust": 20, "familiarity": 0, "openness": 10, "current_strain": 0}
@@ -54,16 +54,29 @@ class Tools(StrictModel):
     web: Literal["disabled", "allow", "require"] = "disabled"
 
 
+def normalized_chat_title(value):
+    if not isinstance(value, str):
+        return value
+    value = value.strip()
+    if not value:
+        raise ValueError("Chat title must not be blank")
+    return value
+
+
 class ChatCreate(StrictModel):
     character_agent_id: str = Field(min_length=1, max_length=255)
     selection_version: int = Field(ge=0)
     title: str | None = Field(None, min_length=1, max_length=255)
     default_scope: PageContext | None = None
 
+    _normalize_title = field_validator("title", mode="before")(normalized_chat_title)
+
 
 class ChatUpdate(StrictModel):
     title: str = Field(min_length=1, max_length=255)
     expected_revision: int = Field(ge=1)
+
+    _normalize_title = field_validator("title", mode="before")(normalized_chat_title)
 
 
 class TurnCreate(StrictModel):
@@ -157,6 +170,16 @@ class ChatRead(BaseModel):
     active_turn_id: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class ChatUsage(BaseModel):
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    remaining: int = Field(ge=0)
+
+
+class ChatPage(Page[ChatRead]):
+    usage: ChatUsage
 
 
 class MessageRead(BaseModel):

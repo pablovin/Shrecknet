@@ -1067,7 +1067,10 @@ class ChatService:
             ]
             await self._set_provider_state(
                 provider_id,
-                active=not failures,
+                # Warm-up is best effort, not provider activation/validation.
+                # A model-specific probe failure must not block other models or
+                # reverse an explicit deactivation while warm-up was in flight.
+                active=self._runtime.provider_states.get(provider_id, ProviderState()).active,
                 last_warmed_at=_utc_now() if not failures else None,
                 last_error="; ".join(failures) if failures else None,
             )

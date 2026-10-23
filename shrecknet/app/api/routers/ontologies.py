@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import (
     get_audit_service,
     get_current_user,
+    get_current_admin_user,
     get_ontology_instance_service,
     get_ontology_service,
     require_roles,
@@ -51,13 +52,13 @@ from app.schemas.ontology_instance import (
 )
 from app.services.audit_service import AuditService
 from app.services.background_job_service import BackgroundJobService
-from app.schemas.atlas import AtlasWorldWeb, AtlasFolioDetailRead, AtlasSourcePage, AtlasScenePage, AtlasAuthor, AtlasRelationshipPage
+from app.schemas.atlas import AtlasWorldWeb, AtlasFolioDetailRead, AtlasFolioPatch, AtlasSourcePage, AtlasScenePage, AtlasAuthor, AtlasRelationshipPage
 from app.services.atlas_folio_service import AtlasFolioService
 from app.schemas.agent import AgentSummary
 from app.services.agent_service import AgentService
 from app.services.atlas_discovery_service import AtlasDiscoveryService
 from app.services.ontology_service import OntologyService
-from app.services.ontology_instance_service import OntologyInstanceService
+from app.services.ontology_instance_service import OntologyInstanceService, FolioEditConflict
 from app.tasks.neo4j_embedding import embed_ontology
 
 router = APIRouter(prefix="/ontologies", tags=["ontologies"])
@@ -84,6 +85,20 @@ async def _atlas_world(
 
 async def _atlas_reader(service: OntologyInstanceService = Depends(_atlas_world)) -> AtlasDiscoveryService:
     return AtlasDiscoveryService(service.graph_session)
+
+
+@router.patch("/{ontology_id}/pages/{instance_id}/folio", response_model=AtlasFolioDetailRead)
+async def patch_folio_detail(
+    ontology_id: int, instance_id: str, payload: AtlasFolioPatch,
+    _: User = Depends(get_current_admin_user),
+    service: OntologyInstanceService = Depends(_atlas_world),
+) -> AtlasFolioDetailRead:
+    try:
+        return await AtlasFolioService(service).patch(ontology_id, instance_id, payload)
+    except FolioEditConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{ontology_id}/pages/{instance_id}/folio", response_model=AtlasFolioDetailRead)

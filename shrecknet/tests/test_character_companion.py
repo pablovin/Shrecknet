@@ -430,3 +430,38 @@ def test_turn_web_denial_fences_optional_role_settings():
     assert target.web_search_enabled is True
     turn.request['tools']['web'] = 'allow'
     assert turn_target(target, turn).web_search_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_emits_safe_actionable_error(session_maker, monkeypatch):
+    from contextlib import asynccontextmanager
+    from app.jobs.companion import runner
+    from app.core.config_store import Settings
+    from app.services import character_companion_service
+    from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
+    from app.models.character_companion import CompanionOutbox, CompanionEvent
+    settings=Settings(companion_enabled=True,enable_ai_agents=True)
+    monkeypatch.setattr(character_companion_service,'get_settings',lambda:settings)
+    monkeypatch.setattr(runner,'get_settings',lambda:settings)
+    @asynccontextmanager
+    async def database():
+        async with session_maker() as session: yield session
+    monkeypatch.setattr(runner,'database',database)
+    async def execute(*_):
+        raise LLMProviderUnavailableError('openrouter','sensitive upstream details')
+    monkeypatch.setattr(runner,'execute_turn',execute)
+    async with session_maker() as session:
+        user=await owner(session)
+        svc=CharacterCompanionService(session,Characters())
+        await svc.select(user,'fiona',0)
+        chat=await svc.create_chat(user,ChatCreate(character_agent_id='fiona',selection_version=1),str(uuid4()))
+        admitted=await svc.admit(user,chat['id'],TurnCreate(text='Hello',selection_version=1),str(uuid4()),{'expires_at':int(time.time())+600,'sid':None})
+        identifier=(await session.execute(select(CompanionOutbox.id).where(CompanionOutbox.kind=='turn'))).scalar_one()
+    await runner.process_outbox(identifier)
+    async with session_maker() as session:
+        turn=await session.get(CompanionTurn,admitted['turn_id'])
+        assert turn.error=={'code':'llm_provider_unavailable','retryable':True}
+        event=(await session.execute(select(CompanionEvent).where(CompanionEvent.type=='turn.failed'))).scalar_one()
+        assert event.payload['code']=='llm_provider_unavailable'
+        assert 'sensitive' not in json.dumps(event.payload)
+        assert turn.result is None

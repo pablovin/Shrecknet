@@ -10,6 +10,9 @@ from app.repositories.character_companion_repository import CompanionRepository,
 from app.schemas.character_companion import DIMENSIONS, TERMINAL
 
 
+MAX_COMPANION_CHATS = 10
+
+
 class CharacterCompanionService:
     def __init__(self, session, characters):
         self.session, self.characters = session, characters
@@ -60,42 +63,55 @@ class CharacterCompanionService:
         return await self.character(actor, character_id, queryable=True)
 
     async def create_chat(self, actor, payload, key):
+        await self.repo.lock_chat_quota(actor.id)
         body = payload.model_dump(mode="json")
         previous, digest = await self.repo.replay(actor.id, "chat", key, body)
         if previous:
             return previous
         await self.require_selection(actor, payload.character_agent_id, payload.selection_version)
+        if await self.repo.chat_count(actor.id) >= MAX_COMPANION_CHATS:
+            fail(409, "chat_limit_reached")
         chat = CompanionChat(user_id=actor.id, character_agent_id=payload.character_agent_id,
                              title=payload.title or "New conversation", default_scope=body["default_scope"])
         self.session.add(chat)
         await self.session.flush()
         result = record(chat)
         self.repo.remember(actor.id, "chat", key, digest, result)
+        await self.repo.event(actor.id, "chat.created", {"chat_id": chat.id}, chat_id=chat.id)
         await self.session.commit()
         return result
+
+    async def chat_usage(self, actor):
+        count = await self.repo.chat_count(actor.id)
+        return {"count": count, "limit": MAX_COMPANION_CHATS, "remaining": max(0, MAX_COMPANION_CHATS - count)}
 
     async def chat(self, actor, chat_id):
         return await self.repo.owned(CompanionChat, chat_id, actor.id)
 
     async def update_chat(self, actor, chat_id, payload):
         chat = await self.chat(actor, chat_id)
-        changed = await self.session.execute(update(CompanionChat).where(CompanionChat.id == chat.id, CompanionChat.revision == payload.expected_revision).values(
+        changed = await self.session.execute(update(CompanionChat).where(CompanionChat.id == chat.id, CompanionChat.deleted.is_(False), CompanionChat.revision == payload.expected_revision).values(
             title=payload.title, revision=payload.expected_revision + 1, updated_at=utcnow()))
         if changed.rowcount != 1:
             fail(409, "chat_conflict")
+        await self.repo.event(actor.id, "chat.updated", {"chat_id": chat.id}, chat_id=chat.id)
         await self.session.commit()
         await self.session.refresh(chat)
         return record(chat)
 
     async def delete_chat(self, actor, chat_id):
+        await self.repo.lock_chat_quota(actor.id)
         chat = await self.repo.owned(CompanionChat, chat_id, actor.id, allow_deleted=True)
         if chat.deleted:
             return {"chat_id": chat_id, "status": "deleting"}
-        if chat.active_turn_id:
-            await self.cancel(actor, chat.active_turn_id, commit=False)
-        chat.deleted = True
+        changed = await self.session.execute(update(CompanionChat).where(
+            CompanionChat.id == chat.id, CompanionChat.deleted.is_(False), CompanionChat.active_turn_id.is_(None)
+        ).values(deleted=True))
+        if changed.rowcount != 1:
+            fail(409, "chat_busy")
         from app.models.character_companion import CompanionOutbox
         self.session.add(CompanionOutbox(kind="purge", aggregate_id=chat.id))
+        await self.repo.event(actor.id, "chat.deleted", {"chat_id": chat.id})
         await self.session.commit()
         return {"chat_id": chat_id, "status": "deleting"}
 

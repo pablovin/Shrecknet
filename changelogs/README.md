@@ -25,3 +25,5 @@ This folder contains release notes by application version.
 - [Foundry v0.3.1](./foundry-v0.3.1.md) - Repair release validation and publish installable manifest assets.
 
 - [Foundry v0.3.2](./foundry-v0.3.2.md) - Atlas icon and full-name layout fixes; current plugin update batch.
+
+- [Foundry v0.3.3](./foundry-v0.3.3.md) - Character Companion hero card, saved chat tabs and management, durable reply recovery, and refreshed workspace navigation.

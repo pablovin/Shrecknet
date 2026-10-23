@@ -63,6 +63,26 @@ origin as above.
 
 ## Release process
 
+The current module release is **0.3.3**; see the
+[release notes](../../changelogs/foundry-v0.3.3.md). The release workflow uses the
+matching `changelogs/foundry-vX.Y.Z.md` as its GitHub Release notes.
+
+To build an installable archive locally from the repository root:
+
+```bash
+node --test integrations/foundry/shrecknet-foundry/tests/*.test.mjs
+mkdir -p dist/foundry-v0.3.3
+(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.3.3/shrecknet-foundry-v0.3.3.zip . -x '.DS_Store' -x '__MACOSX/*')
+cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.3.3/module.json
+```
+
+Use a fresh output directory when rebuilding, so obsolete files cannot remain in
+an existing ZIP. Extract the ZIP into `Data/modules/shrecknet-foundry/` and reload
+Foundry for a manual installation. The archive contains `module.json` directly at
+its root. A local build does not publish the download URL in that manifest;
+Foundry's URL-based install/update flow requires the GitHub assets below.
+
+
 The stable installation manifest is:
 
 ```text
@@ -203,6 +223,63 @@ Version `0.3.2` includes these changes. No public API or SDK contract, database
 migration, or configuration change is required. Publish the matching module
 release using the process above; rollback uses the previous published ZIP.
 
+## Character Companion
+
+The left menu contains **Atlas**, **Shreckworlds**, **Chronicles**, and
+**Companion**, in that order. Narrative Scenes and the existing Elder workspace
+remain accessible from Atlas home and Atlas page relationships/scenes.
+**Companion** uses the canonical Character Companion API; it is independent of
+Atlas Elders and the ShreckWorld rules companion.
+
+The Companion workspace presents a character hero card with a portrait fallback,
+name, subtitle, availability, and character chooser alongside a full-height chat.
+On narrow windows the card becomes a compact header. Saved conversations appear
+as horizontally scrollable buttons with an announced selected state. Choose a tab
+to read it; **New chat**, **Rename**, and **Delete** manage server-persisted chats.
+Deletion requires an inline confirmation and preserves character memory and
+rapport. Rename submits `expected_revision`; conflicts and quota errors are shown
+without silently overwriting server state. The server enforces the account-wide
+ten-chat limit; the composer shows current usage. Existing chats above that limit
+remain readable. **Load earlier messages** retrieves chronological history using
+the server's opaque `before` cursor.
+
+The character chooser updates the account's global selection with its current
+optimistic version. Opening a chat for a different character also selects that
+character; chats stay bound to their original character. Unavailable characters
+cannot start chats or receive messages. Selection changes in another client may
+produce a conflict; **Refresh** reloads current server state. Character choices
+and chat lists follow all pagination cursors. All requests use the signed-in
+player's bearer token and existing owner-only authorization, never the GM setup
+key. No conversations are posted to Foundry chat or shared with other players.
+Message text is escaped rather than rendered as trusted HTML.
+
+The HTTP namespace is `/users/me/character-companion`. The module reads
+`GET /selection`, `GET /candidates`, `GET /chats`, `GET /chats/{id}`, and
+`GET /chats/{id}/messages`; it uses `PUT /selection`, `POST /chats`,
+`PATCH /chats/{id}`, `DELETE /chats/{id}`, `POST /chats/{id}/turns`,
+`GET /turns/{id}`, and `POST /turns/{id}/cancel` for changes and replies.
+Chat/turn creation retains its UUID `Idempotency-Key` and exact payload across
+ambiguous retries. Configure the Shrecknet browser CORS policy to permit
+`PATCH`, `PUT`, `DELETE`, and the `Idempotency-Key` header as well as bearer auth.
+See the [canonical HTTP contract](../Agents/Companion/Frontend%20API.md).
+
+Replies use durable admission and two-second snapshot polling while the workspace
+is visible. Only saved messages are displayed as replies; provisional drafts are
+not presented as final output. Reopening or refreshing a running chat resumes its
+`active_turn_id` without resending a question. **Stop reply** cancels the saved
+turn. Turn failures are reported and leave history available. A transport failure
+pauses polling; **Refresh** checks saved state before further sending. Changing
+chat, character, or chat metadata is disabled during a running reply. Navigation
+away pauses polling; returning resumes it. Closing or signing out clears local
+Companion state and fences late responses without cancelling server work.
+
+`character-companion.js` owns this workspace's state and actions; the shared API
+client owns HTTP and authentication. This Foundry view currently supports text
+messages; image uploads, private attachment previews, rapport controls, and live
+SSE deltas remain available through other Companion clients. Backend Companion
+feature/model configuration must already be enabled. No endpoint or database
+migration is introduced. Rollback of the module preserves backend chats.
+
 ## Elder Companion
 
 The Elder workspace displays its portrait (or fallback emblem), name, description,
@@ -294,8 +371,11 @@ Before tagging, test against a clean Foundry V14 installation:
 
 - the module appears under **Manage Modules**;
 - the module can be enabled in an empty Foundry World;
-- the Atlas and Narrative Scenes workspace navigation remains available while
-  browsing, and each content area scrolls independently;
+- Atlas, Shreckworlds, Chronicles, and Companion appear in the left menu;
+  Narrative Scenes remain reachable from Atlas and content scrolls independently;
+- Companion character selection, saved chat tabs, rename/delete confirmation,
+  quota handling, history pagination, cancellation, and running-reply recovery work
+  with two separate player accounts;
 - Atlas directory icons are fully visible, with complete type and ontology names;
   long labels wrap, and page/related-record cards remain readable;
 - keyboard focus is visible and the workspace remains usable in a narrow,

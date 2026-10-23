@@ -277,3 +277,64 @@
 
 .shrecknet-knowledge a { color: var(--shrecknet-text); text-decoration: none; }
 .shrecknet-knowledge a:hover { color: var(--shrecknet-accent); text-decoration: underline; }
+
+/* Character Companion: portrait dossier, saved conversations, full-height chat. */
+.shrecknet-content.is-companion-content { display: flex; overflow: hidden; padding: 0; container-type: inline-size; }
+.shrecknet-companion { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; padding: 1.25rem; gap: 1rem; background: radial-gradient(ellipse at top left, color-mix(in srgb, var(--shrecknet-accent) 7%, transparent), transparent 65%); }
+.shrecknet-companion-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.shrecknet-companion-heading h2 { margin: 0; font-size: 1.65rem; letter-spacing: -.045em; }
+.shrecknet-companion-heading .shrecknet-kicker { margin: 0 0 .35rem; font-size: .6rem; letter-spacing: .16em; }
+.shrecknet-companion-heading > button { width: auto; color: var(--shrecknet-muted); }
+.shrecknet-companion-layout { display: grid; grid-template-columns: 13.5rem minmax(0, 1fr); flex: 1; min-height: 0; gap: 1.15rem; }
+.shrecknet-companion-hero { overflow: auto; border: 1px solid var(--shrecknet-border); border-radius: 1rem; background: var(--shrecknet-panel); align-self: start; max-height: 100%; }
+.shrecknet-companion-portrait { position: relative; display: grid; place-items: center; height: 13rem; background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--shrecknet-accent) 20%, var(--shrecknet-surface)), var(--shrecknet-bg)); overflow: hidden; }
+.shrecknet-companion-portrait::after { content: ""; position: absolute; inset: 45% 0 0; background: linear-gradient(transparent, var(--shrecknet-panel)); pointer-events: none; }
+.shrecknet-companion-portrait img { width: 100%; height: 100%; object-fit: cover; object-position: center 25%; }
+.shrecknet-companion-portrait > span { color: var(--shrecknet-accent); font-size: 5rem; }
+.shrecknet-companion-portrait > small { position: absolute; bottom: .8rem; left: 1rem; z-index: 1; color: var(--shrecknet-accent); font-size: .55rem; letter-spacing: .15em; }
+.shrecknet-companion-profile { padding: 0 1rem 1rem; }
+.shrecknet-companion-profile h3 { font-size: 1.4rem; margin: 0; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.shrecknet-companion-profile p { color: var(--shrecknet-muted); font-size: .8rem; line-height: 1.6; }
+.shrecknet-companion-badge { display: inline-block; padding: .25rem .5rem; border: 1px solid var(--shrecknet-border); border-radius: 2rem; color: var(--shrecknet-accent); font-size: .65rem; }
+.shrecknet-companion-profile form { display: grid; gap: .55rem; margin-top: 1.5rem; }
+.shrecknet-companion-profile label { font-size: .7rem; color: var(--shrecknet-muted); }
+.shrecknet-companion-profile select { width: 100%; min-width: 0; }
+.shrecknet-companion-profile .shrecknet-companion-privacy { margin: 1.5rem 0 0; font-size: .65rem; }
+.shrecknet-companion-chat { display: flex; min-height: 0; min-width: 0; flex-direction: column; border: 1px solid var(--shrecknet-border); border-radius: 1rem; overflow: hidden; background: var(--shrecknet-bg); box-shadow: 0 12px 35px #0002; }
+.shrecknet-companion-tabs { display: flex; flex: 0 0 auto; gap: .35rem; overflow-x: auto; padding: .7rem; border-bottom: 1px solid var(--shrecknet-border); background: var(--shrecknet-panel); }
+.shrecknet .shrecknet-companion-tabs button { width: auto; max-width: 13rem; flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: .55rem; padding: .5rem .75rem; color: var(--shrecknet-muted); }
+.shrecknet.theme-terminal .shrecknet-companion-tabs button.is-active { color: var(--shrecknet-accent); background: var(--shrecknet-surface); border-color: var(--shrecknet-accent); }
+.shrecknet .shrecknet-companion-tabs .shrecknet-companion-new { color: var(--shrecknet-accent); }
+.shrecknet-companion-chat-tools { display: flex; align-items: center; gap: .4rem; padding: .55rem .8rem; border-bottom: 1px solid var(--shrecknet-border); }
+.shrecknet-companion-chat-tools input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: .8rem; }
+.shrecknet-companion-chat-tools button { width: auto; font-size: .7rem; }
+.shrecknet.theme-terminal button.shrecknet-companion-delete { color: var(--shrecknet-danger); }
+.shrecknet-companion-confirm { padding: .8rem; background: var(--shrecknet-panel); font-size: .8rem; }
+.shrecknet-companion-log { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 1.25rem; gap: 1.25rem; }
+.shrecknet-companion-message { flex: 0 0 auto; max-width: 94%; padding: .85rem 1rem; border-radius: .85rem; overflow-wrap: anywhere; }
+.shrecknet-companion-message small { display: block; margin-bottom: .45rem; color: var(--shrecknet-accent); font-size: .65rem; font-weight: 650; }
+.shrecknet-companion-message > div { white-space: pre-wrap; line-height: 1.75; font-size: .88rem; }
+.shrecknet-companion-message.role-user { align-self: flex-end; max-width: 85%; background: var(--shrecknet-surface); border: 1px solid var(--shrecknet-border); border-bottom-right-radius: .2rem; }
+.shrecknet-companion-welcome { max-width: 22rem; margin: auto; padding: 2rem 1rem; text-align: center; color: var(--shrecknet-muted); }
+.shrecknet-companion-welcome > span { display: block; margin-bottom: 1.2rem; color: var(--shrecknet-accent); font-size: 2.75rem; }
+.shrecknet-companion-welcome p { color: var(--shrecknet-text); font-size: 1.65rem; line-height: 1.25; letter-spacing: -.04em; }
+.shrecknet-companion-welcome small { line-height: 1.8; }
+.shrecknet-companion-thinking { color: var(--shrecknet-accent); font-size: .75rem; }
+.shrecknet-companion-composer { margin: 0 .8rem .8rem; box-shadow: 0 4px 15px #0001; }
+.shrecknet-companion-composer small { font-size: .6rem; }
+@container (max-width: 620px) {
+  .shrecknet-companion { padding: .7rem; gap: .7rem; }
+  .shrecknet-companion-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(15rem, 1fr); gap: .7rem; overflow: auto; }
+  .shrecknet-companion-hero { display: flex; max-height: 10rem; align-self: stretch; }
+  .shrecknet-companion-portrait { width: 6rem; height: auto; flex: 0 0 auto; }
+  .shrecknet-companion-portrait > small { display: none; }
+  .shrecknet-companion-profile { flex: 1; padding: .7rem; min-width: 0; }
+  .shrecknet-companion-profile h3 { font-size: 1rem; }
+  .shrecknet-companion-profile p, .shrecknet-companion-badge, .shrecknet-companion-profile .shrecknet-companion-privacy { display: none; }
+  .shrecknet-companion-profile form { margin-top: .5rem; grid-template-columns: minmax(0, 1fr) auto; }
+  .shrecknet-companion-profile label { grid-column: 1 / -1; }
+  .shrecknet-companion-log { padding: .6rem; }
+}
+
+.shrecknet.theme-terminal .shrecknet-companion-composer button { background: var(--shrecknet-accent); color: var(--shrecknet-bg); }
+.shrecknet.theme-terminal .shrecknet-companion-composer textarea:focus-visible { outline: 2px solid var(--shrecknet-accent); outline-offset: 2px; }

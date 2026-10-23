@@ -72,4 +72,4 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" "${{ steps.package.outputs.asset_path }}#${{ steps.package.outputs.asset_name }}" "$MODULE_DIR/module.json" \
             --title "Shrecknet Foundry ${{ steps.metadata.outputs.version }}" \
-            --generate-notes
+            --notes-file "changelogs/foundry-v${{ steps.metadata.outputs.version }}.md"

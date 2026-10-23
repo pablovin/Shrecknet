@@ -109,12 +109,13 @@ export class ShrecknetClient {
     sessionStorage.removeItem(LEGACY_SESSION_KEY);
   }
 
-  async request(path, { method = "GET", body, integrationKey, authenticated = true, baseUrl = this.serverUrl } = {}) {
+  async request(path, { method = "GET", body, integrationKey, authenticated = true, baseUrl = this.serverUrl, idempotencyKey } = {}) {
     if (!baseUrl) throw new ShrecknetApiError("A Shrecknet server URL is required.", 0);
     if (authenticated && !this.accessToken) {
       throw new ShrecknetApiError("Sign in to Shrecknet before accessing connected services.", 401);
     }
     const headers = { Accept: "application/json" };
+    if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (integrationKey) headers["X-Shrecknet-Integration-Key"] = integrationKey;
     if (authenticated && this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
@@ -229,6 +230,10 @@ export class ShrecknetClient {
   search(ontologyId, query) {
     const params = new URLSearchParams({ ontology_id: String(ontologyId), query, limit: "20" });
     return this.request(`/ontology-instances/search?${params}`);
+  }
+
+  companion(path, options = {}) {
+    return this.request(`/users/me/character-companion${path}`, options);
   }
 
   async listElders(ontologyId) {

@@ -1,3 +1,4 @@
+import { CompanionWorkspace, companionActions } from "./character-companion.js";
 import { knowledgeReaderUrl, presentKnowledgeTurn, formatKnowledgeTurn } from "./knowledge-companion.js";
 import { presentElderHistory, presentElderSources, submitElderTurn } from "./elder-conversation.js";
 import { selectedTextSource, groupRelationships, renderAtlasChat, safeImageUrl } from "./atlas-content.js";
@@ -29,6 +30,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     window: { title: "Shrecknet", icon: "fa-solid fa-folder-tree", resizable: true },
     position: { width: 1080, height: 760 },
     actions: {
+      ...companionActions,
       testConnection: ShrecknetShell._testConnection,
       saveConnection: ShrecknetShell._saveConnection,
       saveServiceUrls: ShrecknetShell._saveServiceUrls,
@@ -94,6 +96,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     this.assetPathByObjectUrl = new Map();
     this.uploadedChronicleAssets = new Map();
     this.chronicleRecipients = [];
+    this.companion = new CompanionWorkspace(this);
     this.elderAgentId = null;
     this.elderChatId = null;
     this.elderHistory = [];
@@ -113,6 +116,8 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       }
     }
     return {
+      companion: this.resource.kind === "companion" ? this.companion.context() : null,
+      isCompanionWorkspace: this.resource.kind === "companion",
       readerFocus: this.readerFocus,
       configured: Boolean(this.connection.serverUrl && this.connection.worldId),
       canConfigure: game.user.isGM,
@@ -127,7 +132,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       isKnowledgeWorkspace: ["knowledgeWorlds", "knowledgeLibrary", "knowledgeSource", "knowledgeResults"].includes(this.resource.kind),
       isChroniclesWorkspace: ["chronicleLibrary", "chronicle"].includes(this.resource.kind),
       isElderWorkspace: this.resource.kind === "elder",
-      isAtlasWorkspace: !["sceneCollection", "scene", "knowledgeWorlds", "knowledgeLibrary", "knowledgeSource", "knowledgeResults", "chronicleLibrary", "chronicle", "elder"].includes(this.resource.kind),
+      isAtlasWorkspace: !["companion", "knowledgeWorlds", "knowledgeLibrary", "knowledgeSource", "knowledgeResults", "chronicleLibrary", "chronicle", "elder"].includes(this.resource.kind),
       shreckWorldUrl: this._serviceUrl("shreckWorld"),
       shreckRpgUrl: this._serviceUrl("shreckRpg"),
       canEditChronicle: Boolean(this.resource.chronicle?.capabilities?.edit),
@@ -191,6 +196,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     }));
     const log = root?.querySelector(".shrecknet-knowledge-log");
     if (log) log.scrollTop = log.scrollHeight;
+    this.companion.bind(root);
     const draft = root?.querySelector("[data-elder-draft]");
     draft?.addEventListener("input", () => { this.elderDraft = draft.value; });
     const conversation = root?.querySelector(".shrecknet-elder-history");
@@ -453,6 +459,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   async close(options = {}) {
+    this.companion.reset();
     this.elderRequestToken = null;
     this._releaseObjectUrls();
     return super.close(options);
@@ -523,6 +530,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
 
   async _handleError(error) {
     if (error instanceof ShrecknetApiError && error.isAuthenticationError) {
+      this.companion.reset();
       this.knowledgeSessions.clear();
     this.elderDraft = "";
     this.elderHistory = [];
@@ -625,6 +633,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   static async _signOut() {
+    this.companion?.reset();
     this.elderDraft = "";
     this.elderHistory = [];
     this.elderChatId = null;

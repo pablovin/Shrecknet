@@ -1,6 +1,6 @@
 # Shrecknet Foundry Module
 
-Shrecknet Atlas, Elder, ShreckWorld, and Chronicle workspaces for Foundry VTT 14
+Shrecknet Atlas, Shreckworlds, Chronicles, and Character Companion workspaces for Foundry VTT 14
 and later. The resizable ShreckOS-style workspace keeps its navigation available
 while browsing. This directory is self-contained so it can become its own
 repository without imports from the Shrecknet backend repository.
@@ -36,7 +36,7 @@ content-type, GET, POST, PUT, DELETE, and OPTIONS requests.
 - `scripts/apps/` owns Foundry UI state.
 - `scripts/navigation/` owns Back/Forward/Home state.
 - `templates/` owns markup; `themes/` and `styles/` own visual presentation.
-- The workspace provides persistent Atlas and Narrative Scenes navigation,
+- The workspace provides persistent Atlas, Shreckworlds, Chronicles, and Companion navigation,
   search, browser history, and an independently scrollable content area. Its
   layout adapts to narrow Foundry windows and uses system UI typography,
   restrained ShreckOS colors, and visible keyboard focus.
@@ -78,6 +78,15 @@ image cards. When a scene has an adjacent scene in its source-page ordering, the
 detail view provides direct Previous scene and Next scene links.
 
 ## Connected workspaces
+
+- **Companion** opens private Character Companion conversations with a portrait
+  hero card and saved chat tabs. Choose a character, create or switch chats,
+  rename them, delete with confirmation, and load earlier messages. Running
+  replies can be stopped or recovered by reopening the chat. The server enforces
+  the account-wide ten-chat limit. This view supports text conversations; see the
+  [canonical Foundry guide](https://github.com/pablovin/Shrecknet/blob/main/Documentation/Deployment/FOUNDRY_MODULE.md#character-companion)
+  for selection, polling, authorization, CORS, and compatibility details.
+  Narrative Scenes and Elders remain accessible through Atlas home.
 
 - **Elder** lists Elders assigned to the connected Atlas ontologies. It can
   include the currently viewed Atlas record or Narrative Scene as context.
@@ -132,11 +141,11 @@ base defaults to `/shreckworld-api`; the ShreckRPG base defaults to
 The module does not create Foundry Actors, Items, Journals, or Canvas Scenes and
 does not synchronize Atlas data. ShreckWorld visibility follows the service's
 authenticated API policy; Foundry does not add a per-world access-control layer.
-Companion and Character Agent interaction are not implemented. "Narrative
+Companion image uploads, private attachment previews, and rapport controls are not implemented in this view. "Narrative
 Scene" always means a Shrecknet narrative resource, not a Foundry Canvas Scene.
 
 ## Module checks
 
 From this directory, run `node --test tests/*.test.mjs` to exercise the
-service URL, authorization, Elder pagination, ShreckWorld query, and Chronicle
+service URL, authorization, Character Companion admission/recovery and chat management, Elder pagination, ShreckWorld query, and Chronicle
 revision/asset request contracts, plus manifest download and packaged-file checks.

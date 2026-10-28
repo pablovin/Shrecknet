@@ -14,7 +14,7 @@ from app.core.browser_auth import get_browser_auth_settings
 from app.core.config_store import get_settings
 from app.models.user import User
 from app.models.auth_session import AuthSession
-from app.schemas.browser_auth import BrowserLogin, BrowserRegistration, BrowserRegistrationResponse, BrowserSessionResponse, SessionUser
+from app.schemas.browser_auth import InstallationClaim, BrowserLogin, BrowserRegistration, BrowserRegistrationResponse, BrowserSessionResponse, SessionUser
 from app.schemas.browser_auth import PublicBrowserSettings, CsrfResponse, AcceptedResponse, VerificationResponse, BrowserErrorResponse
 from app.schemas.user import EmailVerificationRequest, EmailVerificationResendRequest
 from app.services.auth_sessions import BrowserSessionService, SessionFailure
@@ -171,3 +171,16 @@ async def resend(payload: EmailVerificationResendRequest, request: Request, user
     await service.limit("resend-email", str(payload.email).casefold(), 1, 60)
     await users.resend_verification(str(payload.email))
     return {"accepted": True}
+
+
+@router.post("/claim", status_code=201, response_model=BrowserRegistrationResponse)
+async def claim_installation(payload: InstallationClaim, request: Request, response: Response, service: BrowserSessionService = Depends(browser_service)):
+    protect(request, service)
+    from app.core.installation_claim import claim_required
+    if not claim_required():
+        raise SessionFailure("installation_disabled", 404)
+    await service.limit("installation-claim", remote_address(request), 5, 300)
+    result, issued = await service.register(payload, request.cookies.get(service.settings.refresh_cookie, ""), installation_claim=payload.claim_token)
+    if issued:
+        set_session(response, service, issued)
+    return result

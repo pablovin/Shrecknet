@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPubl
 
 RuntimeSecretName = Literal[
     "browser_auth_secret",
+    "installation_claim",
     "jwt_private_key.pem",
     "jwt_public_key.pem",
 ]
@@ -76,6 +77,12 @@ def provision_runtime_secrets() -> None:
 
 
 def _provision_locked(secrets_dir: Path) -> None:
+    if os.getenv("SHRECKNET_INSTALLATION_ENABLED", "false").lower() == "true":
+        import secrets
+        claim_path = secrets_dir / "installation_claim"
+        if not claim_path.exists():
+            _write_secret(claim_path, secrets.token_urlsafe(32).encode())
+        os.chmod(claim_path, 0o600)
     browser_secret = os.getenv("SHRECKNET_BROWSER_SECRET", "").strip()
     if browser_secret:
         Fernet(browser_secret.encode("ascii"))

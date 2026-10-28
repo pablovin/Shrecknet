@@ -1,3 +1,4 @@
+from .installation import InstallationAPI, InstallationState, InstallationModels, InstallationPublicStatus
 from .character_companion import CharacterCompanionAPI, CompanionModelConfig, CompanionModelConfigUpdate, CompanionSelection, CompanionRapport, CompanionTurn, CompanionEvent
 from .browser_auth import BrowserAuthAPI, BrowserSession, BrowserRegistration
 from .shreckworld import (
@@ -29,6 +30,7 @@ class Shrecknet:
     ):
         self.client = AsyncShrecknetClient(base_url=base_url, token=token, timeout=timeout)
         self.shreckworld = ShreckWorldAPI(self.client, base_url=shreckworld_base_url, timeout=timeout)
+        self.installation = InstallationAPI(self.client)
         self.worlds = WorldsAPI(self.client)
         self.ontologies = OntologiesAPI(self.client)
         self.ontology_instances = OntologyInstancesAPI(self.client)

@@ -175,3 +175,5 @@ See the main [README](../README.md) for contribution guidelines.
 - [ShreckWorld reader and rule-review API](API/SHRECKWORLD_READER_API.md) — Authenticated libraries, original files, passage questions, citations, and agent evidence access.
 
 - [Shared Browser CORS](./Deployment/BROWSER_CORS.md) - File-only `.env` policy, container mounts, retired database settings, and deployment
+
+- [Protected first deployment](Deployment/FIRST_RUN.md) — host owner claim, resumable setup, starter content and bounded worker/model verification.

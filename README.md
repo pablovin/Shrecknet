@@ -216,3 +216,7 @@ shared `shreckconfig/` package. Their API containers mount the file read-only.
 See [Browser CORS configuration](Documentation/Deployment/BROWSER_CORS.md) for
 initial deployment and restart instructions. ShreckRPG requires integration in
 its separate repository.
+
+## Guided local installation
+
+The opt-in portable installation distribution starts the ecosystem with ShreckOS and ShreckRPG without manual env files. See [protected first deployment](Documentation/Deployment/FIRST_RUN.md) for backend contracts and the frontend repository’s bundle guide for assembly/startup. Image publication and fresh-host release acceptance remain separate release gates.

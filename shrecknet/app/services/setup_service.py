@@ -63,12 +63,19 @@ class SetupService:
             response.created.append(created)
         return response
 
-    async def _create_world(self, world: str) -> DefaultWorldResult | None:
+    async def resume_default_world(self, world: str) -> DefaultWorldResult:
+        if world not in {"fantasy", "horror", "scifi"}:
+            raise ValueError("Unknown starter template")
+        result = await self._create_world(world, resume=True)
+        assert result is not None
+        return result
+
+    async def _create_world(self, world: str, *, resume: bool = False) -> DefaultWorldResult | None:
         existing = await self.ontology_service.repository.get_by_name(world)
-        if existing:
+        if existing and not resume:
             return None
 
-        ontology = await self.ontology_service.create_ontology(
+        ontology = existing or await self.ontology_service.create_ontology(
             {
                 "name": world,
                 "description": self._world_description(world),
@@ -84,8 +91,9 @@ class SetupService:
         entity_results: list[DefaultWorldEntityResult] = []
         entity_id_by_name: dict[str, int] = {}
 
+        existing_entities = {entity.name: entity for entity in await self.ontology_service.repository.list_entities(ontology.id)} if resume else {}
         for spec in entities_spec:
-            entity = await self.ontology_service.add_entity(
+            entity = existing_entities.get(spec.name) or await self.ontology_service.add_entity(
                 ontology.id,
                 {
                     "name": spec.name,
@@ -118,7 +126,8 @@ class SetupService:
             if not source_id or not destiny_id:
                 continue
 
-            relationship = await self.ontology_service.add_relationship(
+            existing_relationships = await self.ontology_service.repository.list_relationships(ontology.id, source_id) if resume else []
+            relationship = next((rel for rel in existing_relationships if rel.name == spec.name and rel.destiny_entity_id == destiny_id), None) or await self.ontology_service.add_relationship(
                 ontology.id,
                 source_id,
                 {

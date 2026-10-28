@@ -142,14 +142,18 @@ class BrowserSessionService:
         raise SessionFailure("invalid_session")
 
 
-    async def register(self, payload: BrowserRegistration, previous_credential: str = "") -> tuple[BrowserRegistrationResponse, tuple[BrowserSessionResponse, str, AuthSession] | None]:
+    async def register(self, payload: BrowserRegistration, previous_credential: str = "", *, installation_claim: str | None = None) -> tuple[BrowserRegistrationResponse, tuple[BrowserSessionResponse, str, AuthSession] | None]:
         users = UserService(self.db)
-        if get_settings().user_creation_mode == UserCreationMode.STOPPED:
-            raise SessionFailure("registration_closed", 403)
-        if not await users.has_any_users():
-            raise SessionFailure("unavailable", 503)
+        if installation_claim is None:
+            if get_settings().user_creation_mode == UserCreationMode.STOPPED:
+                raise SessionFailure("registration_closed", 403)
+            if not await users.has_any_users():
+                raise SessionFailure("unavailable", 503)
         try:
-            user = await users.register_user(payload.model_dump(exclude={"remember_me"}))
+            user = await users.register_user(
+                payload.model_dump(exclude={"remember_me", "claim_token"}),
+                **({"installation_claim": installation_claim} if installation_claim is not None else {}),
+            )
         except UserCreationStoppedError as exc:
             raise SessionFailure("registration_closed", 403) from exc
         except EmailServiceUnavailableError as exc:
@@ -157,7 +161,7 @@ class BrowserSessionService:
         except (ValueError, IntegrityError) as exc:
             await self.db.rollback()
             raise SessionFailure("account_conflict", 409) from exc
-        if get_settings().email_verification_enabled and user.email_verified_at is None:
+        if installation_claim is None and get_settings().email_verification_enabled and user.email_verified_at is None:
             return BrowserRegistrationResponse(outcome="verification_required", verification_email_sent=user.verification_email_sent), None
         if account_login_failure(user):
             return BrowserRegistrationResponse(outcome="pending_approval"), None

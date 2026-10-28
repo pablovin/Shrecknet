@@ -41,10 +41,16 @@ class UserService:
         self.session = session
         self.repository = UserRepository(session)
 
-    async def register_user(self, data: dict) -> User:
+    async def register_user(self, data: dict, *, installation_claim: str | None = None) -> User:
         # Prevent two in-process requests from both observing an empty user table.
         # The first account is a bootstrap escape hatch and must be the sole admin.
-        async with _registration_lock:
+        from app.core.installation_claim import claim_required, valid_claim, registration_guard
+        async with _registration_lock, registration_guard():
+            first = not await self.repository.has_any()
+            if installation_claim is not None and not first:
+                raise UserCreationStoppedError("Installation already claimed")
+            if first and claim_required() and not valid_claim(installation_claim):
+                raise UserCreationStoppedError("Installation claim required")
             return await self._register_user(data)
 
     async def _register_user(self, data: dict) -> User:
@@ -57,6 +63,11 @@ class UserService:
         if is_first_user:
             data["role"] = UserRole.ADMIN
             data["approval_status"] = UserApprovalStatus.APPROVED
+            from app.core.installation_claim import claim_required
+            if claim_required():
+                # Possession of the host claim is the first owner's verification;
+                # subsequent registrations retain the normal email policy.
+                data["email_verified_at"] = datetime.now(timezone.utc)
         else:
             mode = get_settings().user_creation_mode
             if mode == UserCreationMode.STOPPED:

@@ -2,6 +2,7 @@
 
 # Import submodules so Celery autodiscovery registers task functions.
 from . import (
+    installation,
     neo4j_embedding,
     ontology_links,
     pdf_embedding,

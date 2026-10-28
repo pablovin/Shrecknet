@@ -34,3 +34,7 @@ async def create_default_worlds(
         media_service=media_service,
     )
     return await service.create_default_worlds(payload.worlds)
+
+
+from app.api.routers.installation import router as installation_router
+router.include_router(installation_router)

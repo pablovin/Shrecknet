@@ -38,6 +38,10 @@ class BrowserRegistration(BaseModel):
         return value
 
 
+class InstallationClaim(BrowserRegistration):
+    claim_token: str = Field(min_length=32, max_length=256, repr=False)
+
+
 class SessionUser(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int

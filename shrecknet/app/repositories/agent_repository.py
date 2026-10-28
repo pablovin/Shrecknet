@@ -21,6 +21,13 @@ class AgentRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def first_world_job(self, ontology_id: int, job: str) -> Optional[Agent]:
+        result = await self.session.execute(
+            select(Agent).where(Agent.job == job, Agent.active.is_(True), Agent.ontologies.any(Ontology.id == ontology_id))
+            .options(selectinload(Agent.ontologies)).order_by(Agent.created_at, Agent.id).limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def create(self, agent_data: AgentCreate) -> Agent:
         """Create a new agent."""
         agent = Agent(

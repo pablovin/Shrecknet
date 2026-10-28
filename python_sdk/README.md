@@ -28,3 +28,5 @@ asyncio.run(main())
 - Main docs entry: [docs/index.md](./docs/index.md)
 - Auth bootstrap flow: [docs/getting_started/auth-and-bootstrap.md](./docs/getting_started/auth-and-bootstrap.md)
 - Generated API reference: [docs/reference/index.md](./docs/reference/index.md)
+
+- [Guided installation API](docs/getting_started/installation.md) — protected owner claim, world/model setup and explicit verification consent.

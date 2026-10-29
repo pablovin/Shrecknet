@@ -64,6 +64,10 @@ from app.schemas.character_agent import (
 from neo4j.time import DateTime as Neo4jDateTime
 
 
+class FolioCreateConflict(ValueError):
+    """The creation request already committed with another payload."""
+
+
 class FolioEditConflict(ValueError):
     """The page revision no longer matches the editor snapshot."""
 
@@ -302,8 +306,12 @@ class OntologyInstanceService:
 
     # ------------------------------------------------------------------
     async def create_instance(
-        self, payload: OntologyInstanceCreate, *, trigger_background_jobs: bool = True
+        self, payload: OntologyInstanceCreate, *, trigger_background_jobs: bool = True,
+        creation_key: str | None = None, creation_fingerprint: str | None = None,
+        bounded_result: bool = False,
     ) -> OntologyInstanceRead:
+        if bool(creation_key) != bool(creation_fingerprint) or (creation_key and payload.scenes):
+            raise ValueError("Idempotent creation requires a fingerprint and no scene payload")
         ontology = await self.repository.get(payload.ontology_id)
         if not ontology:
             raise ValueError("Ontology not found")
@@ -342,23 +350,44 @@ class OntologyInstanceService:
             impacted_entity_ids.add(entity_node_id)
 
         tx = await self.graph_session.begin_transaction()
+        replayed = False
         try:
-            await tx.run(
-                """
-                CREATE (i:OntologyInstance {
-                    instance_id: $instance_id,
-                    ontology_id: $ontology_id,
-                    name: $name,
-                    created_at: $created_at,
-                    updated_at: $updated_at
-                })
-                """,
-                instance_id=instance_id,
-                ontology_id=payload.ontology_id,
-                name=payload.name,
-                created_at=timestamp,
-                updated_at=timestamp,
-            )
+            if creation_key:
+                reservation = await tx.run("""
+                    MERGE (i:OntologyInstance {atlas_creation_request: $creation_key})
+                    ON CREATE SET i.instance_id = $instance_id, i.ontology_id = $ontology_id,
+                        i.name = $name, i.created_at = $timestamp, i.updated_at = $timestamp,
+                        i.atlas_creation_fingerprint = $fingerprint
+                    SET i.atlas_creation_request = i.atlas_creation_request
+                    RETURN i.instance_id AS instance_id, i.atlas_creation_fingerprint AS fingerprint
+                    """, creation_key=creation_key, instance_id=instance_id,
+                    ontology_id=payload.ontology_id, name=payload.name, timestamp=timestamp,
+                    fingerprint=creation_fingerprint)
+                reserved = await reservation.single()
+                if reserved is None or reserved["fingerprint"] != creation_fingerprint:
+                    raise FolioCreateConflict("This creation request already contains different content")
+                if reserved["instance_id"] != instance_id:
+                    instance_id = reserved["instance_id"]
+                    replayed = True
+                    nodes_payload.clear()
+                    impacted_entity_ids.clear()
+            else:
+                await tx.run(
+                    """
+                    CREATE (i:OntologyInstance {
+                        instance_id: $instance_id,
+                        ontology_id: $ontology_id,
+                        name: $name,
+                        created_at: $created_at,
+                        updated_at: $updated_at
+                    })
+                    """,
+                    instance_id=instance_id,
+                    ontology_id=payload.ontology_id,
+                    name=payload.name,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
 
             for node in nodes_payload:
                 entity_node_id = node["entity_instance_id"]
@@ -508,8 +537,9 @@ class OntologyInstanceService:
             await tx.close()
             if payload.scenes:
                 await self._replace_scenes_for_instance(instance_id, payload.scenes)
-            instance = await self.get_instance(instance_id)
-            if trigger_background_jobs:
+            instance = (await self.get_instance(instance_id, include_scenes=False, include_relationships=False)
+                        if bounded_result else await self.get_instance(instance_id))
+            if trigger_background_jobs and not replayed:
                 from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
 
                 _enqueue_link_instance(instance.instance_id)

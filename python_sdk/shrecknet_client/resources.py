@@ -14,6 +14,7 @@ from .atlas import (
     AtlasAuthor,
     AtlasElderCard,
     AtlasFolioDetail,
+    AtlasFolioCreate,
     AtlasFolioPatch,
     AtlasRelationshipPage,
     AtlasScenePage,
@@ -211,6 +212,22 @@ class OntologiesAPI:
             "GET", f"/ontologies/{ontology_id}/pages/{path_page_id}/folio"
         )
         return AtlasFolioDetail.model_validate(data)
+
+    async def create_folio(self, ontology_id: int, payload: AtlasFolioCreate) -> AtlasFolioDetail:
+        """Create one page as an admin; the same request ID/content safely replays."""
+        data = await self._client.raw_request("POST", f"/ontologies/{ontology_id}/pages",
+            json=payload.model_dump(mode="json"))
+        return AtlasFolioDetail.model_validate(data)
+
+    async def find_folio_creation(self, ontology_id: int, request_id: str) -> AtlasFolioDetail | None:
+        """Recover a creation by its current-admin/world-scoped request ID."""
+        from urllib.parse import quote
+        from .errors import NotFoundError
+        try:
+            data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/pages/creation/{quote(request_id, safe='')}")
+            return AtlasFolioDetail.model_validate(data)
+        except NotFoundError:
+            return None
 
     async def patch_folio(self, ontology_id: int, page_id: str, patch: AtlasFolioPatch) -> AtlasFolioDetail:
         """Save supplied fields as an admin; HTTP 409 means the revision is stale."""

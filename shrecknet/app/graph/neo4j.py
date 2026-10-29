@@ -91,6 +91,7 @@ async def get_optional_neo4j_session() -> AsyncGenerator[AsyncSession | None, No
 async def ensure_temporal_graph_constraints(session: AsyncSession) -> None:
     """Create idempotent constraints and indexes for Scene/Milestone temporal model."""
     statements = [
+        "CREATE CONSTRAINT atlas_creation_request_unique IF NOT EXISTS FOR (owner:OntologyInstance) REQUIRE owner.atlas_creation_request IS UNIQUE",
         "CREATE INDEX ontology_instance_world_idx IF NOT EXISTS FOR (owner:OntologyInstance) ON (owner.ontology_id)",
         "CREATE INDEX scene_ontology_idx IF NOT EXISTS FOR (scene:Scene) ON (scene.ontology_id)",
         """

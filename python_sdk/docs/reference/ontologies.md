@@ -67,3 +67,20 @@ for `delta-v1`; older services omit it. Historical rows without durable IDs cann
 be removed through this contract. Retarget/type changes remove the selected edge
 and add a replacement carrying its metadata; unchanged edges retain their identity.
 See the backend targeted Folio contract for limits, atomicity, and rollback behavior.
+
+
+### Create a Folio page
+
+`create_folio(ontology_id, payload: AtlasFolioCreate) -> AtlasFolioDetail` creates
+one page as the current administrator. Supply `request_id` (UUID), `definition_id`
+and `name`; optional narrative, cover, property and relationship fields follow the
+backend contract. Authors/aliases/identities are assigned upstream. Keep the same
+request ID and immutable content when retrying an uncertain response; changed
+content under an already-committed key returns 409.
+
+`find_folio_creation(ontology_id, request_id) -> AtlasFolioDetail | None` recovers a
+confirmed page scoped to the current admin and world, returning None only for 404.
+Other errors are propagated. Historical legacy POST permissions are unchanged.
+Deploy the backend and `atlas_creation_request_unique` constraint before using
+these methods. See [the API contract](../../../Documentation/API/SCENE_GRAPH_API.md#admin-folio-page-creation)
+and [creation example](../../examples/02_ontology_management/05_create_folio_page.py).

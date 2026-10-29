@@ -52,8 +52,11 @@ from app.schemas.ontology_instance import (
 )
 from app.services.audit_service import AuditService
 from app.services.background_job_service import BackgroundJobService
-from app.schemas.atlas import AtlasWorldWeb, AtlasFolioDetailRead, AtlasFolioPatch, AtlasSourcePage, AtlasScenePage, AtlasAuthor, AtlasRelationshipPage
+from uuid import UUID
+
+from app.schemas.atlas import AtlasFolioCreate, AtlasWorldWeb, AtlasFolioDetailRead, AtlasFolioPatch, AtlasSourcePage, AtlasScenePage, AtlasAuthor, AtlasRelationshipPage
 from app.services.atlas_folio_service import AtlasFolioService
+from app.services.ontology_instance_service import FolioCreateConflict
 from app.schemas.agent import AgentSummary
 from app.services.agent_service import AgentService
 from app.services.atlas_discovery_service import AtlasDiscoveryService
@@ -85,6 +88,32 @@ async def _atlas_world(
 
 async def _atlas_reader(service: OntologyInstanceService = Depends(_atlas_world)) -> AtlasDiscoveryService:
     return AtlasDiscoveryService(service.graph_session)
+
+
+@router.post("/{ontology_id}/pages", response_model=AtlasFolioDetailRead, status_code=201)
+async def create_folio_page(
+    ontology_id: int, payload: AtlasFolioCreate,
+    actor: User = Depends(get_current_admin_user),
+    service: OntologyInstanceService = Depends(_atlas_world),
+) -> AtlasFolioDetailRead:
+    try:
+        return await AtlasFolioService(service).create(ontology_id, actor.id, payload)
+    except FolioCreateConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{ontology_id}/pages/creation/{request_id}", response_model=AtlasFolioDetailRead)
+async def find_folio_creation(
+    ontology_id: int, request_id: UUID,
+    actor: User = Depends(get_current_admin_user),
+    service: OntologyInstanceService = Depends(_atlas_world),
+) -> AtlasFolioDetailRead:
+    try:
+        return await AtlasFolioService(service).find_creation(ontology_id, actor.id, request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Creation unavailable") from exc
 
 
 @router.patch("/{ontology_id}/pages/{instance_id}/folio", response_model=AtlasFolioDetailRead)

@@ -139,3 +139,20 @@ async def test_delta_folio_patch_serializes_only_touched_relationships():
     assert body["relationship_changes"] == {"remove": ["chosen-edge"]}
     assert "relationships" not in body
     assert result.folio_projection.relationship_editing == "delta-v1"
+
+
+@pytest.mark.asyncio
+async def test_admin_folio_creation_and_recovery_use_typed_explicit_contracts():
+    from shrecknet_client.atlas import AtlasFolioCreate
+    from shrecknet_client.errors import NotFoundError
+    response = {"instance_id": "new-page", "ontology_id": 7, "name": "Name", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z", "entities": [], "folio_projection": {"scenes": "omitted", "relationships": "omitted"}}
+    request = AsyncMock(side_effect=[response, response, NotFoundError(404)])
+    api = OntologiesAPI(SimpleNamespace(raw_request=request))
+    payload = AtlasFolioCreate(request_id='4b654adb-5666-4dbc-9122-123456789abc', definition_id=1, name='Name')
+    page = await api.create_folio(7, payload)
+    assert page.instance_id == 'new-page'
+    assert request.call_args.args == ('POST', '/ontologies/7/pages')
+    assert request.call_args.kwargs['json']['request_id'] == payload.request_id
+    assert 'author_id' not in request.call_args.kwargs['json']
+    assert (await api.find_folio_creation(7, payload.request_id)).instance_id == 'new-page'
+    assert await api.find_folio_creation(7, payload.request_id) is None

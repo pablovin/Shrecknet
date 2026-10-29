@@ -61,6 +61,23 @@ class OntologyInstanceRelationshipRead(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class RelationshipChanges(BaseModel):
+    """Only explicit durable outgoing IDs are removed; all other edges survive."""
+    model_config = ConfigDict(extra="forbid")
+    add: list[OntologyInstanceRelationshipCreate] = Field(default_factory=list, max_length=100)
+    remove: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_operations(self):
+        if not self.add and not self.remove:
+            raise ValueError("Provide at least one relationship change")
+        if any(not value.strip() for value in self.remove) or len(set(self.remove)) != len(self.remove):
+            raise ValueError("Removal IDs must be nonblank and unique")
+        if any(row.target_alias or not row.target_entity_instance_id for row in self.add):
+            raise ValueError("Relationship changes require target entity IDs")
+        return self
+
+
 class OntologyInstanceEntityCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     entity_instance_id: str | None = None

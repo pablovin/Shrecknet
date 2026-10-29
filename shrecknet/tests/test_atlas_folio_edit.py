@@ -135,3 +135,92 @@ async def test_partial_update_writes_only_supplied_fields_and_preserves_sibling_
     tx.commit.assert_awaited_once()
     tx.rollback.assert_not_awaited()
     graph.run.assert_not_awaited()
+
+
+@pytest.mark.parametrize("changes", [
+    {"relationship_changes": {"add": [], "remove": []}},
+    {"relationship_changes": {"remove": ["edge", "edge"]}},
+    {"relationship_changes": {"remove": [" "]}},
+    {"relationship_changes": {"add": [{"definition_id": 8, "target_alias": "alias"}]}},
+    {"relationships": [], "relationship_changes": {"remove": ["edge"]}},
+])
+def test_delta_schema_rejects_ambiguous_or_empty_operations(changes):
+    with pytest.raises(ValidationError):
+        AtlasFolioPatch(expected_updated_at=REVISION, entity_instance_id="one", **changes)
+
+
+@pytest.mark.asyncio
+async def test_delta_passes_only_additions_and_typed_operations_to_transaction():
+    current = page()
+    instances = SimpleNamespace(graph_session=None, sql_session=None,
+        get_instance=AsyncMock(return_value=current), update_instance=AsyncMock(return_value=current))
+    service = AtlasFolioService(instances)
+    service.assert_page = AsyncMock()
+    payload = AtlasFolioPatch(expected_updated_at=REVISION, entity_instance_id="one",
+        relationship_changes={"add": [{"definition_id": 8, "target_entity_instance_id": "target"}], "remove": ["edge"]})
+    result = await service.patch(7, "page", payload)
+    assert result.folio_projection.relationship_editing == "delta-v1"
+    args = instances.update_instance.call_args
+    assert args.kwargs["relationship_changes"].remove == ["edge"]
+    assert args.kwargs["edit_fields"] == {"relationships"}
+    assert len(args.args[1].entities[0].relationships) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remove_id,valid_target,reciprocal", [("chosen", True, False), ("chosen", True, True), ("foreign", True, False), ("chosen", False, False)])
+async def test_delta_preserves_unloaded_parallel_and_legacy_edges_and_rolls_back_invalid_batch(monkeypatch, remove_id, valid_target, reciprocal):
+    import app.services.ontology_instance_service as module
+    from app.schemas.ontology_instance import OntologyInstanceEntityCreate, OntologyInstanceUpdate, RelationshipChanges
+    from app.tasks.neo4j_embedding import embed_nodes
+
+    current = page()
+    edges = [
+        {"target_id": "old", "relationship_definition_id": 8, "relationship_instance_id": "untouched", "rel_data": '{"note":"keep"}'},
+        {"target_id": "old", "relationship_definition_id": 8, "relationship_instance_id": "chosen", "rel_data": '{"note":"keep"}'},
+        {"target_id": "legacy", "relationship_definition_id": 8, "relationship_instance_id": None, "rel_data": '{}'},
+    ]
+    async def run(query, **kwargs):
+        if "RETURN i.updated_at AS revision" in query:
+            return SimpleNamespace(single=AsyncMock(return_value={"revision": REVISION}))
+        if "RETURN e.entity_instance_id AS entity_instance_id" in query:
+            return SimpleNamespace(data=AsyncMock(return_value=[{"entity_instance_id": "one", "alias": "one", "definition_id": 1}]))
+        if "RETURN target.entity_instance_id AS target_id" in query:
+            return SimpleNamespace(data=AsyncMock(return_value=edges))
+        return SimpleNamespace()
+
+    tx = SimpleNamespace(run=AsyncMock(side_effect=run), commit=AsyncMock(), rollback=AsyncMock(), close=AsyncMock())
+    service = OntologyInstanceService.__new__(OntologyInstanceService)
+    service.graph_session = SimpleNamespace(begin_transaction=AsyncMock(return_value=tx))
+    service.get_instance = AsyncMock(return_value=current)
+    service._load_entity_definitions = AsyncMock(return_value={1: {"properties": {}, "relationships": {8: SimpleNamespace(destiny_entity_id=1, bi_directional=reciprocal)}}})
+    service._validate_existing_target_entity = AsyncMock(side_effect=None if valid_target else ValueError("Invalid target"))
+    monkeypatch.setattr(module, "_enqueue_link_instance", lambda _: None)
+    monkeypatch.setattr(embed_nodes, "delay", lambda *_: None)
+    operations = RelationshipChanges(add=[{"definition_id": 8, "target_entity_instance_id": "new", "data": {"note": "keep"}}], remove=[remove_id])
+    entity = OntologyInstanceEntityCreate.model_validate({**current.entities[0].model_dump(), "relationships": [row.model_dump() for row in operations.add]})
+    async def update():
+        await service.update_instance("page", OntologyInstanceUpdate(entities=[entity]), expected_updated_at=current.updated_at, edit_fields={"relationships"}, relationship_changes=operations)
+    if remove_id == "foreign" or not valid_target:
+        with pytest.raises(ValueError):
+            await update()
+        tx.rollback.assert_awaited_once()
+        tx.commit.assert_not_awaited()
+    else:
+        await update()
+        deleted = [call.kwargs for call in tx.run.call_args_list if "DELETE r" in call.args[0]]
+        assert deleted[0]["relationship_instance_id"] == "chosen"
+        assert len(deleted) == (2 if reciprocal else 1)
+        created = [call for call in tx.run.call_args_list if "CREATE (" in call.args[0]]
+        assert len(created) == (2 if reciprocal else 1)
+        assert all(call.kwargs.get("target_id") == "new" for call in created)
+        assert not any(call.kwargs.get("relationship_instance_id") == "untouched" for call in tx.run.call_args_list)
+        tx.commit.assert_awaited_once()
+        tx.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delta_cannot_enter_an_unlocked_legacy_update_path():
+    from app.schemas.ontology_instance import OntologyInstanceUpdate, RelationshipChanges
+    service = OntologyInstanceService.__new__(OntologyInstanceService)
+    with pytest.raises(ValueError, match="revision-checked"):
+        await service.update_instance("page", OntologyInstanceUpdate(name="Changed"), relationship_changes=RelationshipChanges(remove=["edge"]))

@@ -1,11 +1,10 @@
 # Installation API
 
 Installation mode is opt-in. Use `sdk.installation.public_status()` to read only
-whether it is enabled and still needs an owner. In a browser-session integration,
+whether it is enabled, still needs an owner, and uses `local_browser` or `host_code` claiming. `sdk.installation.readiness()` returns the four application API health states. In a browser-session integration,
 `BrowserAuthAPI(client, origin).claim_installation(claim_token=..., username=...,
 full_name=..., email=..., password=...)` uses origin/CSRF protection and retains the
-returned access token in the existing client. Retrieve the claim on the host,
-never through an API or URL. After claiming, only administrators can run setup.
+returned access token in the existing client. For the default loopback distribution, omit `claim_token` and send the request through its frontend origin; Nginx supplies the proof internally. Manual deployments still require the host claim, never retrieved through an API or URL. After claiming, only administrators can run setup.
 
 ```python
 from shrecknet_client import Shrecknet, InstallationModels

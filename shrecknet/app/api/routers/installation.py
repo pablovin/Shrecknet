@@ -3,9 +3,9 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import get_media_service, get_ontology_service, get_user_service, require_roles, oauth2_scheme, get_db_session, get_ontology_instance_service
 from app.api.routers.browser_auth import AuthRoute
-from app.core.installation_claim import claim_required
+from app.core.installation_claim import claim_required, local_browser_claim_enabled
 from app.models.user import UserRole
-from app.schemas.installation import InstallationPublicStatus, InstallationState, InstallationWorldRequest, InstallationModels, InstallationProgress, InstallationVerificationRequest
+from app.schemas.installation import InstallationPublicStatus, InstallationState, InstallationWorldRequest, InstallationModels, InstallationProgress, InstallationVerificationRequest, InstallationReadiness
 from app.services.installation_service import InstallationService, InstallationConflict
 from app.services.setup_service import SetupService
 
@@ -20,7 +20,11 @@ protected = APIRouter(dependencies=[Depends(enabled), Depends(require_roles(User
 @router.get("/status", response_model=InstallationPublicStatus)
 async def public_status(users=Depends(get_user_service)):
     active = claim_required()
-    return InstallationPublicStatus(enabled=active, owner_required=active and not await users.has_any_users())
+    return InstallationPublicStatus(enabled=active, owner_required=active and not await users.has_any_users(), claim_mode="local_browser" if local_browser_claim_enabled() else "host_code")
+
+@router.get("/readiness", response_model=InstallationReadiness, dependencies=[Depends(enabled)])
+async def readiness():
+    return await InstallationService.readiness()
 
 @protected.get("/state", response_model=InstallationState)
 async def progress():

@@ -70,7 +70,7 @@ class BrowserAuthAPI:
         await self._post("/auth/resend-verification", {"email": email})
 
 
-    async def claim_installation(self, *, claim_token: str, username: str, full_name: str, email: str, password: str, timezone: str = "UTC") -> BrowserRegistration:
+    async def claim_installation(self, *, claim_token: str | None = None, username: str, full_name: str, email: str, password: str, timezone: str = "UTC") -> BrowserRegistration:
         result = BrowserRegistration.model_validate(await self._post("/auth/claim", {"claim_token": claim_token, "username": username, "full_name": full_name, "email": email, "password": password, "timezone": timezone}))
         if result.session:
             self.client.set_token(result.session.access_token)

@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class InstallationPublicStatus(BaseModel):
     enabled: bool
     owner_required: bool
+    claim_mode: Literal["host_code", "local_browser"] = "host_code"
 
 class InstallationState(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -44,6 +45,14 @@ class InstallationVerificationRequest(BaseModel):
     accept_provider_usage: Literal[True]
 
 
+class InstallationServiceReadiness(BaseModel):
+    id: Literal["shrecknet", "shreckrpg", "shreckllm", "shreckworld"]
+    status: Literal["ready", "starting"]
+
+class InstallationReadiness(BaseModel):
+    services: list[InstallationServiceReadiness]
+
+
 class InstallationAPI:
     """Administrator setup orchestration; provider secrets stay in ShreckLLM."""
     def __init__(self, client):
@@ -72,3 +81,7 @@ class InstallationAPI:
 
     async def complete(self) -> InstallationState:
         return InstallationState.model_validate(await self.client.raw_request("POST", "/setup/installation/complete", json={}))
+
+
+    async def readiness(self) -> InstallationReadiness:
+        return InstallationReadiness.model_validate(await self.client.raw_request("GET", "/setup/installation/readiness"))

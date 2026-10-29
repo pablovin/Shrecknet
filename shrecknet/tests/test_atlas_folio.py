@@ -54,6 +54,7 @@ async def test_detail_checks_world_page_and_skips_embedded_scenes_and_relationsh
     assert result.folio_projection.model_dump() == {
         "scenes": "omitted",
         "relationships": "omitted",
+        "relationship_editing": "delta-v1",
     }
     instances.get_instance.assert_awaited_once_with(
         "page-1", include_scenes=False, include_relationships=False

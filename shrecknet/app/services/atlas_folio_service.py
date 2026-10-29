@@ -1,4 +1,6 @@
 """Bounded page exploration; IDs retain their canonical page/node meaning."""
+import json
+
 from sqlalchemy import select
 
 from app.models.agent import Agent
@@ -57,11 +59,15 @@ class AtlasFolioService:
         if entity is None:
             raise ValueError("Entity does not belong to this page")
         changes = payload.model_dump(exclude_unset=True, exclude={"expected_updated_at", "entity_instance_id", "name"})
+        relationship_changes = changes.pop("relationship_changes", None)
+        if relationship_changes is not None:
+            changes["relationships"] = relationship_changes["add"]
         original = entity.model_dump(exclude={"relationships"})
         merged = OntologyInstanceEntityCreate.model_validate({**original, **changes})
         updated = await self.instances.update_instance(page_id, OntologyInstanceUpdate(
             name=payload.name, entities=[merged],
-        ), expected_updated_at=payload.expected_updated_at, edit_fields=set(changes))
+        ), expected_updated_at=payload.expected_updated_at, edit_fields=set(changes),
+            **({"relationship_changes": payload.relationship_changes} if relationship_changes is not None else {}))
         # Return the same bounded projection as GET; no scenes or relationship array.
         result = updated.model_dump()
         result["entities"] = [{**row, "relationships": []} for row in result["entities"]]
@@ -111,10 +117,16 @@ class AtlasFolioService:
             ORDER BY toLower(coalesce(other.alias, owner.name, '')), other.entity_instance_id, elementId(edge), focus.entity_instance_id
             SKIP $skip LIMIT $limit
             RETURN coalesce(edge.relationship_instance_id, elementId(edge)) + ':' + focus.entity_instance_id AS id,
+                   edge.relationship_instance_id AS relationship_instance_id,
+                   coalesce(edge.data, '{}') AS edge_data,
                    definition_id, direction, focus.entity_instance_id AS focus_entity_id,
                    {entity_id: other.entity_instance_id, page_id: owner.instance_id,
                     definition_id: toInteger(other.entity_definition_id),
                     title: coalesce(other.alias, owner.name, other.entity_instance_id),
                     avatar_url: other.node_avatar_url} AS target
             """, **arguments, group=group, skip=skip, limit=limit)
-        return AtlasRelationshipPage(results=await result.data(), groups=groups, total=total, skip=skip, limit=limit)
+        rows = await result.data()
+        for row in rows:
+            raw = row.pop("edge_data", "{}")
+            row["data"] = json.loads(raw) if isinstance(raw, str) else raw or {}
+        return AtlasRelationshipPage(results=rows, groups=groups, total=total, skip=skip, limit=limit)

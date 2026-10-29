@@ -10,11 +10,22 @@ and model activation. ShreckRPG retains RPG data and configuration.
 
 `python -m app.core.runtime_secrets` generates a stable 0600 `installation_claim`
 file alongside the existing browser/JWT secrets when installation mode is enabled.
-The distribution's `docker compose run --rm claim` exposes it to the host operator,
-never through a public API. Do not publish this credential or put it in a URL.
+The default local bundle also enables
+`SHRECKNET_INSTALLATION_LOCAL_CLAIM_ENABLED=true` and shares only that claim with
+Nginx via its own restricted, read-only volume. Nginx injects
+`X-Shrecknet-Installation-Claim` only on the exact claim route and only for
+`Host: localhost:8080`. The backend accepts that handoff only for an explicitly
+enabled HTTP loopback public origin. The browser submits account details without
+receiving a claim token. No additional terminal command is needed.
 
-`POST /auth/claim` accepts `BrowserRegistration` fields plus `claim_token` (32–256
-characters). It uses the same origin, CSRF cookie/header, content-type validation,
+Manual deployments keep the host-code flow. The distribution's optional
+`docker compose run --rm claim` remains an operator recovery tool; it is not part
+of normal local onboarding. It never retrieves a claim through a public API.
+Disabling local mode or configuring a non-local public origin disables header
+handoff; it does not weaken the existing requirement for owner proof.
+
+`POST /auth/claim` accepts `BrowserRegistration` fields and an optional `claim_token` (32–256
+characters) for manual deployments. It uses the same origin, CSRF cookie/header, content-type validation,
 rate limit storage and no-store response handling as browser authentication.
 Successful creation returns the normal `BrowserRegistrationResponse`, sets the
 normal browser cookies and authenticates the owner. Password minimum is 12.
@@ -25,7 +36,7 @@ installation mode is enabled, including calls through the legacy `/users/` route
 A process-shared file lock serializes first-user creation across API workers using
 the same local volume. A successful claim always creates exactly the first owner;
 a later claim is refused, even if normal public registration is allowed. The
-owner is approved and email-verified by host credential possession, so SMTP is
+owner is approved and email-verified by host credential possession or the trusted local handoff, so SMTP is
 not required to begin. Later users retain the normal registration/email policy.
 The claim route is disabled (404) outside installation mode. Invalid claim or an
 already claimed installation returns 403; malformed input returns a sanitized 422;
@@ -39,7 +50,8 @@ completion and verification fields; the browser cannot write a pass flag.
 
 | Endpoint | Input and behavior |
 | --- | --- |
-| `GET /setup/installation/status` | Public `{enabled, owner_required}` only; no settings or secrets |
+| `GET /setup/installation/status` | Public `{enabled, owner_required, claim_mode}` only; no settings or secrets |
+| `GET /setup/installation/readiness` | Public, bounded health checks for the four application APIs; only service IDs and ready/starting status are returned |
 | `GET /setup/installation/state` | Administrator `InstallationState` |
 | `POST /setup/installation/world` | `{template: fantasy\|horror\|scifi, include_example: true}`; resumes starter ontology construction and returns the saved world |
 | `PUT /setup/installation/models` | `{provider, model, jobs}`; requires a configured gateway model, creates/reuses supported world agents and saves target assignments |

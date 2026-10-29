@@ -28,7 +28,7 @@ def installation(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_owner_claim_requires_host_secret_and_csrf_and_closes(client, session_maker, installation):
     status = await client.get('/setup/installation/status')
-    assert status.json() == {'enabled': True, 'owner_required': True}
+    assert status.json() == {'enabled': True, 'owner_required': True, 'claim_mode': 'host_code'}
     assert installation not in status.text
     payload = {'username': 'keeper', 'full_name': 'World Keeper', 'email': 'keeper@example.com', 'password': 'a long memorable password', 'timezone': 'UTC', 'claim_token': installation}
     assert (await client.post('/auth/claim', json=payload)).status_code == 403
@@ -56,7 +56,7 @@ async def test_owner_claim_requires_host_secret_and_csrf_and_closes(client, sess
 @pytest.mark.asyncio
 async def test_claim_disabled_preserves_existing_bootstrap(client, monkeypatch):
     monkeypatch.delenv('SHRECKNET_INSTALLATION_ENABLED', raising=False)
-    assert (await client.get('/setup/installation/status')).json() == {'enabled': False, 'owner_required': False}
+    assert (await client.get('/setup/installation/status')).json() == {'enabled': False, 'owner_required': False, 'claim_mode': 'host_code'}
     assert (await client.get('/setup/installation/state')).status_code in {401, 404}
 
 
@@ -190,3 +190,41 @@ async def test_setup_does_not_adopt_an_existing_named_world(tmp_path):
     with pytest.raises(InstallationConflict, match='world_name_exists'):
         await service.create_world('fantasy', setup)
     assert service.repository.read().world_id is None
+
+
+@pytest.mark.asyncio
+async def test_local_browser_claim_needs_private_proxy_handoff_and_closes(client, installation, monkeypatch):
+    monkeypatch.setenv('SHRECKNET_INSTALLATION_LOCAL_CLAIM_ENABLED', 'true')
+    monkeypatch.setenv('SHRECKNET_PUBLIC_ORIGIN', 'http://localhost:8080')
+    assert (await client.get('/setup/installation/status')).json()['claim_mode'] == 'local_browser'
+    csrf = (await client.get('/auth/csrf')).json()['csrf_token']
+    headers = {'Origin': 'http://localhost', 'X-CSRF-Token': csrf}
+    payload = {'username': 'localowner', 'full_name': 'Local Owner', 'email': 'owner@example.com', 'password': 'a long memorable password', 'timezone': 'UTC'}
+    assert (await client.post('/auth/claim', json=payload, headers=headers)).status_code == 403
+    assert (await client.post('/auth/claim', json=payload, headers={**headers, 'X-Shrecknet-Installation-Claim': 'wrong'})).status_code == 403
+    response = await client.post('/auth/claim', json=payload, headers={**headers, 'X-Shrecknet-Installation-Claim': installation})
+    assert response.status_code == 201, response.text
+    assert response.json()['session']['user']['role'] == 'admin'
+    assert installation not in response.text
+    csrf = (await client.get('/auth/csrf')).json()['csrf_token']
+    assert (await client.post('/auth/claim', json=payload, headers={**headers, 'X-CSRF-Token': csrf, 'X-Shrecknet-Installation-Claim': installation})).status_code == 403
+
+@pytest.mark.parametrize('origin', ['https://public.example', 'http://192.168.1.2:8080', 'http://localhost:8080/path', 'http://localhost:8080?public=yes'])
+def test_automatic_claim_is_disabled_for_non_local_origins(installation, monkeypatch, origin):
+    from app.core.installation_claim import resolve_claim_token, local_browser_claim_enabled
+    monkeypatch.setenv('SHRECKNET_INSTALLATION_LOCAL_CLAIM_ENABLED', 'true')
+    monkeypatch.setenv('SHRECKNET_PUBLIC_ORIGIN', origin)
+    assert not local_browser_claim_enabled()
+    assert resolve_claim_token(None, installation) is None
+    assert resolve_claim_token(installation, None) == installation
+
+@pytest.mark.asyncio
+async def test_readiness_reports_starting_and_ready_without_private_details(monkeypatch):
+    import httpx
+    original_client = httpx.AsyncClient
+    def handler(request):
+        return httpx.Response(200 if request.url.path == '/health' else 503)
+    monkeypatch.setattr('app.services.installation_service.httpx.AsyncClient', lambda **kwargs: original_client(transport=httpx.MockTransport(handler), **kwargs))
+    result = await InstallationService.readiness()
+    assert {service.id: service.status for service in result.services} == {'shrecknet': 'ready', 'shreckrpg': 'ready', 'shreckllm': 'ready', 'shreckworld': 'starting'}
+    assert 'http' not in result.model_dump_json()

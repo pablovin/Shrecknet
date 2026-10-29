@@ -56,3 +56,14 @@ the selected entity's collection. HTTP 409 means another edit changed the page;
 reload and reconcile before retrying. Admin authorization is enforced upstream.
 See the [API contract](../../../Documentation/API/SCENE_GRAPH_API.md#admin-partial-folio-updates)
 and [editing example](../../examples/02_ontology_management/04_edit_living_folio.py).
+
+
+`AtlasFolioPatch.relationship_changes` accepts `AtlasRelationshipChanges(add=[...],
+remove=[...])` from `shrecknet_client.atlas`. Additions use the existing
+`AtlasFolioRelationshipInput` with explicit target entity IDs; removals use the
+relationship row's durable `relationship_instance_id`. Do not send a replacement
+`relationships` array at the same time. Check `folio_projection.relationship_editing`
+for `delta-v1`; older services omit it. Historical rows without durable IDs cannot
+be removed through this contract. Retarget/type changes remove the selected edge
+and add a replacement carrying its metadata; unchanged edges retain their identity.
+See the backend targeted Folio contract for limits, atomicity, and rollback behavior.

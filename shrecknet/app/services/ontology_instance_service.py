@@ -39,6 +39,7 @@ from app.schemas.ontology_instance import (
     OntologyInstanceSceneCountItem,
     OntologyInstanceSceneCountsResponse,
     OntologyInstanceUpdate,
+    RelationshipChanges,
     OntologyInstanceSearchHit,
     OntologyInstanceSearchResponse,
     OntologyInstanceSummary,
@@ -1739,7 +1740,10 @@ class OntologyInstanceService:
         self, instance_id: str, payload: OntologyInstanceUpdate, *,
         expected_updated_at: datetime | None = None,
         edit_fields: set[str] | None = None,
+        relationship_changes: RelationshipChanges | None = None,
     ) -> OntologyInstanceRead:
+        if relationship_changes is not None and (expected_updated_at is None or edit_fields is None or "relationships" not in edit_fields):
+            raise ValueError("Relationship changes require a revision-checked relationship edit")
         if payload.scenes is not None:
             raise ValueError(
                 "Scenes and milestones must be updated via scene-specific endpoints"
@@ -2009,6 +2013,15 @@ class OntologyInstanceService:
                     source_id=entity_node_id,
                 )
                 existing_rels = await existing_rels_result.data()
+                if relationship_changes is not None:
+                    # Scope exact IDs after the revision lock, before reconciliation.
+                    remove_ids = set(relationship_changes.remove)
+                    selected = [row for row in existing_rels if row.get("relationship_instance_id") in remove_ids]
+                    if len(selected) != len(remove_ids) or {row["relationship_instance_id"] for row in selected} != remove_ids:
+                        raise ValueError("Relationship IDs must uniquely belong to the selected source entity")
+                    if any(int(row["relationship_definition_id"]) not in relationship_definitions for row in selected):
+                        raise ValueError("Relationship definition is unavailable")
+                    existing_rels = selected
                 desired_relationships: list[tuple[str, int, str]] = []
                 for relationship_payload in entity_payload.relationships:
                     target_alias = relationship_payload.target_alias

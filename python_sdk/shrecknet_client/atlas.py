@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, ConfigDict, JsonValue
 class AtlasFolioProjection(BaseModel):
     scenes: Literal["omitted"]
     relationships: Literal["omitted"]
+    relationship_editing: Literal["delta-v1"] | None = None
 
 
 class AtlasFolioEntity(BaseModel):
@@ -57,6 +58,8 @@ class AtlasRelationshipTarget(BaseModel):
 
 
 class AtlasRelationshipRow(BaseModel):
+    relationship_instance_id: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
     id: str
     definition_id: int
     direction: Literal["incoming", "outgoing"]
@@ -174,6 +177,11 @@ class AtlasFolioRelationshipInput(BaseModel):
     data: dict[str, JsonValue] = Field(default_factory=dict)
 
 
+class AtlasRelationshipChanges(BaseModel):
+    add: list[AtlasFolioRelationshipInput] = Field(default_factory=list)
+    remove: list[str] = Field(default_factory=list)
+
+
 class AtlasFolioPatch(BaseModel):
     """Admin-only partial update. Omitted fields remain unchanged."""
     model_config = ConfigDict(extra="forbid")
@@ -185,3 +193,4 @@ class AtlasFolioPatch(BaseModel):
     node_avatar_url: str | None = None
     properties: list[AtlasFolioPropertyValue] | None = None
     relationships: list[AtlasFolioRelationshipInput] | None = None
+    relationship_changes: AtlasRelationshipChanges | None = None

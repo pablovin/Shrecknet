@@ -176,11 +176,14 @@ async def resend(payload: EmailVerificationResendRequest, request: Request, user
 @router.post("/claim", status_code=201, response_model=BrowserRegistrationResponse)
 async def claim_installation(payload: InstallationClaim, request: Request, response: Response, service: BrowserSessionService = Depends(browser_service)):
     protect(request, service)
-    from app.core.installation_claim import claim_required
+    from app.core.installation_claim import claim_required, resolve_claim_token
     if not claim_required():
         raise SessionFailure("installation_disabled", 404)
     await service.limit("installation-claim", remote_address(request), 5, 300)
-    result, issued = await service.register(payload, request.cookies.get(service.settings.refresh_cookie, ""), installation_claim=payload.claim_token)
+    token = resolve_claim_token(payload.claim_token, request.headers.get("X-Shrecknet-Installation-Claim"))
+    if not token:
+        raise SessionFailure("installation_claim_required", 403)
+    result, issued = await service.register(payload, request.cookies.get(service.settings.refresh_cookie, ""), installation_claim=token)
     if issued:
         set_session(response, service, issued)
     return result

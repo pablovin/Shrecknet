@@ -4,12 +4,13 @@ from __future__ import annotations
 import asyncio
 import time
 import hashlib
+import os
 from uuid import uuid4
 import httpx
 
 from app.core.config_store import LLMModelTarget, get_settings, reload_settings, update_settings
 from app.repositories.installation_repository import InstallationRepository
-from app.schemas.installation import InstallationModels, InstallationState
+from app.schemas.installation import InstallationModels, InstallationState, InstallationReadiness, InstallationServiceReadiness
 
 JOB_TARGETS: dict[str, tuple[str, ...]] = {
     "elder": ("model_elder_planner", "model_elder_synthesis", "model_elder_character_incorporation"),
@@ -26,6 +27,25 @@ class InstallationConflict(ValueError):
 class InstallationService:
     def __init__(self, repository: InstallationRepository | None = None):
         self.repository = repository or InstallationRepository()
+
+    @staticmethod
+    async def readiness() -> InstallationReadiness:
+        # Fixed deployment-owned health paths; no user-controlled URL input.
+        urls = {
+            "shreckrpg": os.getenv("SHRECKNET_INSTALLATION_RPG_URL", "http://shreckrpg_api:8200") + "/health",
+            "shreckllm": get_settings().shreckllm_base_url.rstrip("/") + "/health",
+            "shreckworld": os.getenv("SHRECKNET_INSTALLATION_WORLD_URL", "http://shreckworld_api:8120") + "/ready",
+        }
+        async with httpx.AsyncClient(timeout=2) as client:
+            async def check(service_id, url):
+                try:
+                    response = await client.get(url)
+                    ready = response.status_code == 200
+                except httpx.HTTPError:
+                    ready = False
+                return InstallationServiceReadiness(id=service_id, status="ready" if ready else "starting")
+            services = await asyncio.gather(*(check(key, url) for key, url in urls.items()))
+        return InstallationReadiness(services=[InstallationServiceReadiness(id="shrecknet", status="ready"), *services])
 
     @staticmethod
     def fingerprint(keys: list[str]) -> str:

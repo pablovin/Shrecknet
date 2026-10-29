@@ -39,7 +39,7 @@ class BrowserRegistration(BaseModel):
 
 
 class InstallationClaim(BrowserRegistration):
-    claim_token: str = Field(min_length=32, max_length=256, repr=False)
+    claim_token: str | None = Field(default=None, min_length=32, max_length=256, repr=False)
 
 
 class SessionUser(BaseModel):

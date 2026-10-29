@@ -121,3 +121,21 @@ async def test_folio_patch_only_serializes_supplied_fields():
     args = request.call_args
     assert args.args == ("PATCH", "/ontologies/7/pages/page-1/folio")
     assert args.kwargs["json"] == {"expected_updated_at": "2026-01-01T00:00:00Z", "entity_instance_id": "node-1", "node_avatar_url": None}
+
+
+@pytest.mark.asyncio
+async def test_delta_folio_patch_serializes_only_touched_relationships():
+    from shrecknet_client.atlas import AtlasFolioPatch, AtlasRelationshipChanges
+    request = AsyncMock(return_value={
+        "instance_id": "page", "ontology_id": 7, "name": "Page",
+        "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-02T00:00:00Z",
+        "entities": [], "folio_projection": {"scenes": "omitted", "relationships": "omitted", "relationship_editing": "delta-v1"},
+    })
+    api = OntologiesAPI(SimpleNamespace(raw_request=request))
+    result = await api.patch_folio(7, "page", AtlasFolioPatch(
+        expected_updated_at="2026-01-01T00:00:00Z", entity_instance_id="source",
+        relationship_changes=AtlasRelationshipChanges(remove=["chosen-edge"])))
+    body = request.call_args.kwargs["json"]
+    assert body["relationship_changes"] == {"remove": ["chosen-edge"]}
+    assert "relationships" not in body
+    assert result.folio_projection.relationship_editing == "delta-v1"

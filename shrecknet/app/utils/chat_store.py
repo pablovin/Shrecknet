@@ -7,14 +7,14 @@ from typing import Any
 from app.core.config_store import get_settings
 
 
-def _chat_file_path(user_id: int, agent_id: str, chat_id: str) -> Path:
+def _chat_file_path(user_id: int, agent_id: str | None, chat_id: str) -> Path:
     settings = get_settings()
-    base = Path(settings.media_root) / "chats" / str(user_id) / str(agent_id)
+    base = Path(settings.media_root) / "chats" / str(user_id) / (str(agent_id) if agent_id is not None else "site-elder")
     base.mkdir(parents=True, exist_ok=True)
     return base / f"{chat_id}.json"
 
 
-def init_chat_file(user_id: int, agent_id: str, chat_id: str) -> None:
+def init_chat_file(user_id: int, agent_id: str | None, chat_id: str) -> None:
     path = _chat_file_path(user_id, agent_id, chat_id)
     if path.exists():
         return
@@ -30,7 +30,7 @@ def init_chat_file(user_id: int, agent_id: str, chat_id: str) -> None:
 
 def append_message(
     user_id: int,
-    agent_id: str,
+    agent_id: str | None,
     chat_id: str,
     role: str,
     content: str,
@@ -55,7 +55,7 @@ def append_message(
     path.write_text(json_dumps(data))
 
 
-def read_chat(user_id: int, agent_id: str, chat_id: str) -> dict[str, Any] | None:
+def read_chat(user_id: int, agent_id: str | None, chat_id: str) -> dict[str, Any] | None:
     path = _chat_file_path(user_id, agent_id, chat_id)
     if not path.exists():
         return None
@@ -65,7 +65,7 @@ def read_chat(user_id: int, agent_id: str, chat_id: str) -> dict[str, Any] | Non
         return None
 
 
-def delete_chat_file(user_id: int, agent_id: str, chat_id: str) -> None:
+def delete_chat_file(user_id: int, agent_id: str | None, chat_id: str) -> None:
     path = _chat_file_path(user_id, agent_id, chat_id)
     if path.exists():
         try:

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class DefaultWorldsRequest(BaseModel):
     worlds: list[str] = Field(
         default_factory=list,
-        description="World identifiers to create (fantasy, horror, scifi)",
+        description="World identifiers to create (first_world, fantasy, horror, scifi)",
     )
 
 

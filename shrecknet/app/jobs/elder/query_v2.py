@@ -19,6 +19,7 @@ from app.jobs.character_incorporation import (
 )
 from app.integrations.llm.model_policy import LLMTask
 from app.core.config_store import LLMModelTarget
+from app.jobs.elder.context import ElderExecutionContext
 from app.jobs.elder.context_budget import partition_complete_records, serialize_evidence
 from app.jobs.elder.debug_artifacts import ElderDebugArtifacts
 from app.jobs.elder.evidence import assemble_budgeted_evidence
@@ -252,9 +253,9 @@ class ElderQueryV2:
         usage_start = self._usage_event_count()
         trace: list[TraceStep] = []
         timings: dict[str, float] = {}
-        ontology_ids = [ontology.id for ontology in (agent.ontologies or [])]
+        ontology_ids = list(agent.ontology_ids) if isinstance(agent, ElderExecutionContext) else [ontology.id for ontology in (agent.ontologies or [])]
         if not ontology_ids:
-            raise ValueError("Elder agent has no assigned ontologies")
+            raise ValueError("Elder requires at least one world")
 
         resolve_started = time.monotonic()
         if callable(getattr(self.graph_retriever, "list_entities_by_ontology", None)):

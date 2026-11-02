@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.api.deps import require_roles
+
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -336,3 +338,24 @@ async def delete_agent_embedding_jobs(
         "ontology_id": ontology_id,
         "include_stuck_only": include_stuck_only,
     }
+
+
+@router.delete("/worlds/{ontology_id}/embedding-jobs")
+async def delete_world_embedding_jobs(
+    ontology_id: int,
+    jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
+    actor: User = Depends(require_roles("admin")),
+) -> dict[str, int]:
+    return {"deleted": await BackgroundJobService(jobs_session).delete_world_embedding_jobs(ontology_id)}
+
+
+@router.delete("/worlds/{ontology_id}/embedding-jobs/{job_id}")
+async def delete_world_embedding_job(
+    ontology_id: int, job_id: int,
+    jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
+    actor: User = Depends(require_roles("admin")),
+) -> dict[str, int]:
+    count = await BackgroundJobService(jobs_session).delete_world_embedding_jobs(ontology_id, job_id)
+    if not count:
+        raise HTTPException(status_code=404, detail="World embedding job not found")
+    return {"deleted": count}

@@ -1,11 +1,12 @@
 # Elder Query Lifecycle
 
-This phase adds Elder query and chat lifecycle support.
+Elder is a built-in assistant. Users and agent callers choose worlds; administration retains activation and provider/model settings. New calls do not need an Agent record.
 
 ## SDK methods and endpoint coverage
 
 | SDK method | Endpoint |
 |---|---|
+| `sdk.elder.query_site(request)` | `POST /jobs/elder/query` |
 | `sdk.elder.query(agent_id, request)` | `POST /jobs/elder/{agent_id}/query` |
 | `sdk.elder.create_chat(payload)` | `POST /jobs/elder/chats/` |
 | `sdk.elder.list_chats(...)` | `GET /jobs/elder/chats/` |
@@ -22,8 +23,12 @@ python python_sdk/examples/07_elder/02_elder_query_lifecycle.py
 ```
 
 ```python
-request = ElderQueryRequest(query="What happened to Ernst lately?")
-response = await sdk.elder.query(agent_id, request)
+from shrecknet_client.models import ElderWorldScope, ElderQueryRequest, ElderChatCreate
+scope = ElderWorldScope(mode="selected", ontology_ids=[7, 8])
+chat = await sdk.elder.create_chat(ElderChatCreate(name="Compare worlds", world_scope=scope))
+response = await sdk.elder.query_site(ElderQueryRequest(query="What happened to Ernst lately?", chat_id=chat.id))
+# Stateless tools can pass world_scope=scope directly instead of chat_id.
+# ElderWorldScope(mode="all") resolves all currently available worlds.
 ```
 
 At present, each terminal planner step selects an evidence type. Shrecknet maps
@@ -55,3 +60,11 @@ The SDK request model should be updated with the backend's existing optional
 `instance_id` field. When V3 ships, it should also expose optional
 `response_scope` (`brief`, `standard`, or `deep`); clients that omit it remain
 compatible with the `standard` default.
+
+New chat responses expose `agent_id=None`, `scope_mode`, resolved `ontology_ids`,
+and `read_only`. Scope is fixed per chat; choose a new chat when changing worlds.
+Older Agent methods remain compatibility interfaces. Historical chats remain
+readable and do not count against the ten-new-chat quota; the global query rejects
+legacy ambiguous context. Deploy the matching Shrecknet database and API first.
+See the [backend contract](../../../Documentation/Agents/Elder/Elder.md) for storage,
+world maintenance, error codes, and rollback.

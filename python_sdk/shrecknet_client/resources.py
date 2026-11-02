@@ -1318,6 +1318,11 @@ class ElderAPI:
         self._agents = agents
         self._embeddings = embeddings
 
+    async def query_site(self, request: ElderQueryRequest) -> ElderQueryResponse:
+        """Call the built-in Elder with an owned chat or explicit world_scope."""
+        data = await self._client.raw_request("POST", "/jobs/elder/query", json=request.model_dump(exclude_none=True))
+        return ElderQueryResponse.model_validate(data)
+
     async def query(self, agent_id: str, request: ElderQueryRequest) -> ElderQueryResponse:
         data = await self._client.raw_request("POST", f"/jobs/elder/{agent_id}/query", json=request.model_dump(exclude_none=True))
         return ElderQueryResponse.model_validate(data)

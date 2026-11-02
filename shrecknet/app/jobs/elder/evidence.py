@@ -143,6 +143,7 @@ async def assemble_evidence(
         sources.append(
             SourceNode(
                 node_id=record.node_id,
+                ontology_id=int(properties["ontology_id"]) if str(properties.get("ontology_id", "")).isdigit() else (ontology_ids[0] if len(ontology_ids) == 1 else None),
                 node_label=record.source_kind,
                 node_type=(record.source_kind or "").lower() or None,
                 node_name=record.display_name,

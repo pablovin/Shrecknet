@@ -19,9 +19,11 @@ class ElderChatRepository:
     async def create_chat(
         self,
         user_id: int,
-        agent_id: str,
+        agent_id: str | None,
         name: str,
         color: Optional[str] = None,
+        scope_mode: str | None = None,
+        ontology_ids: list[int] | None = None,
     ) -> ElderChat:
         """Create a new chat."""
         chat = ElderChat(
@@ -29,6 +31,8 @@ class ElderChatRepository:
             agent_id=agent_id,
             name=name,
             color=color,
+            scope_mode=scope_mode, ontology_ids=ontology_ids,
+            legacy_storage_agent_id=agent_id,
         )
         self.session.add(chat)
         await self.session.flush()
@@ -43,7 +47,7 @@ class ElderChatRepository:
         return result.scalar_one_or_none()
 
     async def get_by_id_with_history(
-        self, chat_id: str, limit: int = 50
+        self, chat_id: str, limit: int | None = 50
     ) -> Optional[ElderChat]:
         """Get chat by ID with history (limited to most recent messages)."""
         result = await self.session.execute(
@@ -52,14 +56,6 @@ class ElderChatRepository:
             .options(joinedload(ElderChat.history))
         )
         chat = result.unique().scalar_one_or_none()
-
-        if chat and chat.history:
-            # Sort history by created_at descending and limit
-            chat.history = sorted(
-                chat.history, key=lambda h: h.created_at, reverse=True
-            )[:limit]
-            # Reverse to get chronological order for the limited set
-            chat.history.reverse()
 
         return chat
 
@@ -81,11 +77,11 @@ class ElderChatRepository:
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def count_user_chats_for_agent(self, user_id: int, agent_id: str) -> int:
+    async def count_user_chats_for_agent(self, user_id: int, agent_id: str | None) -> int:
         """Count how many chats a user has with a specific agent."""
         result = await self.session.execute(
             select(func.count(ElderChat.id)).where(
-                and_(ElderChat.user_id == user_id, ElderChat.agent_id == agent_id)
+                and_(ElderChat.user_id == user_id, ElderChat.agent_id == agent_id, ElderChat.scope_mode.is_not(None) if agent_id is None else True)
             )
         )
         return result.scalar_one()
@@ -141,7 +137,7 @@ class ElderChatRepository:
         return message
 
     async def get_chat_history(
-        self, chat_id: str, limit: int = 50, offset: int = 0
+        self, chat_id: str, limit: int | None = 50, offset: int = 0
     ) -> list[ElderChatHistory]:
         """Get chat history with pagination."""
         query = (

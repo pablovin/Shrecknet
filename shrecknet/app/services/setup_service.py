@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import UploadFile
 
-from app.models.ontology import AuthorType
+from app.models.ontology import AuthorType, Cardinality, PropertyDataType
 from app.schemas.setup import (
     DefaultWorldEntityResult,
     DefaultWorldRelationshipResult,
@@ -52,7 +52,7 @@ class SetupService:
         response = DefaultWorldsResponse()
         normalized = [w.strip().lower() for w in worlds if w and w.strip()]
         for world in normalized:
-            if world not in {"fantasy", "horror", "scifi"}:
+            if world not in {"first_world", "fantasy", "horror", "scifi"}:
                 response.skipped.append(world)
                 continue
 
@@ -64,20 +64,21 @@ class SetupService:
         return response
 
     async def resume_default_world(self, world: str) -> DefaultWorldResult:
-        if world not in {"fantasy", "horror", "scifi"}:
+        if world not in {"first_world", "fantasy", "horror", "scifi"}:
             raise ValueError("Unknown starter template")
         result = await self._create_world(world, resume=True)
         assert result is not None
         return result
 
     async def _create_world(self, world: str, *, resume: bool = False) -> DefaultWorldResult | None:
-        existing = await self.ontology_service.repository.get_by_name(world)
+        name = "First World" if world == "first_world" else world
+        existing = await self.ontology_service.repository.get_by_name(name)
         if existing and not resume:
             return None
 
         ontology = existing or await self.ontology_service.create_ontology(
             {
-                "name": world,
+                "name": name,
                 "description": self._world_description(world),
             }
         )
@@ -87,7 +88,7 @@ class SetupService:
                 ontology, {"image_url": ontology_image_url}
             )
 
-        entities_spec = self._entity_specs()
+        entities_spec = self._first_world_entity_specs() if world == "first_world" else self._entity_specs()
         entity_results: list[DefaultWorldEntityResult] = []
         entity_id_by_name: dict[str, int] = {}
 
@@ -118,7 +119,10 @@ class SetupService:
             )
             entity_id_by_name[spec.name] = entity.id
 
-        relationships_spec = self._relationship_specs()
+        if world == "first_world":
+            await self._ensure_first_world_properties(ontology.id, entity_id_by_name)
+
+        relationships_spec = self._first_world_relationship_specs() if world == "first_world" else self._relationship_specs()
         relationship_results: list[DefaultWorldRelationshipResult] = []
         for spec in relationships_spec:
             source_id = entity_id_by_name.get(spec.source_entity)
@@ -135,7 +139,7 @@ class SetupService:
                     "description": spec.description,
                     "destiny_entity_id": destiny_id,
                     "bi_directional": spec.bi_directional,
-                    "auto_generatable": False,
+                    "auto_generatable": world == "first_world",
                     "author_type": AuthorType.AGENT,
                     "agent_id": "system",
                 },
@@ -157,6 +161,8 @@ class SetupService:
         )
 
     def _world_description(self, world: str) -> str:
+        if world == "first_world":
+            return "A story-grounded world of characters, significant places, named items, and creatures extracted from your original stories."
         if world == "fantasy":
             return "A realm of magic, ancient ruins, and heroic quests."
         if world == "horror":
@@ -180,6 +186,55 @@ class SetupService:
             if candidate.exists():
                 return candidate
         return candidate_roots[0]
+
+    def _first_world_entity_specs(self) -> list[_WorldEntitySpec]:
+        return [
+            _WorldEntitySpec("Story", "Original story source supplied by a person and stored verbatim in the graph. Never generate, rewrite, or invent source text with AI.", False, False, "Story.png"),
+            _WorldEntitySpec("Character", "An identifiable person or person-like participant who appears in the source story and acts, speaks, or influences events. Extract only supported facts; do not invent characters or biographies.", True, True, "NPC.png"),
+            _WorldEntitySpec("Important Place", "A location, landmark, city, region, or country explicitly mentioned in the story and essential to its events or stakes. Exclude incidental locations and passing geographic references.", True, True, "Place.png"),
+            _WorldEntitySpec("Important Item", "An object with its own explicit proper name in the source story that is central to the plot, conflict, or a consequential action. Exclude unnamed objects, generic equipment, and incidental possessions.", True, True, "Item.png"),
+            _WorldEntitySpec("Creature", "A narratively significant non-person creature, beast, monster, or creature kind explicitly mentioned in the source story. Exclude incidental wildlife; represent speaking person-like participants as Characters rather than duplicating them as Creatures.", True, True, "Creature.png"),
+        ]
+
+    async def _ensure_first_world_properties(self, ontology_id: int, entities: dict[str, int]) -> None:
+        # Text/alias already store the source and canonical name; properties add structured facts.
+        specs = {
+            "Story": [("title", "Title supplied with the original story."), ("author", "Original author, when supplied."), ("source_reference", "Original document, URL, or citation supplied by the user.")],
+            "Character": [("aliases", "Other names explicitly used in the source."), ("role", "Role in the events, supported by the source."), ("traits", "Explicitly described appearance or personality."), ("motivation", "Goals stated or directly supported by the story.")],
+            "Important Place": [("aliases", "Other names explicitly used in the source."), ("place_type", "For example landmark, building, city, region, or country."), ("significance", "Why this location is essential to the story.")],
+            "Important Item": [("aliases", "Other explicit names of this named object."), ("item_type", "Kind of object described by the story."), ("significance", "Why this named item is central to the story."), ("abilities", "Powers or functions explicitly described in the source.")],
+            "Creature": [("aliases", "Other names explicitly used in the source."), ("creature_kind", "Species or kind, only when identified in the source."), ("significance", "Why this creature matters to the story."), ("abilities", "Abilities explicitly described in the source.")],
+        }
+        for kind, properties in specs.items():
+            entity_id = entities[kind]
+            existing = {prop.name for prop in await self.ontology_service.list_properties(ontology_id, entity_id)}
+            for name, description in properties:
+                if name not in existing:
+                    await self.ontology_service.add_property(ontology_id, entity_id, {
+                        "name": name, "description": description + " Leave unknown facts empty; never invent details.",
+                        "cardinality": Cardinality.MANY if name in {"aliases", "traits", "abilities"} else Cardinality.ONE,
+                        "data_type": PropertyDataType.TEXT, "auto_generatable": kind != "Story",
+                        "author_type": AuthorType.AGENT, "agent_id": "system",
+                    })
+
+    def _first_world_relationship_specs(self) -> list[_WorldRelationshipSpec]:
+        relations = [
+            ("features character", "Story", "Character"),
+            ("features important place", "Story", "Important Place"),
+            ("features important item", "Story", "Important Item"),
+            ("features creature", "Story", "Creature"),
+            ("interacts with", "Character", "Character"),
+            ("visits", "Character", "Important Place"),
+            ("possesses", "Character", "Important Item"),
+            ("encounters", "Character", "Creature"),
+            ("located in", "Important Place", "Important Place"),
+            ("located at", "Important Item", "Important Place"),
+            ("inhabits", "Creature", "Important Place"),
+        ]
+        return [_WorldRelationshipSpec(
+            name, f"{source} {name} {target}, only when explicitly supported by the original story. Do not infer unsupported links.",
+            source, target, bi_directional=name == "interacts with",
+        ) for name, source, target in relations]
 
     def _entity_specs(self) -> list[_WorldEntitySpec]:
         return [

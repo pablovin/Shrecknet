@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -40,12 +41,15 @@ class ElderChat(Base):
     user_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    agent_id: Mapped[str] = mapped_column(
+    agent_id: Mapped[str | None] = mapped_column(
         String(36),
-        ForeignKey("agents.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
+    scope_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ontology_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
+    legacy_storage_agent_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)  # Hex color
     created_at: Mapped[datetime] = mapped_column(

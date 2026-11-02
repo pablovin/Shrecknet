@@ -3,7 +3,8 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from app.jobs.elder.scope import ElderWorldScope
 
 
 # Chat History Schemas
@@ -37,7 +38,8 @@ class ElderChatHistoryResponse(ElderChatHistoryBase):
 class ElderChatCreate(BaseModel):
     """Schema for creating a new chat."""
 
-    agent_id: str = Field(..., description="Agent ID")
+    agent_id: str | None = None
+    world_scope: ElderWorldScope | None = None
     name: str = Field(..., min_length=1, max_length=100, description="Chat name")
     color: Optional[str] = Field(
         None,
@@ -64,7 +66,10 @@ class ElderChatResponse(BaseModel):
 
     id: str = Field(..., description="Chat ID")
     user_id: int = Field(..., description="User ID")
-    agent_id: str = Field(..., description="Agent ID")
+    agent_id: str | None = None
+    scope_mode: str | None = None
+    ontology_ids: list[int] | None = None
+    read_only: bool = False
     name: str = Field(..., description="Chat name")
     color: Optional[str] = Field(None, description="Hex color code")
     created_at: datetime = Field(..., description="Creation timestamp")

@@ -1,22 +1,91 @@
-# Elder Agent — Current Query and Retrieval Contract
+# Elder — Site-wide Query and Retrieval Contract
 
-Elder is Shrecknet's retrieval-grounded knowledge agent for canonical `EntityInstance`, `Scene`, and `Milestone` memory. It returns display-ready answers with deterministic, structured source attribution.
+Elder is Shrecknet's retrieval-grounded knowledge assistant for canonical `EntityInstance`, `Scene`, and `Milestone` memory. It returns display-ready answers with deterministic, structured source attribution.
 
 This page documents the runtime currently in the repository. The proposed next revision is the [Elder Query V3 implementation plan](./ELDER_QUERY_V3_IMPLEMENTATION_PLAN.md).
 
-## Endpoints
+## Built-in Elder and caller-selected worlds
+
+Elder has one built-in website identity. Users and calling agents select its worlds per conversation/request; administrators do not assign maximum worlds or configure Elder identities. Existing `enable_ai_agents` and the three `model_elder_*` provider/model targets remain the configuration controls. No hidden Agent is created.
+
+- `GET /jobs/elder/status` returns the authenticated viewer-safe identity and activation state.
+- `POST /jobs/elder/chats/` accepts `name`, optional `color`, and `world_scope` without `agent_id`.
+- `POST /jobs/elder/query` accepts an owned `chat_id`, or an explicit `world_scope` for stateless callers.
+- `POST /chat/messages/stream` also accepts agentless scoped requests; its JSON completion contract is unchanged.
+- Chat list/read/update/delete routes remain at `/jobs/elder/chats/`; lists without an Agent filter include the current user's new and historical chats.
+
+`world_scope` is `{ "mode": "selected", "ontology_ids": [7] }` for one world,
+`{ "mode": "selected", "ontology_ids": [7, 8] }` for several, or `{ "mode": "all" }`.
+World IDs must be positive, existing, and readable under the platform's current
+world-access rules. At present, signed-in world reading has a shared audience;
+private perspectives retain their existing retrieval rules. The backend resolves
+scope before catalogue grounding, matching, graph/vector retrieval, and synthesis.
+Caller-provided grounding definitions or entity hints never replace that scope.
+Optional page focus is validated through canonical graph services against it.
+
+New chats store a fixed, resolved world snapshot and have `agent_id: null`,
+`scope_mode`, `ontology_ids`, and `read_only: false`. An all-world chat includes
+worlds available at its creation; create another chat to include later additions.
+An explicit query scope conflicting with that snapshot returns 409. Stateless
+queries require a scope (422 if absent); unknown worlds return 404, unavailable AI
+returns 503, and missing/non-owned chats return 404. A removed world makes the
+scoped chat unavailable rather than silently narrowing its historical context.
+Long-running global queries revalidate their worlds before saving the reply.
+
+Sources include `ontology_id` when known, allowing citations to navigate to their
+own world. A single-world fallback supports older source metadata. New context
+uses `ElderExecutionContext`, not a persisted Agent. The companion orchestrator
+allocates that built-in tool with its chosen world, without discovering an Elder
+Agent assignment.
+
+## Conversation compatibility, quota, and migration
+
+Ten new site-Elder chats are allowed per user across all scopes. Historical chats
+remain separate and do not count toward that quota. They are readable with
+`read_only: true` in the new interface; the global query rejects their ambiguous
+historical context with 409. Older Agent-scoped query/create APIs remain
+compatibility paths and retain their assigned-world scope. They verify that an
+owned chat belongs to the specified Agent. No chats or Agent records are
+implicitly merged or deleted.
+
+Back up application SQLite and `media/chats` together before deploying Shrecknet.
+Startup adds nullable scope and legacy-storage provenance, and rebuilds the old
+required/cascading Elder Agent foreign key into a nullable `ON DELETE SET NULL`
+reference. It preserves rows, indexes, and dependent SQL history, disabling
+SQLite foreign keys only outside the table-copy transaction and restoring their
+previous setting. This migration is idempotent. Legacy transcript paths remain
+resolvable even if their old Agent is later deleted. New files use
+`media/chats/{user_id}/site-elder/{chat_id}.json`; legacy files retain their
+original Agent directories. SQL-only legacy history remains readable when a
+transcript file does not exist. Context trimming never mutates stored history.
+
+Deploy backend and consumers before retiring old setup. Both frontends remove
+Elder from Agent Studio; guided installation no longer creates an Elder Agent.
+World embedding/index state remains reusable. Administrator maintenance uses
+`DELETE /jobs/worlds/{ontology_id}/embedding-jobs[/{job_id}]`, restricted to that
+world's Neo4j embedding records. These retain the existing record-removal
+semantics; deleting a job record does not guarantee that an executing worker has
+stopped.
+
+An older required-Agent schema cannot represent newly created chats. Rollback
+requires compatible readers or exporting new chats before restoring the combined
+SQL/file backup. Drain in-flight work before reverting and do not delete retained
+Agent directories during rollout. Real provider/index execution and many-world
+performance require operational validation.
+
+## Legacy query endpoints
 
 - `POST /jobs/elder/{agent_id}/query`
 - `POST /chat/messages/stream` (stream-compatible request endpoint; response is `ElderQueryResponse`)
 
-Both require normal authentication and enforce Elder ownership, assigned ontology scope, optional instance scope, and chat ownership. The old `/jobs/elder/chat/messages/stream` path is not registered.
+These compatibility paths require normal authentication, enforce assigned ontology scope and chat ownership, and retain optional instance scope. The stream adapter can also dispatch the new agentless scoped contract. The old `/jobs/elder/chat/messages/stream` path is not registered.
 
 ## Current runtime
 
 `ElderQueryV2` is the stable orchestrator name. Its public pipeline version is `elder-query-retrieval-v3`.
 
-1. The API validates the agent, optional `instance_id`, and optional `chat_id`, then loads recent chat history and ontology definitions.
-2. Query grounding resolves aliases by paginating entities in every assigned ontology and applying Python similarity matching. `grounding.py` caches a supplied definitions payload process-locally, but the API still loads definitions for each request.
+1. The API resolves the caller-selected world snapshot (or a compatibility Agent), validates optional `instance_id` and owned `chat_id`, then loads recent history and scoped ontology definitions.
+2. Query grounding resolves aliases by paginating entities in every resolved ontology and applying Python similarity matching. `grounding.py` caches a supplied definitions payload process-locally, but the API still loads definitions for each request.
 3. A narrow exact-entity overview builds a deterministic plan. Other queries call the retrieval planner.
 4. The executor performs bounded deterministic retrieval waves and applies ontology/instance filtering.
 5. Evidence is consolidated by node and hydrated using `complete_source` mode. Terminal planner evidence types use 12k–100k soft token targets.

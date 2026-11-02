@@ -84,34 +84,24 @@ async def _run_elder_agent(
     model_policy: ModelPolicy,
     agent_id: str,
     query: str,
+    ontology_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     settings = get_settings()
+    from app.api.agent_feature_gate import require_ai_agents_enabled
+    from app.jobs.elder.context import ElderExecutionContext
+    from app.jobs.elder.scope import ElderWorldScope
+    from app.services.elder_scope_service import ElderScopeService
+    require_ai_agents_enabled()
     async with AsyncSessionMaker() as sql_session:
-        repo = AgentRepository(sql_session)
-        agent = await repo.get_by_id(agent_id)
-    if agent is None:
-        logger.warning("companion_agent_missing job=elder agent_id=%s", agent_id)
-        return {
-            "agent_id": agent_id,
-            "agent_job": "elder",
-            "ok": False,
-            "error": "agent_not_found",
-        }
-    if agent.job != "elder":
-        logger.warning(
-            "companion_agent_invalid_job expected=elder actual=%s agent_id=%s agent_name=%s",
-            agent.job,
-            agent.id,
-            agent.name,
-        )
-        return {
-            "agent_id": agent.id,
-            "agent_name": agent.name,
-            "agent_job": agent.job,
-            "ok": False,
-            "error": "invalid_job_type",
-        }
+        if ontology_ids is None:
+            # Compatibility for already queued legacy jobs only.
+            legacy = await AgentRepository(sql_session).get_by_id(agent_id)
+            if not legacy or legacy.job != "elder" or not legacy.active:
+                raise ValueError("Elder scope is required")
+            ontology_ids = [ontology.id for ontology in legacy.ontologies]
+        worlds = await ElderScopeService(sql_session).resolve(ElderWorldScope(mode="selected", ontology_ids=ontology_ids))
+    agent = ElderExecutionContext(tuple(worlds))
 
     orchestrator = ElderOrchestrator(
         llm_client=llm_client,
@@ -404,6 +394,7 @@ async def _run_turn(
                 model_policy=model_policy,
                 agent_id=agent_id,
                 query=query,
+                ontology_ids=[int(session_payload["ontology_id"])],
             )
 
         async def _librarian_runner(agent_id: str) -> dict[str, Any]:

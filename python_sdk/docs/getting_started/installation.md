@@ -11,7 +11,7 @@ from shrecknet_client import Shrecknet, InstallationModels
 
 async with Shrecknet(base_url="http://localhost:8080/api/shrecknet") as sdk:
     await sdk.login("keeper", "your existing owner password")
-    state = await sdk.installation.create_world("fantasy")
+    state = await sdk.installation.create_world("first_world", include_example=False)
     # First configure/activate a real model through the ShreckLLM management API.
     state = await sdk.installation.configure_models(InstallationModels(
         provider="your-provider", model="your-configured-model", jobs=["elder"]
@@ -24,7 +24,12 @@ async with Shrecknet(base_url="http://localhost:8080/api/shrecknet") as sdk:
     state = await sdk.installation.complete()
 ```
 
-`create_world` defaults to a labelled source/character/place/scene example, with
+`create_world("first_world")` creates **First World** with Story, Character,
+Important Place, Important Item and Creature definitions, properties and relationships.
+It includes no fictional example, even if `include_example=True`. Story generation
+is disabled; the other types support source-grounded AI extraction. Existing calls
+default to `fantasy` for compatibility. The older templates include an optional
+labelled source/character/place/scene example, with
 normal semantic indexing queued separately. Agent-specific input/preparation still
 belongs to its domain API. A passed check verifies the queue/worker/model response
 path, not every domain agent pipeline. Do not retry a timed-out paid request

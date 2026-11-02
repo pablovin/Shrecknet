@@ -18,12 +18,14 @@ from app.db.migrations import (
     migrate_existing_users_email_verified,
     migrate_character_embodiment_timeline_column,
 )
+from app.db.elder_chat_migration import migrate_site_elder_chats
 from app.db.session import get_engine, get_sessionmaker
 
 
 def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
+    migrate_site_elder_chats(engine)
     with engine.begin() as conn:
         migrate_agents_table(conn)
         migrate_novelist_agent_preferences(conn)

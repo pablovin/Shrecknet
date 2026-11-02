@@ -44,7 +44,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## Elder
 
-- [Elder query and retrieval](./Agents/Elder/Elder.md) — current runtime and stable contract
+- [Elder query and retrieval](./Agents/Elder/Elder.md) — built-in identity, caller-selected world scope, runtime, history migration, and stable contract
 - [Elder Query V3 implementation plan](./Agents/Elder/ELDER_QUERY_V3_IMPLEMENTATION_PLAN.md) — proposed latency, cost, and answer-quality target with compatibility requirements
 
 ## ShreckWorld

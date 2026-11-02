@@ -70,6 +70,7 @@ class SourceNode(BaseModel):
     """Grounding source returned to clients."""
 
     node_id: str
+    ontology_id: int | None = None
     node_label: Optional[str] = None
     node_name: Optional[str] = None
     node_type: Optional[str] = None
@@ -111,9 +112,13 @@ class ElderRetrievalPlan(BaseModel):
     steps: list[ElderRetrievalPlanStep] = Field(default_factory=list)
 
 
+from app.jobs.elder.scope import ElderWorldScope
+
+
 class ElderQueryRequest(BaseModel):
     """Request schema for Elder query."""
 
+    world_scope: ElderWorldScope | None = None
     query: str = Field(..., min_length=1, description="User query")
     # Kept for request backward-compatibility; response no longer depends on mode.
     mode: str = Field(

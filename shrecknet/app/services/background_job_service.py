@@ -91,6 +91,9 @@ class BackgroundJobService:
 
         return BackgroundJobResponse.model_validate(job)
 
+    async def delete_world_embedding_jobs(self, ontology_id: int, job_id: int | None = None) -> int:
+        return await self.repo.delete_world_embedding_jobs(ontology_id, job_id)
+
     async def delete_jobs(self, job_ids: list[int]) -> int:
         """Delete multiple background jobs. Returns count of deleted jobs."""
         return await self.repo.delete_jobs(job_ids)

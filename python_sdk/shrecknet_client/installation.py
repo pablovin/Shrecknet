@@ -31,7 +31,7 @@ class InstallationProgress(BaseModel):
 
 class InstallationWorldRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    template: Literal["fantasy", "horror", "scifi"] = "fantasy"
+    template: Literal["first_world", "fantasy", "horror", "scifi"] = "fantasy"
     include_example: bool = True
 
 class InstallationModels(BaseModel):
@@ -64,7 +64,7 @@ class InstallationAPI:
     async def status(self) -> InstallationState:
         return InstallationState.model_validate(await self.client.raw_request("GET", "/setup/installation/state"))
 
-    async def create_world(self, template: Literal["fantasy", "horror", "scifi"] = "fantasy", *, include_example: bool = True) -> InstallationState:
+    async def create_world(self, template: Literal["first_world", "fantasy", "horror", "scifi"] = "fantasy", *, include_example: bool = True) -> InstallationState:
         payload = InstallationWorldRequest(template=template, include_example=include_example)
         return InstallationState.model_validate(await self.client.raw_request("POST", "/setup/installation/world", json=payload.model_dump()))
 

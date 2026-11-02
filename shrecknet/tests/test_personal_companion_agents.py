@@ -340,5 +340,7 @@ async def test_orchestrator_queue_refreshes_allocated_tools(client, session_make
             details = json.loads(details)
 
     allocated_tools = details.get("allocated_tools") or {}
-    assert len(allocated_tools.get("elder") or []) >= 2
+    assert len(allocated_tools.get("elder") or []) == 1
+    assert allocated_tools["elder"][0]["id"] == "elder"
+    assert allocated_tools["elder"][0]["ontology_ids"] == [301]
     assert len(allocated_tools.get("librarian") or []) >= 2

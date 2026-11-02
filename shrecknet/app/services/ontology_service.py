@@ -592,6 +592,9 @@ class OntologyService:
     ) -> None:
         destiny_id = relationship.destiny_entity_id
         source_id = relationship.entity_id
+        # A same-type relationship is its own reverse; never delete or mirror it.
+        if destiny_id == source_id:
+            return
         if destiny_id is None:
             await self._remove_mirror_relationship(ontology_id, relationship)
             return
@@ -635,7 +638,7 @@ class OntologyService:
         self, ontology_id: int, relationship: OntologyRelationship
     ) -> None:
         destiny_id = relationship.destiny_entity_id
-        if destiny_id is None:
+        if destiny_id is None or destiny_id == relationship.entity_id:
             return
         mirror = await self.repository.find_relationship_between(
             ontology_id, destiny_id, relationship.entity_id

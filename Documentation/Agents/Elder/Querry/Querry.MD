@@ -4,10 +4,13 @@ This document is the frontend-facing contract for the current Elder query API. T
 
 ## Endpoints
 
-- `POST /jobs/elder/{agent_id}/query`
-- `POST /chat/messages/stream` with `agent_id` in the body
+- `POST /jobs/elder/query` with an owned `chat_id` or explicit `world_scope`
+- `POST /jobs/elder/{agent_id}/query` (legacy Agent compatibility)
+- `POST /chat/messages/stream` with the same scope/chat contract, or legacy `agent_id`
 
 Both return `ElderQueryResponse`; the latter is stream-compatible by route name, not a server-sent-event response.
+
+See the [built-in Elder contract](../Elder.md#built-in-elder-and-caller-selected-worlds) for scope snapshots, permissions, history migration, errors, and rollout. Administrators configure activation and model targets only.
 
 ## Current request fields
 

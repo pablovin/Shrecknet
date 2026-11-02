@@ -34,10 +34,10 @@ class HeraldOrchestratorService:
     async def allocate_tools(self, ontology_id: int) -> OrchestratorToolAllocation:
         agents = await self.agent_repository.list_active_by_ontology_and_jobs(
             ontology_id=ontology_id,
-            jobs=["elder", "librarian"],
+            jobs=["librarian"],
         )
 
-        elder: list[AllocatedToolAgent] = []
+        elder = [AllocatedToolAgent(id="elder", name="Elder", job="elder", ontology_ids=[ontology_id])]
         librarian: list[AllocatedToolAgent] = []
         for agent in agents:
             payload = AllocatedToolAgent(

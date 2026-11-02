@@ -53,7 +53,7 @@ completion and verification fields; the browser cannot write a pass flag.
 | `GET /setup/installation/status` | Public `{enabled, owner_required, claim_mode}` only; no settings or secrets |
 | `GET /setup/installation/readiness` | Public, bounded health checks for the four application APIs; only service IDs and ready/starting status are returned |
 | `GET /setup/installation/state` | Administrator `InstallationState` |
-| `POST /setup/installation/world` | `{template: fantasy\|horror\|scifi, include_example: true}`; resumes starter ontology construction and returns the saved world |
+| `POST /setup/installation/world` | `{template: first_world\|fantasy\|horror\|scifi, include_example: true}`; resumes starter ontology construction and returns the saved world |
 | `PUT /setup/installation/models` | `{provider, model, jobs}`; requires a configured gateway model, creates/reuses supported world agents and saves target assignments |
 | `PUT /setup/installation/progress` | `{tour_completed: boolean}` only |
 | `POST /setup/installation/verify` | `{accept_provider_usage: true}`; atomically reserves one check and dispatches the worker task, returning 202 |
@@ -130,3 +130,52 @@ is implied by this fresh-install feature.
 See the frontend repository's `shreckos/documentations/getting-started/FIRST_RUN.md`
 for bundle assembly, local startup, image-only packaging and current release gates.
 Python SDK support is described in [installation SDK](../../python_sdk/docs/getting_started/installation.md).
+
+## First World sample ontology
+
+Select **First World (recommended)** during guided setup to create the world
+named **First World** with exactly five entity types. This template starts empty;
+`include_example` is ignored for it. Supply your own original story text through
+the normal authoring workflow. Setup makes no generation calls.
+
+| Type | AI generation | Definition and properties |
+| --- | --- | --- |
+| Story | Disabled | Original source text, stored in the entity text; title, author, source_reference are supplied manually. |
+| Character | Enabled | An identifiable person or person-like participant who acts, speaks, or influences events; aliases, role, traits, motivation. |
+| Important Place | Enabled | A source-mentioned location, city, region, or country essential to events or stakes; aliases, place_type, significance. Excludes incidental mentions. |
+| Important Item | Enabled | A plot-relevant object with its own explicit proper name; aliases, item_type, significance, abilities. Excludes unnamed equipment. |
+| Creature | Enabled | A significant non-person creature or creature kind mentioned in the source; aliases, creature_kind, significance, abilities. Person-like participants belong under Character. |
+
+All properties use text values. `aliases`, `traits`, and `abilities` allow multiple
+values; other properties allow one. Entity aliases hold canonical names. Unknown
+facts stay empty. AI-enabled means eligible for the existing extraction workflow,
+not automatic creation at installation. Relevance, proper-name, and grounding
+criteria are ontology instructions for extraction; they are not new deterministic
+validators on manually authored content.
+
+Story links to each extracted type through `features character`, `features
+important place`, `features important item`, and `features creature`. Characters
+`interact with` other characters (bidirectional), `visit` places, `possess` items,
+and `encounter` creatures. The exact stored labels are `interacts with`, `visits`,
+`possesses`, and `encounters`. Places link to containing places with `located in`,
+items to places with `located at`, and creatures to places with `inhabits`.
+All eleven relationship definitions support AI extraction; only source-supported
+links should be produced. Story source content and its properties remain excluded
+from AI generation.
+
+The template key is `first_world`; the display name is `First World`. Existing
+Fantasy, Horror, and Science fiction templates and the API's default `fantasy`
+remain available. Saved installations return their existing world without
+migration. An existing unrelated First World is refused before reservation.
+Retries resume missing types, properties, and relationships without duplicates.
+This release does not rewrite existing worlds or require a database migration.
+To undo a new sample, use normal world administration after checking its content.
+
+
+Same-type relationship definitions (for example place → place) retain their
+direction flag and are not mirrored or removed by reverse-link synchronization.
+
+The existing administrator/world-builder endpoint `POST /setup/default-worlds`
+also accepts `{"worlds": ["first_world"]}`. It creates the same template without
+installation state and skips it if First World already exists. Unknown identifiers
+remain skipped; existing genre identifiers retain their behavior.

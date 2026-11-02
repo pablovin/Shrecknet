@@ -22,6 +22,8 @@ from app.integrations.retrieval.neo4j_retriever import (
     Neo4jGraphRetriever,
 )
 from app.jobs.elder.elder import ElderOrchestrator
+from app.jobs.elder.context import ElderExecutionContext
+from app.services.elder_scope_service import ElderScopeService
 from app.jobs.elder.schemas import ElderQueryRequest, ElderQueryResponse
 from app.jobs.elder.v2_schemas import EvidenceCapacityError
 from app.models.user import User
@@ -34,7 +36,7 @@ chat_router = APIRouter(prefix="/chat/messages", tags=["elder"])
 
 
 class ChatMessageStreamRequest(ElderQueryRequest):
-    agent_id: str
+    agent_id: str | None = None
 
 
 async def get_llm_client():
@@ -127,7 +129,7 @@ async def get_elder_orchestrator(
 
 @router.post("/{agent_id}/query", response_model=ElderQueryResponse)
 async def query_elder(
-    agent_id: str,
+    agent_id: str | None,
     request: ElderQueryRequest,
     _current_user: User = Depends(get_current_user),
     db_session: AsyncSession = Depends(get_db_session),
@@ -148,46 +150,31 @@ async def query_elder(
     """
     from app.services.elder_chat_service import ElderChatService
 
-    # Get agent
-    agent_repo = AgentRepository(db_session)
-    agent = await agent_repo.get_by_id(agent_id)
-
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent not found",
-        )
-
-    # Check if agent is active
-    if not agent.active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Agent is not active",
-        )
-
-    # Check if agent has the elder job type
-    if agent.job != "elder":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Agent job type '{agent.job}' is not 'elder'",
-        )
-
-    # Optional v2 world scope is additive and must belong to an ontology assigned
-    # to this Elder. Existing clients omit it and retain all-assigned-ontology scope.
+    if agent_id is None:
+        ontology_ids = await ElderScopeService(db_session).query_worlds(_current_user.id, request.chat_id, request.world_scope)
+        agent = ElderExecutionContext(tuple(ontology_ids))
+    else:
+        agent = await AgentRepository(db_session).get_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if not agent.active or agent.job != "elder":
+            raise HTTPException(status_code=400, detail="Active Elder agent required")
+        ontology_ids = [ontology.id for ontology in (agent.ontologies or [])]
+        if request.chat_id:
+            owned = await ElderChatService(db_session).chat_repo.get_by_id(request.chat_id)
+            if not owned or owned.user_id != _current_user.id or owned.agent_id != agent_id:
+                raise HTTPException(status_code=404, detail="Chat not found")
     if request.instance_id:
-        from sqlalchemy import select
-        from app.models.ontology_instance import OntologyInstance
-
-        assigned_ontology_ids = {ontology.id for ontology in (agent.ontologies or [])}
-        instance_result = await db_session.execute(
-            select(OntologyInstance).where(OntologyInstance.instance_id == request.instance_id)
-        )
-        active_instance = instance_result.scalar_one_or_none()
-        if active_instance is None or active_instance.ontology_id not in assigned_ontology_ids:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="instance_id is not available to this Elder agent",
-            )
+        # Focus is resolved against the canonical graph, never a deprecated SQL projection.
+        from app.services.ontology_instance_service import OntologyInstanceService
+        settings = get_settings()
+        async with get_driver().session(database=settings.neo4j_database) as graph:
+            try:
+                source = await OntologyInstanceService(db_session, graph).get_instance(request.instance_id, include_scenes=False, include_relationships=False)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail="Source page not found") from exc
+        if source.ontology_id not in ontology_ids:
+            raise HTTPException(status_code=403, detail="Source page is outside the selected worlds")
 
     # Get chat history if chat_id is provided
     chat_history = None
@@ -215,8 +202,7 @@ async def query_elder(
             from sqlalchemy import select
             from app.models.ontology import OntologyEntity, OntologyProperty, OntologyRelationship
 
-            if agent.ontologies:
-                ontology_ids = [o.id for o in agent.ontologies]
+            if ontology_ids:
                 entity_result = await db_session.execute(
                     select(OntologyEntity).where(OntologyEntity.ontology_id.in_(ontology_ids))
                 )
@@ -270,9 +256,12 @@ async def query_elder(
         except Exception:
             definitions = []
 
-        enriched_request = request.model_copy(update={"grounding_definitions": definitions})
+        enriched_request = request.model_copy(update={"grounding_definitions": definitions, "entities_hint": None})
 
         response = await orchestrator.execute(agent, enriched_request, chat_history)
+
+        if agent_id is None:
+            await ElderScopeService(db_session).query_worlds(_current_user.id, request.chat_id, request.world_scope)
 
         # Save to chat history if chat_id provided
         if request.chat_id:
@@ -344,6 +333,8 @@ async def query_elder(
         logger.info(f"Elder query completed for agent {agent_id}")
         return response
 
+    except HTTPException:
+        raise
     except EmbeddingRuntimeError as e:
         logger.error(f"Elder embedding unavailable for agent {agent_id}: {e}", exc_info=True)
         raise HTTPException(
@@ -373,6 +364,21 @@ async def query_elder(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Elder query execution failed: {str(e)}",
         )
+
+
+@router.get("/status")
+async def elder_status(_current_user: User = Depends(get_current_user)) -> dict[str, str | bool]:
+    return {"name": "Elder", "enabled": bool(get_settings().enable_ai_agents)}
+
+
+@router.post("/query", response_model=ElderQueryResponse)
+async def query_site_elder(
+    request: ElderQueryRequest,
+    current_user: User = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_db_session),
+    orchestrator: ElderOrchestrator = Depends(get_elder_orchestrator),
+) -> ElderQueryResponse:
+    return await query_elder(None, request, current_user, db_session, orchestrator)
 
 
 @chat_router.post("/stream", response_model=ElderQueryResponse)

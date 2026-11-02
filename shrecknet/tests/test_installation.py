@@ -228,3 +228,29 @@ async def test_readiness_reports_starting_and_ready_without_private_details(monk
     result = await InstallationService.readiness()
     assert {service.id: service.status for service in result.services} == {'shrecknet': 'ready', 'shreckrpg': 'ready', 'shreckllm': 'ready', 'shreckworld': 'starting'}
     assert 'http' not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_first_world_uses_display_name_and_has_no_generated_example(tmp_path):
+    from unittest.mock import AsyncMock
+    service = InstallationService(InstallationRepository(tmp_path))
+    repository = SimpleNamespace(get_by_name=AsyncMock(return_value=None))
+    setup = SimpleNamespace(ontology_service=SimpleNamespace(repository=repository), resume_default_world=AsyncMock(return_value=SimpleNamespace(ontology_id=7, name='First World')))
+    instances = AsyncMock()
+    state = await service.create_world('first_world', setup, instances, include_example=True)
+    repository.get_by_name.assert_awaited_once_with('First World')
+    assert state.world_name == 'First World'
+    assert state.example_page_id is None
+    instances.create_instance.assert_not_called()
+    assert (await service.create_world('first_world', setup)).world_id == 7
+    setup.resume_default_world.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_first_world_refuses_existing_world_before_reservation(tmp_path):
+    from unittest.mock import AsyncMock
+    service = InstallationService(InstallationRepository(tmp_path))
+    setup = SimpleNamespace(ontology_service=SimpleNamespace(repository=SimpleNamespace(get_by_name=AsyncMock(return_value=object()))))
+    with pytest.raises(InstallationConflict, match='world_name_exists'):
+        await service.create_world('first_world', setup)
+    assert service.repository.read().world_template is None

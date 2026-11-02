@@ -86,6 +86,8 @@ class InstallationService:
                 raise InstallationConflict("world_required")
             if agent_service is not None:
                 for job in payload.jobs:
+                    if job == "elder":
+                        continue  # Elder is built in; callers select its world scope.
                     if job not in {"elder", "architect", "novelist", "librarian"}:
                         continue  # Embodied/personal agents need their domain inputs.
                     existing = await agent_service.repository.first_world_job(current.world_id, job)
@@ -174,14 +176,14 @@ class InstallationService:
             if state.world_template and state.world_template != template:
                 raise InstallationConflict("resume_selected_world")
             if not state.world_template:
-                existing = await setup_service.ontology_service.repository.get_by_name(template)
+                existing = await setup_service.ontology_service.repository.get_by_name("First World" if template == "first_world" else template)
                 if existing is not None:
                     raise InstallationConflict("world_name_exists")
                 with self.repository.transaction() as (_, saved):
                     saved.world_template = template
             result = await setup_service.resume_default_world(template)
             example_page_id = example_scene_id = None
-            if include_example and instance_service is not None:
+            if include_example and instance_service is not None and template != "first_world":
                 from app.services.installation_example import ensure_example
                 definitions = await setup_service.ontology_service.repository.list_entities(result.ontology_id)
                 example_page_id, example_scene_id = await ensure_example(result.ontology_id, instance_service, definitions)

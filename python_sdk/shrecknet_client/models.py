@@ -698,7 +698,13 @@ class EmbeddingLifecycleReport(BaseModel):
     milestones: dict[str, int] = Field(default_factory=dict)
 
 
+class ElderWorldScope(BaseModel):
+    mode: Literal["selected", "all"] = "selected"
+    ontology_ids: list[int] = Field(default_factory=list)
+
+
 class ElderQueryRequest(BaseModel):
+    world_scope: ElderWorldScope | None = None
     query: str
     mode: str = "both"
     include_trace: bool = False
@@ -717,6 +723,7 @@ class ElderSourceEvidenceChunk(BaseModel):
 
 
 class ElderSourceNode(BaseModel):
+    ontology_id: int | None = None
     node_id: str
     node_label: str | None = None
     node_name: str | None = None
@@ -772,7 +779,8 @@ class ElderQueryResponse(BaseModel):
 
 
 class ElderChatCreate(BaseModel):
-    agent_id: str
+    agent_id: str | None = None
+    world_scope: ElderWorldScope | None = None
     name: str
     color: str | None = None
 
@@ -794,7 +802,10 @@ class ElderChatHistoryEntry(BaseModel):
 class ElderChatRead(BaseModel):
     id: str
     user_id: int
-    agent_id: str
+    agent_id: str | None = None
+    scope_mode: str | None = None
+    ontology_ids: list[int] | None = None
+    read_only: bool = False
     name: str
     color: str | None = None
     created_at: datetime

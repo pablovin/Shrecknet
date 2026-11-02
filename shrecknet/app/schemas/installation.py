@@ -31,7 +31,7 @@ class InstallationProgress(BaseModel):
 
 class InstallationWorldRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    template: Literal["fantasy", "horror", "scifi"] = "fantasy"
+    template: Literal["first_world", "fantasy", "horror", "scifi"] = "fantasy"
     include_example: bool = True
 
 class InstallationModels(BaseModel):

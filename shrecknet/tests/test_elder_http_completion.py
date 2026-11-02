@@ -39,6 +39,9 @@ async def test_completed_elder_reply_returns_json_and_is_immediately_readable(pa
 
     monkeypatch.setattr(AgentRepository, "get_by_id", get_agent)
     monkeypatch.setattr(ElderChatRepository, "get_by_id", get_chat)
+    async def get_sql_history(*_args, **_kwargs):
+        return SimpleNamespace(history=[])
+    monkeypatch.setattr(ElderChatRepository, "get_by_id_with_history", get_sql_history)
     monkeypatch.setattr(chat_store, "get_settings", lambda: SimpleNamespace(media_root=tmp_path))
     monkeypatch.setattr(elder, "require_ai_agents_enabled", lambda: None)
     app = FastAPI()

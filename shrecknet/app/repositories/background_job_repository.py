@@ -16,6 +16,16 @@ class BackgroundJobRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def delete_world_embedding_jobs(self, ontology_id: int, job_id: int | None = None) -> int:
+        from sqlalchemy import delete
+        from app.models.background_job import BackgroundJob, JobType
+        statement = delete(BackgroundJob).where(BackgroundJob.ontology_id == ontology_id, BackgroundJob.job_type == JobType.NEO4J_EMBEDDING)
+        if job_id is not None:
+            statement = statement.where(BackgroundJob.id == job_id)
+        result = await self.session.execute(statement)
+        await self.session.commit()
+        return result.rowcount or 0
+
     async def create(
         self,
         author_type: AuthorType,

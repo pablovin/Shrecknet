@@ -23,86 +23,86 @@
   "enable_ai_agents": false,
   "user_creation_mode": "moderated",
   "model_architect_scene_chunking": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_architect_entity_proposal": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_architect_milestone_proposal": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_architect_entity_generation": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_agents_repair_json": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_elder_planner": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_elder_synthesis": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_elder_character_incorporation": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_novelist_analysis": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_novelist_writer": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_librarian_planner": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_librarian_synthesis": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_librarian_character_incorporation": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_character_agent_psychological_interpretation": {
-    "provider": "",
-    "name": "",
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
     "reasoning": false
   },
   "model_character_agent_decision_making": {
-    "provider": "",
-    "name": "",
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
     "reasoning": false
   },
   "model_character_agent_character_incorporation": {
-    "provider": "",
-    "name": "",
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
     "reasoning": false
   },
   "model_character_agent_scene_interpretation": {
-    "provider": "",
-    "name": "",
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
     "reasoning": false
   },
   "librarian_debug_artifacts_enabled": true,
   "elder_debug_artifacts_enabled": true,
   "model_orchestrator_routing": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "model_orchestrator_synthesis": {
-    "provider": "",
-    "name": ""
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash"
   },
   "embedding_model_id": "intfloat/multilingual-e5-small",
   "embedding_dimension": 384,

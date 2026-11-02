@@ -45,7 +45,7 @@ ShreckLLM provider/model. `admin` and `world_builder` manage sources and
 indexing. There is no separate password/admin token. `/health` checks liveness;
 `/ready` verifies actual E5 inference and local parser-artifact presence.
 
-The initial ShreckWorld LLM target defaults to `openai` / `gpt-5-nano` and can
+The initial ShreckWorld LLM target defaults to `openrouter` / `deepseek/deepseek-v4.1-flash` and can
 be read or changed by `admin` and `world_builder` users through
 `GET`/`PUT /admin/settings/model-targets/shreckworld_synthesizer`. It is stored
 in the ShreckWorld database and shared by planner, coverage reviewer, and

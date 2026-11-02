@@ -103,7 +103,7 @@ Example update (replace provider/model names with configured provider targets):
 Malformed target objects, reasoning values, or effort values return `400` before persistence.
 Retired keys also return `400`; config writes do not silently accept them. Existing
 administrator authorization failures retain their normal authentication/permission
-responses. Defaults are empty provider/name and reasoning disabled. Blank targets
+responses. Defaults use `openrouter` / `deepseek/deepseek-v4.1-flash` with reasoning disabled. Explicitly blank targets
 remain blank until configured or reconciled when enabling Agents; an explicit
 reasoning flag on a blank target survives save/reload. Enabling Agents still uses
 the existing provider validation and target reconciliation flow.

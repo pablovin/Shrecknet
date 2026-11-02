@@ -179,3 +179,21 @@ The existing administrator/world-builder endpoint `POST /setup/default-worlds`
 also accepts `{"worlds": ["first_world"]}`. It creates the same template without
 installation state and skips it if First World already exists. Unknown identifiers
 remain skipped; existing genre identifiers retain their behavior.
+
+## Default agent model assignments
+
+Fresh installations use provider `openrouter` and model
+`deepseek/deepseek-v4.1-flash` for every Shrecknet model target: Architect,
+Elder, Novelist, Librarian, Character Agent, Companion, orchestration and JSON
+repair. Both `configs/shrecknet.initial.json` and Python fallback defaults carry
+these assignments. ShreckWorld's separate synthesizer uses the same bootstrap
+default unless overridden by `SHRECKWORLD_SYNTHESIS_PROVIDER` and
+`SHRECKWORLD_SYNTHESIS_MODEL` or its persisted admin model target.
+
+An OpenRouter key must be configured in ShreckLLM, with account access and credit
+for the model. Defaults do not enable AI or Companion automatically; existing
+feature switches and setup consent still apply. Guided setup may replace the
+offered agent assignments with the user's selected model. Existing saved model
+assignments are preserved; changing a seed does not migrate an existing
+configuration database. Review those installations in Administration. To roll
+back, restore the previous provider/model assignments there.

@@ -646,7 +646,7 @@ and regenerate. There is no conversion or compatibility alias. See
   `shrecknet/databases/local_test/character_embodiment/`. See
   [debug artifact details](Dispositional%20Traits.md#local-embodiment-debug-artifacts).
 
-Model targets default to empty provider/name until configured or reconciled.
+Model targets default to `openrouter` / `deepseek/deepseek-v4.1-flash` with reasoning disabled. Existing saved assignments retain precedence.
 All four roles have an independent `reasoning` boolean exposed by the administrator
 `GET /config/`, `GET /config/schema`, and `PUT /config/` contracts. Authenticated
 `GET /llm_status/` includes the targets and flags. Existing deliberation settings

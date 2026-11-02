@@ -13,8 +13,8 @@ def test_shreckworld_model_target_is_admin_configurable_and_persisted(api):
     endpoint = "/admin/settings/model-targets/shreckworld_synthesizer"
     initial = client.get(endpoint, headers=headers)
     assert initial.status_code == 200
-    assert initial.json()["model_shreckworld_synthesizer"]["provider"] == "openai"
-    assert initial.json()["model_shreckworld_synthesizer"]["name"] == "gpt-5-nano"
+    assert initial.json()["model_shreckworld_synthesizer"]["provider"] == "openrouter"
+    assert initial.json()["model_shreckworld_synthesizer"]["name"] == "deepseek/deepseek-v4.1-flash"
 
     target = {
         "provider": "anthropic",

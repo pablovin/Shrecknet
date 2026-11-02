@@ -269,57 +269,57 @@ class Settings(BaseSettings):
     email_verification_text_template: str = "Hello {{username}},\n\nConfirm your email address: {{verification_url}}"
     email_verification_html_template: str = "<p>Hello {{username}},</p><p><a href=\"{{verification_url}}\">Confirm your email address</a></p>"
     model_architect_scene_chunking: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_architect_entity_proposal: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_architect_milestone_proposal: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_architect_entity_generation: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_agents_repair_json: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_elder_planner: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_elder_synthesis: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_elder_character_incorporation: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     novelist_analysis_context_tokens: int = Field(64000, ge=24000)
     novelist_writer_context_tokens: int = Field(64000, ge=24000)
     model_novelist_analysis: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_novelist_writer: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_librarian_planner: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_librarian_synthesis: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_librarian_character_incorporation: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_character_agent_character_incorporation: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_character_agent_scene_interpretation: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_character_agent_psychological_interpretation: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_character_agent_decision_making: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     character_agent_embodiment_validation_retries: int = Field(
         1, ge=0, le=3
@@ -328,10 +328,10 @@ class Settings(BaseSettings):
     librarian_debug_artifacts_enabled: bool = True
     elder_debug_artifacts_enabled: bool = True
     model_orchestrator_routing: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_orchestrator_synthesis: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     companion_enabled: bool = False
     companion_model_routing_enabled: bool = False

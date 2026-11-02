@@ -105,7 +105,7 @@ def test_four_targets_are_frontend_editable_with_individual_reasoning(isolated_c
     group = next(group for group in schema['groups'] if group['id'] == 'character_agent')
     assert {key for key in group['fields'] if key.startswith('model_')} == set(config.CHARACTER_AGENT_MODEL_FIELDS)
     for key in config.CHARACTER_AGENT_MODEL_FIELDS:
-        assert getattr(settings, key) == config.LLMModelTarget(provider='', name='')
+        assert getattr(settings, key) == config.LLMModelTarget(provider='openrouter', name='deepseek/deepseek-v4.1-flash')
         meta = schema['field_meta'][key]
         assert meta['frontend_editable'] is True and meta['change_impact'] == 'hot'
         assert meta['value_fields']['reasoning']['type'] == 'boolean'

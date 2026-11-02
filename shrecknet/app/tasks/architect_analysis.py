@@ -37,7 +37,6 @@ from app.jobs.architect.structured_output import (
 )
 from app.models.architect import ArchitectProposalType, ArchitectRunStatus
 from app.models.background_job import AuthorType, JobType
-from app.repositories.agent_repository import AgentRepository
 from app.repositories.architect_repository import ArchitectRepository
 from app.repositories.ontology_repository import OntologyRepository
 from app.services.ontology_instance_service import OntologyInstanceService
@@ -2354,7 +2353,7 @@ def _classify_entities(
 @celery_app.task(name="architect.analyze_instance")
 def analyze_instance(
     run_id: str,
-    agent_id: str,
+    agent_id: str | None,
     request_payload: dict[str, Any],
     *,
     author_type: str = "user",
@@ -2441,7 +2440,7 @@ async def _attach_job_to_run(run_id: str, job_id: int) -> None:
 async def _execute_architect_pipeline(
     *,
     run_id: str,
-    agent_id: str,
+    agent_id: str | None,
     request_payload: dict[str, Any],
     job_id: int,
 ) -> dict[str, Any]:
@@ -2450,10 +2449,6 @@ async def _execute_architect_pipeline(
         raise RuntimeError("shreckLLM is not configured")
     async with AsyncSessionMaker() as session:
         repo = ArchitectRepository(session)
-        agent_repo = AgentRepository(session)
-        agent = await agent_repo.get_by_id(agent_id)
-        if not agent:
-            raise ValueError("Agent not found")
 
         run = await repo.get_run(run_id, with_proposals=False)
         if not run:
@@ -2472,6 +2467,8 @@ async def _execute_architect_pipeline(
                 ontology_instance_id
             )
             ontology_id = ontology_instance.ontology_id
+            if run.ontology_id is not None and run.ontology_id != ontology_id:
+                raise ValueError("Source page does not belong to the selected world")
             ontology_repo = OntologyRepository(session)
             ontology_entities = await ontology_repo.list_entities(ontology_id)
             ontology_definitions = _format_ontology_definitions_from_entities(
@@ -2528,7 +2525,7 @@ async def _execute_architect_pipeline(
                     allowed_ontology_names=allowed_ontology_names,
                     existing_nodes=existing_nodes,
                     celery_task_id=analyze_instance.request.id,
-                    author_id=agent_id,
+                    author_id=agent_id or str((run.settings or {}).get("requested_by") or "system"),
                 )
                 usage_summary = llm_client.get_usage_summary()
                 _log_run_llm_usage_summary(run_id=run_id, usage_summary=usage_summary)
@@ -2569,7 +2566,7 @@ async def _execute_architect_pipeline(
 async def _run_scene_centric_chunking_test(
     *,
     run_id: str,
-    agent_id: str,
+    agent_id: str | None,
     job_id: int,
     ontology_instance_id: str,
     ontology_instance: Any,

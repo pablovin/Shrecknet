@@ -4,8 +4,13 @@ from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException
+from app.schemas.architect import ArchitectAnalysisRequest
+from app.services.creative_workshop_service import require_workshop_world
+from app.services.ontology_instance_service import OntologyInstanceService
 
 from app.models.architect import (
+    ArchitectAnalysisRun,
     ArchitectProposalStatus,
     ArchitectRunStatus,
 )
@@ -37,6 +42,41 @@ class ArchitectService:
         await self.session.commit()
         return run
 
+    async def create_world_run(
+        self,
+        ontology_id: int,
+        payload: ArchitectAnalysisRequest,
+        actor_id: str,
+        instances: OntologyInstanceService,
+    ) -> ArchitectAnalysisRun:
+        await require_workshop_world(self.session, ontology_id)
+        if payload.ontology_id is not None and payload.ontology_id != ontology_id:
+            raise HTTPException(
+                status_code=400, detail="Payload world must match selected world"
+            )
+        try:
+            source = await instances.get_instance(
+                payload.ontology_instance_id,
+                include_scenes=False,
+                include_relationships=False,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Source page not found") from exc
+        if source.ontology_id != ontology_id:
+            raise HTTPException(
+                status_code=400, detail="Source page does not belong to the selected world"
+            )
+        return await self.create_run(
+            agent_id=None,
+            ontology_id=ontology_id,
+            ontology_instance_id=payload.ontology_instance_id,
+            settings={
+                "requested_by": actor_id,
+                "max_chunks": payload.max_chunks,
+                "chunk_size": payload.chunk_size,
+            },
+        )
+
     async def get_run(self, run_id: str, *, include_proposals: bool = True):
         run = await self.repository.get_run(run_id, with_proposals=include_proposals)
         return run
@@ -47,6 +87,18 @@ class ArchitectService:
         return await self.repository.list_runs_for_agent(
             agent_id, limit=limit, offset=offset
         )
+
+    async def list_runs_for_world(
+        self, ontology_id: int, *, limit: int = 20, offset: int = 0
+    ) -> Sequence[ArchitectAnalysisRun]:
+        return await self.repository.list_runs_for_world(
+            ontology_id, limit=limit, offset=offset
+        )
+
+    async def delete_runs_for_world(self, ontology_id: int) -> int:
+        deleted = await self.repository.delete_runs_for_world(ontology_id)
+        await self.session.commit()
+        return deleted
 
     async def attach_background_job(self, run_id: str, job_id: int) -> None:
         await self.repository.attach_background_job(run_id, job_id)

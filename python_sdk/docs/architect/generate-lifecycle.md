@@ -1,6 +1,6 @@
 # Architect Generate Lifecycle
 
-This page covers generation after proposals are reviewed.
+This page covers generation after proposals are reviewed. World-scoped runs use the same run-by-ID methods. For agentless runs, the server attributes work to the authenticated operator; caller-provided author identity does not override it. Graph content uses its existing `human` author type, while background jobs use `user`.
 
 ## SDK methods and endpoint coverage
 

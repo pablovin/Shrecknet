@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import (
     get_architect_service,
     get_current_user,
+    require_roles,
+    get_ontology_instance_service,
     get_db_session,
 )
 from app.api.agent_feature_gate import require_ai_agents_enabled
@@ -37,7 +39,16 @@ from app.schemas.architect import (
 from app.services.architect_service import ArchitectService
 from app.tasks.architect_analysis import analyze_instance as architect_task
 
-router = APIRouter(prefix="/jobs/architect", tags=["architect"])
+from app.api.creative_workshop_access import workshop_run_access
+from app.models.architect import ArchitectAnalysisRun
+from app.services.creative_workshop_service import require_workshop_world
+from app.services.ontology_instance_service import OntologyInstanceService
+
+router = APIRouter(
+    prefix="/jobs/architect",
+    tags=["architect"],
+    dependencies=[Depends(workshop_run_access(ArchitectAnalysisRun, "world_builder"))],
+)
 
 
 class ArchitectProposalCreateRequest(ArchitectProposalRead):
@@ -145,6 +156,18 @@ async def _run_progress(
     )
 
 
+async def _run_summary(
+    run: ArchitectAnalysisRun,
+    service: ArchitectService,
+    jobs_session: AsyncSession,
+    include_progress: bool,
+) -> ArchitectAnalysisRunSummary:
+    summary = ArchitectAnalysisRunSummary.model_validate(run, from_attributes=True)
+    if include_progress:
+        summary.progress = await _run_progress(run, service, jobs_session)
+    return summary
+
+
 @router.post(
     "/{agent_id}/analyze",
     response_model=ArchitectAnalysisRunRead,
@@ -242,8 +265,7 @@ async def get_architect_run_progress(
 
 
 @router.get(
-    "/{agent_id}/runs",
-    response_model=list[ArchitectAnalysisRunSummary],
+    "/{agent_id}/runs", response_model=list[ArchitectAnalysisRunSummary],
 )
 async def list_architect_runs(
     agent_id: str,
@@ -258,28 +280,10 @@ async def list_architect_runs(
     await _get_architect_agent_or_404(agent_id, session)
 
     runs = await service.list_runs_for_agent(agent_id, limit=limit, offset=offset)
-    summaries = []
-    for run in runs:
-        summaries.append(
-            ArchitectAnalysisRunSummary(
-                id=run.id,
-                agent_id=run.agent_id,
-                background_job_id=run.background_job_id,
-                generation_job_id=run.generation_job_id,
-                ontology_id=run.ontology_id,
-                ontology_instance_id=run.ontology_instance_id,
-                status=run.status,
-                input_chunk_count=run.input_chunk_count,
-                created_at=run.created_at,
-                updated_at=run.updated_at,
-                progress=(
-                    await _run_progress(run, service, jobs_session)
-                    if include == "progress"
-                    else None
-                ),
-            )
-        )
-    return summaries
+    return [
+        await _run_summary(run, service, jobs_session, include == "progress")
+        for run in runs
+    ]
 
 
 @router.delete(
@@ -457,26 +461,24 @@ async def generate_entities_from_validated_proposals(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Path run_id must match payload.run_id",
         )
-    
+
     # Import here to avoid circular imports
-    from app.tasks.architect_generation import (
-        generate_entities as generation_task,
-    )
-    
+    from app.tasks.architect_generation import generate_entities as generation_task
+
     # Trigger the background task
-    agent_author_id = run.agent_id or payload.author_id
+    agent_author_id = run.agent_id or str(current_user.id)
     settings = get_settings()
     result = generation_task.apply_async(
         kwargs={
             "run_id": run_id,
             "reviewed_pipeline_output": payload.reviewed_pipeline_output.model_dump(),
-            "author_type": "agent",
+            "author_type": "agent" if run.agent_id else "user",
             "author_id": agent_author_id,
             "embody_agents": payload.embody_agents,
         },
         expires=max(60, int(settings.celery_expires_architect_seconds)),
     )
-    
+
     return {
         "status": "accepted",
         "task_id": result.id,
@@ -538,3 +540,84 @@ async def retry_enrichment_for_run(
         "run_id": run_id,
         "message": "Enrichment retry task started",
     }
+
+
+@router.post(
+    "/worlds/{ontology_id}/analyze",
+    response_model=ArchitectAnalysisRunRead,
+    status_code=202,
+)
+async def request_world_architect_analysis(
+    ontology_id: int,
+    payload: ArchitectAnalysisRequest,
+    actor: User = Depends(require_roles("world_builder")),
+    session: AsyncSession = Depends(get_db_session),
+    service: ArchitectService = Depends(get_architect_service),
+    instances: OntologyInstanceService = Depends(get_ontology_instance_service),
+) -> ArchitectAnalysisRunRead:
+    require_ai_agents_enabled()
+    settings = get_settings()
+    if not is_shreckllm_configured(settings):
+        raise HTTPException(status_code=503, detail="shreckLLM is not configured")
+    run = await service.create_world_run(ontology_id, payload, str(actor.id), instances)
+    payload = payload.model_copy(update={"ontology_id": ontology_id})
+    architect_task.apply_async(
+        kwargs={
+            "run_id": run.id,
+            "agent_id": None,
+            "request_payload": payload.model_dump(),
+            "author_type": "user",
+            "author_id": str(actor.id),
+        },
+        expires=max(60, int(settings.celery_expires_architect_seconds)),
+    )
+    return ArchitectAnalysisRunRead.model_validate(
+        await service.get_run(run.id, include_proposals=True)
+    )
+
+
+@router.get(
+    "/worlds/{ontology_id}/runs", response_model=list[ArchitectAnalysisRunSummary]
+)
+async def list_world_architect_runs(
+    ontology_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    include: str | None = Query(None, pattern="^progress$"),
+    actor: User = Depends(require_roles("world_builder")),
+    session: AsyncSession = Depends(get_db_session),
+    service: ArchitectService = Depends(get_architect_service),
+    jobs_session: AsyncSession = Depends(get_jobs_session),
+) -> list[ArchitectAnalysisRunSummary]:
+    await require_workshop_world(session, ontology_id)
+    runs = await service.list_runs_for_world(ontology_id, limit=limit, offset=offset)
+    return [
+        await _run_summary(run, service, jobs_session, include == "progress")
+        for run in runs
+    ]
+
+
+@router.delete("/worlds/{ontology_id}/runs/{run_id}")
+async def delete_world_architect_run(
+    ontology_id: int,
+    run_id: str,
+    actor: User = Depends(require_roles("world_builder")),
+    session: AsyncSession = Depends(get_db_session),
+    service: ArchitectService = Depends(get_architect_service),
+) -> dict[str, int]:
+    await require_workshop_world(session, ontology_id)
+    run = await service.get_run(run_id, include_proposals=False)
+    if not run or run.ontology_id != ontology_id:
+        raise HTTPException(status_code=404, detail="Architect run not found")
+    return {"deleted": await service.delete_run(run_id)}
+
+
+@router.delete("/worlds/{ontology_id}/runs")
+async def delete_world_architect_runs(
+    ontology_id: int,
+    actor: User = Depends(require_roles("world_builder")),
+    session: AsyncSession = Depends(get_db_session),
+    service: ArchitectService = Depends(get_architect_service),
+) -> dict[str, int]:
+    await require_workshop_world(session, ontology_id)
+    return {"deleted": await service.delete_runs_for_world(ontology_id)}

@@ -52,8 +52,8 @@ class NovelistRun(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid4()), index=True
     )
-    agent_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False
+    agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
     )
     background_job_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("background_jobs.id", ondelete="SET NULL"), nullable=True

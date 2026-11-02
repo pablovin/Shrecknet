@@ -71,7 +71,7 @@ class NovelistRunRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    agent_id: str
+    agent_id: str | None = None
     background_job_id: Optional[int] = None
     ontology_id: Optional[int] = None
     ontology_instance_id: Optional[str] = None

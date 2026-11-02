@@ -297,7 +297,7 @@ class NovelistOrchestrator:
     async def execute(
         self,
         *,
-        agent: Agent,
+        agent: Agent | None = None,
         payload: NovelistRunCreate,
         conversation_id: str | None = None,
         stage_callback: StageCallback | None = None,
@@ -338,7 +338,7 @@ class NovelistOrchestrator:
     async def _execute(
         self,
         *,
-        agent: Agent,
+        agent: Agent | None = None,
         payload: NovelistRunCreate,
         conversation_id: str | None = None,
         stage_callback: StageCallback | None = None,

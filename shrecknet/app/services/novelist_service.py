@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.novelist import NovelistRun, NovelistRunStatus, NovelistStage
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.novelist_repository import NovelistRepository
+from app.schemas.novelist import NovelistRunCreate
 
 
 class NovelistService:
@@ -21,13 +22,16 @@ class NovelistService:
         self.agent_repo = AgentRepository(session)
 
     async def resolve_and_save_preferences(
-        self, *, agent_id: str, language: str | None, instructions: str | None
+        self, *, agent_id: str | None, language: str | None, instructions: str | None
     ) -> tuple[str | None, str | None]:
         """Resolve omitted preferences from the agent and save values for this run.
 
-        Empty strings explicitly clear a saved value. Null values reuse the
+        Agentless runs use per-request preferences and default to English.
+        For legacy agents, empty strings explicitly clear a saved value. Null values reuse the
         previous preference; a first run with no preference resolves to null.
         """
+        if agent_id is None:
+            return (language or "en").strip() or "en", (instructions or "").strip() or None
         agent = await self.agent_repo.get_by_id(agent_id)
         if not agent or agent.job != "novelist":
             raise HTTPException(
@@ -52,10 +56,24 @@ class NovelistService:
         )
         return resolved_language, resolved_instructions
 
+    async def prepare_world_request(
+        self, ontology_id: int, payload: NovelistRunCreate
+    ) -> NovelistRunCreate:
+        if payload.previous_novelist_run_id:
+            previous = await self.get_run(payload.previous_novelist_run_id)
+            if previous.ontology_id != ontology_id:
+                raise HTTPException(
+                    status_code=400, detail="Previous run belongs to a different world"
+                )
+        # Internal continuity text must be resolved by the worker in the run's world.
+        return payload.model_copy(
+            update={"previous_session_text": None, "previous_session_summary": None}
+        )
+
     async def create_run(
         self,
         *,
-        agent_id: str,
+        agent_id: str | None,
         ontology_id: int | None,
         ontology_instance_id: str | None,
         settings: dict[str, Any] | None,
@@ -80,9 +98,9 @@ class NovelistService:
         return run
 
     async def list_runs(
-        self, *, agent_id: str | None = None, limit: int = 50, offset: int = 0
+        self, *, agent_id: str | None = None, ontology_id: int | None = None, limit: int = 50, offset: int = 0
     ) -> Sequence[NovelistRun]:
-        return await self.repo.list_runs(agent_id=agent_id, limit=limit, offset=offset)
+        return await self.repo.list_runs(agent_id=agent_id, ontology_id=ontology_id, limit=limit, offset=offset)
 
     async def delete_run(self, run_id: str, *, agent_id: str | None = None) -> int:
         deleted = await self.repo.delete_run(run_id, agent_id=agent_id)

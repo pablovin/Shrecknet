@@ -1,5 +1,8 @@
 # Novelist Agent
 
+Novelist is a built-in world workshop. New executions select a world directly and do not create or select a job Agent. Historical agent-scoped routes remain compatible; see the endpoint guide for world routes and coordinated database/worker rollout.
+
+
 Novelist V5 converts a complete RPG session, notes, recap, Adventure output,
 event log, or narrative into a literary chapter. The implementation belongs to
 `shrecknet/app/jobs/novelist/`; `shrecknet/app/tasks/novelist.py` coordinates

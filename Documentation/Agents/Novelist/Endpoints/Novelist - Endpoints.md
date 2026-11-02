@@ -1,15 +1,15 @@
-# Novelist Agent Endpoints
+# Novelist Workshop Endpoints
 
 All endpoints require authentication and retain the `/jobs/novelist` prefix.
 
-## Remembered preferences
+## Legacy agent preferences
 
-The frontend retrieves the selected agent's nullable
+Legacy clients can retrieve an agent's nullable
 `novelist_last_language` and `novelist_last_instructions` through `GET /agents/`
 or `GET /agents/{agent_id}`. Omitted or `null` values reuse the saved preference.
 An explicit empty string clears it. Preferences are updated when a run is accepted.
 
-## Run lifecycle
+## Legacy agent routes and shared run lifecycle
 
 - `POST /jobs/novelist/{agent_id}/runs` accepts `unstructured_text`, optional
   `language`, `instructions`, `previous_session_id`, `previous_novelist_run_id`,
@@ -75,3 +75,43 @@ artifacts may lack them. See the [warning policy](../Novelist.md#writing-and-cov
 Identity-only writer recovery edits the generated unit using confirmed mappings;
 other failures regenerate the unit. Both share one retry, and every result is
 revalidated. This does not add endpoint fields, model settings, or job stages.
+
+
+## Built-in world workshop
+
+Novelist runs directly for a selected world without creating or selecting an Agent.
+`POST /jobs/novelist/worlds/{ontology_id}/runs` accepts the existing source payload;
+`POST /jobs/novelist/worlds/{ontology_id}/runs/upload` accepts TXT/PDF multipart
+input and the existing language/instructions/continuity fields. Both return 202
+with `agent_id: null` and the selected `ontology_id`. Language defaults to English;
+instructions apply to this request rather than an agent preference. Models remain
+centrally configured. No agent record is synthesized internally.
+
+`GET /jobs/novelist/worlds/{ontology_id}/runs?limit=20&offset=0` lists history;
+`DELETE /jobs/novelist/worlds/{ontology_id}/runs/{run_id}` deletes only a run in that
+world. These routes require Writer or higher and an existing world. Creation still
+requires enabled AI and configured ShreckLLM (503 otherwise). Missing worlds/runs
+return 404, insufficient roles return 403, and cross-world previous runs return 400.
+New run-by-ID reads also enforce the workshop role. World history is shared among
+authorized workshop operators; `settings.requested_by` records the initiating user.
+Previous-run and previous-session worker lookups remain bounded to the run's world.
+
+Run-by-ID reads and background progress/draft contracts are unchanged. The legacy
+agent-scoped endpoints and preference behavior remain compatibility interfaces.
+New frontends do not call them. Elder and Librarian are unchanged.
+
+### Upgrade and rollback
+
+Deploy Shrecknet and its Celery workers before the frontends. Back up the application
+SQLite database first. Startup makes the Novelist agent reference nullable with
+`ON DELETE SET NULL`, preserving run columns, rows, and indexes. For Novelist and
+Architect, a missing world is inferred only from an agent assigned to exactly one
+world. Multi-world/unassigned legacy rows remain untouched and readable through
+legacy routes; they do not appear in a world history until explicitly reconciled.
+Existing agent records/preferences are retained, not automatically promoted into
+world defaults. Frontends hide Novelist/Architect job agents from Agent Studio.
+
+Drain workers before rollback: old workers require agents and cannot consume new
+agentless runs. Retained legacy endpoints support frontend rollback. Returning to
+an older required-agent schema needs the database backup and a separate export or
+reconciliation of post-backup runs; it is not a lossless automatic downgrade.

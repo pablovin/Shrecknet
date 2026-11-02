@@ -2,6 +2,15 @@
 
 This page covers the analysis and proposal curation phase for Architect.
 
+## Built-in world workflow
+
+Call `sdk.architect.analyze_world(ontology_id, request)` with a source page in
+that world. Use `list_world_runs(ontology_id)`, `delete_world_run(ontology_id, run_id)`,
+and `delete_world_runs(ontology_id)` for history. No Agent record or agent preflight
+is required. Run-by-ID review, polling, and generation methods are unchanged.
+New runs return `agent_id=None`. Deploy the matching backend and workers first.
+The agent methods and preflight below remain for legacy compatibility.
+
 ## SDK methods and endpoint coverage
 
 | SDK method | Endpoint |

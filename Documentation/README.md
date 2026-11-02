@@ -56,7 +56,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [Narrative planning and source references plan](./Agents/Novelist/Narrative%20Planning%20and%20Source%20References%20Plan.md) — Narrative Director design, recorded Session 9 baseline, context projection, and pending live evaluation
 
 - [Novelist](./Agents/Novelist/Novelist.md) — V5 candidate extraction, directed arcs, precise passages, context budgets, and diagnostics
-- [Novelist endpoints](./Agents/Novelist/Endpoints/Novelist%20-%20Endpoints.md)
+- [Novelist endpoints](./Agents/Novelist/Endpoints/Novelist%20-%20Endpoints.md) — world-scoped workshop, legacy compatibility, and database/worker rollout
 - [Novelist pipeline](./Agents/Novelist/Generate_Draft/Generate_Draft.md)
 
 ## 📚 Documentation Structure
@@ -96,6 +96,7 @@ Detailed API documentation for specific features
 - [ShreckWorld upload API](./API/SHRECKWORLD_UPLOAD_API.md) - Metadata autofill, frontend multipart fields, and authenticated covers
 - [Backup API](./API/BACKUP_API.md)
 - [Admin Clear Endpoints](./API/ADMIN_CLEAR_ENDPOINTS.md)
+- [Architect workshop endpoints](./Agents/Architect/Architect%20-%20Endpoints.md) — direct world/source analysis, review, generation, and legacy compatibility
 - [Architect API Examples](./API/ARCHITECT_API_EXAMPLES.md)
 - [Favorite Ontology Instances API](./API/FAVORITE_ONTOLOGY_INSTANCES_API.md)
 - [Foundry Integration API](./API/FOUNDRY_INTEGRATION_API.md)

@@ -47,3 +47,15 @@ hard-invalid prose still fails; a warning does not change the completed status.
 Identity-only correction uses the existing writer retry to minimally edit the full
 draft with confirmed mappings. Mixed failures retain broad regeneration; both
 results are revalidated. SDK requests and the warning fields above are unchanged.
+
+## World-scoped workshop
+
+Use `client.novelist.start_world_run(ontology_id, payload)` and
+`list_world_runs(ontology_id)` / `delete_world_run(ontology_id, run_id)` without
+creating an Agent. `start_run_from_upload(ontology_id=7, pdf_path="notes.txt")`
+uploads a source for a world; pass exactly one of `ontology_id` or legacy
+`agent_id`. World runs return `agent_id=None`. Existing agent methods remain for
+compatibility. English is the new-run default; instructions belong to the request.
+Deploy Shrecknet and workers with the world APIs before using these methods.
+
+See the [world workshop example](../examples/world_workshops.py) for Novelist and Architect calls.

@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db_session
+from app.api.deps import get_current_user, get_db_session, require_roles
 from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graph.neo4j import get_driver
@@ -23,7 +23,15 @@ from app.schemas.novelist import (
 from app.services.novelist_service import NovelistService
 from app.tasks.novelist import generate_draft
 
-router = APIRouter(prefix="/jobs/novelist", tags=["novelist"])
+from app.api.creative_workshop_access import workshop_run_access
+from app.models.novelist import NovelistRun
+from app.services.creative_workshop_service import require_workshop_world
+
+router = APIRouter(
+    prefix="/jobs/novelist",
+    tags=["novelist"],
+    dependencies=[Depends(workshop_run_access(NovelistRun, "writer"))],
+)
 
 
 async def _get_novelist_agent_or_404(
@@ -72,24 +80,23 @@ _normalize_pdf_extracted_text = normalize_pdf_text
 
 async def _create_and_queue_run(
     *,
-    agent_id: str,
+    agent_id: str | None,
     payload: NovelistRunCreate,
     current_user: User,
     session: AsyncSession,
     service: NovelistService,
     source_pages: list[SourcePage] | None = None,
+    ontology_id: int | None = None,
 ) -> NovelistRunRead:
     language, instructions = await service.resolve_and_save_preferences(
-        agent_id=agent_id,
-        language=payload.language,
-        instructions=payload.instructions,
+        agent_id=agent_id, language=payload.language, instructions=payload.instructions,
     )
     payload = payload.model_copy(
         update={"language": language, "instructions": instructions}
     )
     run = await service.create_run(
         agent_id=agent_id,
-        ontology_id=None,
+        ontology_id=ontology_id,
         ontology_instance_id=None,
         settings={
             "requested_by": current_user.id,
@@ -242,3 +249,106 @@ async def delete_novelist_run(
             status_code=status.HTTP_404_NOT_FOUND, detail="Novelist run not found"
         )
     return {"deleted": deleted}
+
+
+@router.post(
+    "/worlds/{ontology_id}/runs", response_model=NovelistRunRead, status_code=202
+)
+async def start_world_novelist_run(
+    ontology_id: int,
+    payload: NovelistRunCreate,
+    current_user: User = Depends(require_roles("writer")),
+    session: AsyncSession = Depends(get_db_session),
+    service: NovelistService = Depends(get_novelist_service),
+) -> NovelistRunRead:
+    require_ai_agents_enabled()
+    if not is_shreckllm_configured(get_settings()):
+        raise HTTPException(status_code=503, detail="shreckLLM is not configured")
+    await require_workshop_world(session, ontology_id)
+    payload = await service.prepare_world_request(ontology_id, payload)
+    return await _create_and_queue_run(
+        agent_id=None,
+        ontology_id=ontology_id,
+        payload=payload,
+        current_user=current_user,
+        session=session,
+        service=service,
+    )
+
+
+@router.post(
+    "/worlds/{ontology_id}/runs/upload", response_model=NovelistRunRead, status_code=202
+)
+async def start_world_novelist_upload(
+    ontology_id: int,
+    file: UploadFile = File(...),
+    language: str | None = Form(None, max_length=100),
+    instructions: str | None = Form(None, max_length=20000),
+    previous_session_id: str | None = Form(None),
+    previous_novelist_run_id: str | None = Form(None),
+    source_type: str = Form("auto"),
+    current_user: User = Depends(require_roles("writer")),
+    session: AsyncSession = Depends(get_db_session),
+    service: NovelistService = Depends(get_novelist_service),
+) -> NovelistRunRead:
+    require_ai_agents_enabled()
+    if not is_shreckllm_configured(get_settings()):
+        raise HTTPException(status_code=503, detail="shreckLLM is not configured")
+    await require_workshop_world(session, ontology_id)
+    text, pages = _extract_source_from_upload(file)
+    if not text:
+        raise HTTPException(
+            status_code=400, detail="Could not extract text from uploaded file"
+        )
+    payload = NovelistRunCreate(
+        unstructured_text=text,
+        language=language,
+        instructions=instructions,
+        previous_session_id=previous_session_id,
+        previous_novelist_run_id=previous_novelist_run_id,
+        source_type=source_type,
+        source_label=file.filename,
+    )
+    payload = await service.prepare_world_request(ontology_id, payload)
+    return await _create_and_queue_run(
+        agent_id=None,
+        ontology_id=ontology_id,
+        payload=payload,
+        source_pages=pages,
+        current_user=current_user,
+        session=session,
+        service=service,
+    )
+
+
+@router.get("/worlds/{ontology_id}/runs", response_model=list[NovelistRunRead])
+async def list_world_novelist_runs(
+    ontology_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    actor: User = Depends(require_roles("writer")),
+    session: AsyncSession = Depends(get_db_session),
+    service: NovelistService = Depends(get_novelist_service),
+) -> list[NovelistRunRead]:
+    await require_workshop_world(session, ontology_id)
+    return [
+        NovelistRunRead.model_validate(run)
+        for run in await service.list_runs(
+            ontology_id=ontology_id, limit=limit, offset=offset
+        )
+    ]
+
+
+@router.delete("/worlds/{ontology_id}/runs/{run_id}")
+async def delete_world_novelist_run(
+    ontology_id: int,
+    run_id: str,
+    actor: User = Depends(require_roles("writer")),
+    session: AsyncSession = Depends(get_db_session),
+    service: NovelistService = Depends(get_novelist_service),
+) -> dict[str, int]:
+    await require_workshop_world(session, ontology_id)
+    run = await service.get_run(run_id)
+    if run.ontology_id != ontology_id:
+        raise HTTPException(status_code=404, detail="Novelist run not found")
+    return {"deleted": await service.delete_run(run_id)}

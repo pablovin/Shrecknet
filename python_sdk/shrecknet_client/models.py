@@ -946,7 +946,7 @@ class NovelistRunCreate(BaseModel):
 
 class NovelistRunRead(BaseModel):
     id: str
-    agent_id: str
+    agent_id: str | None = None
     background_job_id: int | None = None
     ontology_id: int | None = None
     ontology_instance_id: str | None = None

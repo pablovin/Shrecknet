@@ -72,6 +72,26 @@ class ArchitectRepository:
         result = await self.session.execute(stmt)
         return list(result.scalars())
 
+    async def list_runs_for_world(
+        self, ontology_id: int, *, limit: int = 20, offset: int = 0
+    ) -> Sequence[ArchitectAnalysisRun]:
+        result = await self.session.execute(
+            select(ArchitectAnalysisRun)
+            .where(ArchitectAnalysisRun.ontology_id == ontology_id)
+            .order_by(ArchitectAnalysisRun.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(result.scalars())
+
+    async def delete_runs_for_world(self, ontology_id: int) -> int:
+        result = await self.session.execute(
+            delete(ArchitectAnalysisRun).where(
+                ArchitectAnalysisRun.ontology_id == ontology_id
+            )
+        )
+        return result.rowcount or 0
+
     async def add_proposals(
         self,
         run_id: str,

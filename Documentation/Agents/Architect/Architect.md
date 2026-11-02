@@ -1,5 +1,8 @@
 # Architect Agent
 
+Architect is a built-in world workshop. New executions select a world directly and do not create or select a job Agent. Historical agent-scoped routes remain compatible; see the endpoint guide for world routes and coordinated database/worker rollout.
+
+
 This document describes both Architect jobs in production scope:
 
 - Analyze job (proposal generation)

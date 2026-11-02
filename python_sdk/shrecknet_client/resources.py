@@ -1395,6 +1395,20 @@ class ArchitectAPI:
         self._agents = agents
         self._jobs = jobs
 
+    async def analyze_world(self, ontology_id: int, payload: ArchitectAnalysisRequest) -> ArchitectRunRead:
+        data = await self._client.raw_request("POST", f"/jobs/architect/worlds/{ontology_id}/analyze", json=payload.model_dump(exclude_none=True))
+        return ArchitectRunRead.model_validate(data)
+
+    async def list_world_runs(self, ontology_id: int, *, limit: int = 20, offset: int = 0) -> list[ArchitectRunSummary]:
+        data = await self._client.raw_request("GET", f"/jobs/architect/worlds/{ontology_id}/runs", params={"limit": limit, "offset": offset})
+        return [ArchitectRunSummary.model_validate(item) for item in data]
+
+    async def delete_world_run(self, ontology_id: int, run_id: str) -> dict[str, int]:
+        return await self._client.raw_request("DELETE", f"/jobs/architect/worlds/{ontology_id}/runs/{run_id}")
+
+    async def delete_world_runs(self, ontology_id: int) -> dict[str, int]:
+        return await self._client.raw_request("DELETE", f"/jobs/architect/worlds/{ontology_id}/runs")
+
     async def analyze(self, agent_id: str, payload: ArchitectAnalysisRequest) -> ArchitectRunRead:
         data = await self._client.raw_request("POST", f"/jobs/architect/{agent_id}/analyze", json=payload.model_dump(exclude_none=True))
         return ArchitectRunRead.model_validate(data)
@@ -1489,6 +1503,17 @@ class NovelistAPI:
         self._client = client
         self._jobs = jobs
 
+    async def start_world_run(self, ontology_id: int, payload: NovelistRunCreate) -> NovelistRunRead:
+        data = await self._client.raw_request("POST", f"/jobs/novelist/worlds/{ontology_id}/runs", json=payload.model_dump(exclude_none=True))
+        return NovelistRunRead.model_validate(data)
+
+    async def list_world_runs(self, ontology_id: int, *, limit: int = 20, offset: int = 0) -> list[NovelistRunRead]:
+        data = await self._client.raw_request("GET", f"/jobs/novelist/worlds/{ontology_id}/runs", params={"limit": limit, "offset": offset})
+        return [NovelistRunRead.model_validate(item) for item in data]
+
+    async def delete_world_run(self, ontology_id: int, run_id: str) -> dict[str, int]:
+        return await self._client.raw_request("DELETE", f"/jobs/novelist/worlds/{ontology_id}/runs/{run_id}")
+
     async def start_run(self, agent_id: str, payload: NovelistRunCreate) -> NovelistRunRead:
         data = await self._client.raw_request(
             "POST",
@@ -1499,15 +1524,19 @@ class NovelistAPI:
 
     async def start_run_from_upload(
         self,
-        agent_id: str,
+        agent_id: str | None = None,
         *,
         pdf_path: str,
+        ontology_id: int | None = None,
         language: str | None = None,
         instructions: str | None = None,
         previous_session_id: str | None = None,
         previous_novelist_run_id: str | None = None,
         source_type: str = "auto",
     ) -> NovelistRunRead:
+        if (agent_id is None) == (ontology_id is None):
+            raise ValueError("Provide exactly one of ontology_id or legacy agent_id")
+        path = f"/jobs/novelist/worlds/{ontology_id}/runs/upload" if ontology_id is not None else f"/jobs/novelist/{agent_id}/runs/upload"
         form = {
             "language": language,
             "instructions": instructions,
@@ -1522,7 +1551,7 @@ class NovelistAPI:
             content_type = "application/pdf" if filename.lower().endswith(".pdf") else "text/plain"
             files = {"file": (filename, f, content_type)}
             response = await self._client._client.post(
-                f"/jobs/novelist/{agent_id}/runs/upload",
+                path,
                 data=form,
                 files=files,
                 headers=self._client._headers(),

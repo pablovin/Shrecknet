@@ -153,6 +153,88 @@ def migrate_agents_table(sync_conn) -> None:
         sync_conn.execute(text("PRAGMA foreign_keys=ON"))
 
 
+def migrate_world_workshop_runs(sync_conn) -> None:
+    """Preserve legacy runs, permit agentless Novelist runs, backfill certain worlds.
+
+    The application database is SQLite. Rebuild only the Novelist table whose
+    legacy agent column was required/cascading; preserve its columns and indexes.
+    Ambiguous multi-world agents deliberately leave ontology_id unset.
+    """
+    import re
+
+    inspector = inspect(sync_conn)
+    tables = inspector.get_table_names()
+    if "novelist_runs" in tables:
+        columns = inspector.get_columns("novelist_runs")
+        agent_column = next(
+            column for column in columns if column["name"] == "agent_id"
+        )
+        foreign_keys = inspector.get_foreign_keys("novelist_runs")
+        cascading = any(
+            fk["constrained_columns"] == ["agent_id"]
+            and fk.get("options", {}).get("ondelete", "").upper() == "CASCADE"
+            for fk in foreign_keys
+        )
+        if not agent_column["nullable"] or cascading:
+            if sync_conn.dialect.name != "sqlite":
+                raise RuntimeError(
+                    "World workshop migration requires a SQLite application database"
+                )
+            ddl = sync_conn.execute(
+                text(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='novelist_runs'"
+                )
+            ).scalar_one()
+            indexes = (
+                sync_conn.execute(
+                    text(
+                        "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='novelist_runs' AND sql IS NOT NULL"
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            ddl = ddl.replace("novelist_runs", "novelist_runs__world_migration", 1)
+            ddl = re.sub(
+                r"(agent_id\s+VARCHAR\(36\))\s+NOT NULL", r"\1", ddl, flags=re.I
+            )
+            ddl = re.sub(
+                r"(REFERENCES\s+agents\s*\(id\)\s+ON DELETE)\s+CASCADE",
+                r"\1 SET NULL",
+                ddl,
+                flags=re.I,
+            )
+            sync_conn.execute(text(ddl))
+            names = ", ".join('"' + column["name"] + '"' for column in columns)
+            sync_conn.execute(
+                text(
+                    f"INSERT INTO novelist_runs__world_migration ({names}) SELECT {names} FROM novelist_runs"
+                )
+            )
+            sync_conn.execute(text("DROP TABLE novelist_runs"))
+            sync_conn.execute(
+                text(
+                    "ALTER TABLE novelist_runs__world_migration RENAME TO novelist_runs"
+                )
+            )
+            for index in indexes:
+                sync_conn.execute(text(index))
+    if "agent_ontologies" not in tables:
+        return
+    for table in ("novelist_runs", "architect_analysis_runs"):
+        if table in tables:
+            sync_conn.execute(
+                text(
+                    f"""
+                UPDATE {table} SET ontology_id = (
+                    SELECT MIN(ontology_id) FROM agent_ontologies WHERE agent_id = {table}.agent_id
+                ) WHERE ontology_id IS NULL AND (
+                    SELECT COUNT(*) FROM agent_ontologies WHERE agent_id = {table}.agent_id
+                ) = 1
+            """
+                )
+            )
+
 def migrate_novelist_agent_preferences(sync_conn) -> None:
     """Add remembered Novelist language and instructions to existing agents."""
     inspector = inspect(sync_conn)

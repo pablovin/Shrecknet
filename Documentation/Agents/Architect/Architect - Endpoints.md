@@ -1,4 +1,4 @@
-# Architect Agent Endpoints (Current API)
+# Architect Workshop Endpoints
 
 This document reflects the real endpoints implemented in:
 - shrecknet/app/api/routers/architect.py
@@ -9,7 +9,10 @@ Router prefix:
 Authentication:
 - All endpoints require authenticated user context.
 
-## 1. Start Analysis
+The agent-scoped routes below remain compatibility interfaces. New clients use the
+[built-in world workshop](#built-in-world-workshop) described below.
+
+## 1. Start Analysis (legacy agent route)
 
 Endpoint:
 - POST /jobs/architect/{agent_id}/analyze
@@ -331,3 +334,30 @@ Common proposal type values:
 - update_instance
 
 Use values from app.models.architect enums as source of truth when in doubt.
+
+
+## Built-in world workshop
+
+Architect runs from a selected world and source page without an Architect Agent.
+`POST /jobs/architect/worlds/{ontology_id}/analyze` accepts the existing analysis
+payload, verifies world/source identity before queueing, and returns 202 with
+`agent_id: null`. The worker rechecks the source's world and uses central models.
+The selected world is authoritative; conflicting payload world IDs or a source
+from another world return 400. Missing sources/worlds return 404.
+
+`GET /jobs/architect/worlds/{ontology_id}/runs` supports `limit`, `offset`, and
+`include=progress`. `DELETE` at that path removes that world's history; append
+`/{run_id}` to remove one run. World operations and agentless run continuations
+require World Builder or higher. New generation author identity comes from the
+authenticated operator, never a caller-supplied author ID. Background jobs, created
+entities, scenes, milestones, enrichment, and embedding follow that author type.
+History is shared among authorized workshop operators; run settings retain the
+initiating user's ID. Existing review/proposal/generation routes and optional
+Character Agent embodiment remain available; embodiment does not require an
+Architect job agent. AI-enabled and configured-model checks remain in force.
+
+Legacy agent-scoped APIs and records remain compatibility interfaces. Missing
+historical run worlds are backfilled only from a single-world agent. Upgrade the
+backend and workers before the frontend and drain workers before rollback; see the
+[Novelist upgrade guidance](../Novelist/Endpoints/Novelist%20-%20Endpoints.md#upgrade-and-rollback).
+Elder and Librarian behavior is unchanged.

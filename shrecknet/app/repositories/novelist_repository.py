@@ -19,7 +19,7 @@ class NovelistRepository:
     async def create_run(
         self,
         *,
-        agent_id: str,
+        agent_id: str | None,
         ontology_id: int | None,
         ontology_instance_id: str | None,
         settings: dict[str, Any] | None,
@@ -45,12 +45,15 @@ class NovelistRepository:
         self,
         *,
         agent_id: str | None = None,
+        ontology_id: int | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> Sequence[NovelistRun]:
         stmt = select(NovelistRun).order_by(NovelistRun.created_at.desc())
         if agent_id:
             stmt = stmt.where(NovelistRun.agent_id == agent_id)
+        if ontology_id is not None:
+            stmt = stmt.where(NovelistRun.ontology_id == ontology_id)
         stmt = stmt.limit(limit).offset(offset)
         result = await self.session.execute(stmt)
         return result.scalars().all()

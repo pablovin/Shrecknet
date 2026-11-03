@@ -323,6 +323,22 @@ async def get_agent(agent_id: str, actor: User = Depends(get_current_user), svc:
     return await svc.get_agent(agent_id, public_only=not _is_admin(actor))
 
 
+@router.post("/{agent_id}/identity-summary", response_model=CharacterAgentRead)
+async def generate_identity_summary(
+    agent_id: str, actor: User = Depends(get_current_admin_user),
+    sql: AsyncSessionCompat = Depends(get_db_session),
+    graph: AsyncSession = Depends(get_neo4j_session),
+    audit: AuditService = Depends(get_audit_service),
+):
+    require_ai_agents_enabled()
+    if not is_shreckllm_configured(get_settings()):
+        raise HTTPException(status_code=503, detail="shreckLLM is not configured")
+    from app.services.character_identity_summary_service import CharacterIdentitySummaryService
+    result = await CharacterIdentitySummaryService(sql, graph).generate_missing(agent_id)
+    await audit_event(audit, actor, AuditAction.UPDATE, AuditEntityType.CHARACTER_AGENT, result.id)
+    return result
+
+
 @router.get("/{agent_id}/revisions", response_model=list[CharacterIdentityRevisionRead])
 async def list_identity_revisions(
     agent_id: str, skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=500),

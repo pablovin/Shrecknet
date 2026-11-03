@@ -473,6 +473,13 @@ class CharacterAgentsAPI:
         )
         return CharacterAgentRead.model_validate(data)
 
+    async def generate_identity_summary(self, character_agent_id: str) -> CharacterAgentRead:
+        """Generate missing summaries only; preserve manual traits, assignments and memories."""
+        data = await self._client.raw_request(
+            "POST", f"/character-agents/{character_agent_id}/identity-summary",
+        )
+        return CharacterAgentRead.model_validate(data)
+
     async def update(
         self, character_agent_id: str, payload: CharacterAgentUpdate
     ) -> CharacterAgentRead:

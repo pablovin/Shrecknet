@@ -141,3 +141,19 @@ def test_neutral_prior_profile_and_legacy_directional_baseline_rejection():
             'integrity': {**baseline, **change}}}
         with pytest.raises(ValidationError):
             TraitProfile.model_validate(invalid)
+
+
+@pytest.mark.asyncio
+async def test_sdk_generates_missing_identity_without_resubmitting_creation():
+    class SummaryClient(Client):
+        async def raw_request(self, method, path, **kwargs):
+            self.calls.append((method, path, kwargs))
+            return {'id':'a1','ontology_id':3,'entity_instance_id':'e1','embodied_entity_instance_id':'e1',
+                    'name':'Mara','background_story':'Story','status':'active','visibility':'private',
+                    'created_by_user_id':1,'created_at':'2026-11-03T00:00:00Z','updated_at':'2026-11-03T00:00:01Z',
+                    'trait_profile':profile_fixture(), 'identity_description': {
+                        'identity_summary':'A guardian', 'psychological_summary':'Values duty', 'personality_traits':[]}}
+    client = SummaryClient()
+    result = await CharacterAgentsAPI(client).generate_identity_summary('a1')
+    assert client.calls == [('POST', '/character-agents/a1/identity-summary', {})]
+    assert result.identity_description['identity_summary'] == 'A guardian'

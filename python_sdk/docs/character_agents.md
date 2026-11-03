@@ -343,3 +343,17 @@ context-sensitive behavior. Event groups prevent reviewed duplicate retellings
 from increasing support. See the canonical
 [trait contract](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md)
 for formulas, thresholds, provenance, and rollout.
+
+### Generate summaries for a manual character
+
+After `client.character_agents.create(...)`, call
+`await client.character_agents.generate_identity_summary(agent.id)` to generate
+missing identity and psychological summaries. This administrator-only operation
+waits for generation and returns `CharacterAgentRead`; it requires enabled AI and
+configured ShreckLLM. It preserves manual traits, aspects, goals, and memories.
+On generation failure, keep the created agent ID and retry this method. A stored
+summary is returned without another model call. The backend must provide
+`POST /character-agents/{id}/identity-summary`; existing creation APIs are unchanged.
+
+For generation calls, construct `AsyncShrecknetClient(..., timeout=600.0)` rather
+than using its default 30-second request timeout.

@@ -665,3 +665,34 @@ one description per directional key; legacy sparse descriptions remain accepted
 by readers. Read operations retain stored v3/v4 histories. New evidence or explicit
 regeneration recalculates the current profile using v5. Upgrade SDK clients that
 reject the new profile version. See [trait compatibility](Dispositional%20Traits.md#neutral-prior-rollout-and-compatibility).
+
+## Generate missing summaries after manual creation
+
+`POST /character-agents/{agent_id}/identity-summary` is administrator-only and
+returns the current `CharacterAgentRead` with `identity_description`. It requires
+AI agents to be enabled and ShreckLLM to be configured. The request has no body.
+It waits for the existing identity-description synthesis call to complete; this
+operation does not create an embodiment draft or run scene interpretation.
+
+Create the agent first with `POST /character-agents`, including manual trait edits,
+aspects, and goals, then call this endpoint. Synthesis uses the persisted character
+name/background, canonical entity text and properties, current effective traits,
+active aspects/goals, and existing trait evidence. The configured Character
+Incorporation model generates identity, psychological, and narrative-trait summaries.
+Only `identity_description` and `updated_at` are written. Traits, assignments,
+memories, revisions, and the original creation record remain intact.
+
+A retry returns an existing summary without another model call. Concurrent
+successful generation does not overwrite the first stored summary. A concurrent
+profile update produces `409` so the caller can retry against current state.
+Missing agents return `404`, non-admin callers receive `403`, disabled AI or
+unconfigured ShreckLLM returns `503`, and provider/generation failure returns `502`.
+The already-created character is never deleted on failure. Keep its ID and retry
+this summary endpoint instead of creating another character. Closing/reloading the
+client does not roll back creation; read the saved agent and request missing
+summaries again. A client/proxy timeout can occur while server work continues, so
+always reuse the saved ID. Existing creation and embodiment contracts are unchanged.
+
+Deploy the backend endpoint before enabling the frontend workflow. No database or
+graph migration is required. Rollback restores manual creation without automatic
+summaries; generated summaries remain compatible with existing readers.

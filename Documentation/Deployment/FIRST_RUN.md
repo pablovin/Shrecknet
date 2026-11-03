@@ -197,3 +197,11 @@ offered agent assignments with the user's selected model. Existing saved model
 assignments are preserved; changing a seed does not migrate an existing
 configuration database. Review those installations in Administration. To roll
 back, restore the previous provider/model assignments there.
+
+## Worker Redis client compatibility
+
+Shrecknet and ShreckWorld install `celery[redis]` with `redis>=6.1,<7`.
+The Redis transport requires redis-py 6.1 or newer; the Redis server version
+is separate from this Python dependency. If a worker reports a Redis client
+`VersionMismatch`, regenerate source installation bundles and rebuild the
+application images. Restarting Redis or resetting persisted data is unnecessary.

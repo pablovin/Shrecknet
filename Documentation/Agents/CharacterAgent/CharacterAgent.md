@@ -771,3 +771,15 @@ its ID-free projection; Character Companion uses the same ranking with provenanc
 The former `jobs/character_agent/memory.py` remains a compatibility re-export.
 Companion loads precomputed identity and effective traits without running embodiment
 or decision-making. See [Character Companion](../Companion/Companion.md).
+
+## Manual creation and narrative summaries
+
+Manual creation remains a persisted agent with administrator-supplied profile,
+traits, aspects, and goals. Clients can then call the administrator-only
+`POST /character-agents/{agent_id}/identity-summary` operation to synthesize missing
+identity and psychological summaries with the configured Character Incorporation
+model. It reuses the initial identity-description prompt and does not run source
+scene incorporation, alter traits or assignments, or create memories. Clients show
+a waiting state and open the saved agent after completion. Generation failure leaves
+the character intact and retryable by its existing ID. See the
+[endpoint contract](CharacterAgent%20-%20Endpoints.md#generate-missing-summaries-after-manual-creation).

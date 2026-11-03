@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException
+from neo4j import AsyncSession, AsyncManagedTransaction
 from neo4j.time import Date, DateTime, Duration, Time
 from sqlalchemy import select
 
@@ -249,8 +250,58 @@ class CharacterEmbodimentService:
         ))
         return canonical, self.pack_evidence(entity_evidence, token_budget), groups, cutoff
 
+    async def load_current_assignments(self, agent_id: str, *, graph: AsyncSession | AsyncManagedTransaction | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Read relationship-owned identity state from a session or locked transaction."""
+        aux = await (
+            await (graph or self.graph).run(
+                """
+                MATCH (agent:CharacterAgent {id:$agent_id})
+                CALL {
+                  WITH agent
+                  OPTIONAL MATCH (agent)-[assignment:HAS_ASPECT]->
+                                 (aspect:CharacterAspect)
+                  RETURN collect({
+                    id: aspect.id,
+                    name: aspect.name,
+                    category: aspect.category,
+                    description: aspect.description,
+                    status: coalesce(assignment.status, aspect.status, 'active'),
+                    in_focus: coalesce(assignment.in_focus, true),
+                    evidence_ids: assignment.evidence_ids,
+                    justification: assignment.justification,
+                    created_at: assignment.created_at
+                  }) AS aspects
+                }
+                CALL {
+                  WITH agent
+                  OPTIONAL MATCH (agent)-[pursuit:PURSUES]->
+                                 (goal:CharacterGoal)
+                  RETURN collect({
+                    id: goal.id,
+                    title: goal.title,
+                    description: goal.description,
+                    goal_type: goal.goal_type,
+                    status: coalesce(pursuit.status, goal.status, 'active'),
+                    in_focus: coalesce(pursuit.in_focus, true),
+                    evidence_ids: pursuit.evidence_ids,
+                    justification: pursuit.justification,
+                    created_at: pursuit.created_at
+                  }) AS goals
+                }
+                RETURN aspects, goals
+                """,
+                agent_id=agent_id,
+            )
+        ).single()
+        if not aux:
+            return [], []
+        return (
+            [item for item in (aux["aspects"] or []) if item and item.get("name")],
+            [item for item in (aux["goals"] or []) if item and item.get("title")],
+        )
+
     async def load_embodiment_input(
-        self, source_entity_id: str, ontology_id: int,
+        self, source_entity_id: str, ontology_id: int, *, include_scenes: bool = True,
     ) -> dict[str, Any]:
         """Load authored identity, scoped scenes, current profile, and its evidence ledger."""
         # 1. Load the source entity
@@ -362,59 +413,20 @@ class CharacterEmbodimentService:
         agent_id: str | None = None
         if agent:
             agent_id = str(agent.get("id", ""))
-            aux = await (
-                await self.graph.run(
-                    """
-                    MATCH (agent:CharacterAgent {id:$agent_id})
-                    CALL {
-                      WITH agent
-                      OPTIONAL MATCH (agent)-[assignment:HAS_ASPECT]->
-                                     (aspect:CharacterAspect)
-                      RETURN collect({
-                        id: aspect.id,
-                        name: aspect.name,
-                        category: aspect.category,
-                        description: aspect.description,
-                        status: coalesce(assignment.status, aspect.status, 'active'),
-                        in_focus: coalesce(assignment.in_focus, true),
-                        evidence_ids: assignment.evidence_ids,
-                        justification: assignment.justification,
-                        created_at: assignment.created_at
-                      }) AS aspects
-                    }
-                    CALL {
-                      WITH agent
-                      OPTIONAL MATCH (agent)-[pursuit:PURSUES]->
-                                     (goal:CharacterGoal)
-                      RETURN collect({
-                        id: goal.id,
-                        title: goal.title,
-                        description: goal.description,
-                        goal_type: goal.goal_type,
-                        status: coalesce(pursuit.status, goal.status, 'active'),
-                        in_focus: coalesce(pursuit.in_focus, true),
-                        evidence_ids: pursuit.evidence_ids,
-                        justification: pursuit.justification,
-                        created_at: pursuit.created_at
-                      }) AS goals
-                    }
-                    RETURN aspects, goals
-                    """,
-                    agent_id=agent_id,
-                )
-            ).single()
-            if aux:
-                current_aspects = [
-                    a for a in (aux["aspects"] or []) if a and a.get("name")
-                ]
-                current_goals = [
-                    g for g in (aux["goals"] or []) if g and g.get("title")
-                ]
+            current_aspects, current_goals = await self.load_current_assignments(agent_id)
 
         # 4. Source entity alias
         source_alias = str(
             entity.get("alias") or entity.get("entity_instance_id") or source_entity_id
         )
+
+        if not include_scenes:
+            return {
+                "canonical_identity": canonical_identity,
+                "identity_description": agent.get("identity_description") if agent else None,
+                "trait_profile": trait_profile, "trait_evidence": trait_evidence,
+                "current_aspects": current_aspects, "current_goals": current_goals,
+            }
 
         # 5. Scenes involving this entity, grouped by DERIVED_FROM source.
         # A character can be linked directly or through a milestone.  The graph

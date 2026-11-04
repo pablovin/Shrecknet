@@ -41,6 +41,12 @@ class BackupContext:
     should_stop: Callable[[], bool] | None = None
     dispose_engines: Callable[[], Awaitable[None]] | None = None
     options: dict[str, Any] = field(default_factory=dict)
+    # Reports a sub-step to the job; fraction is the progress through the current category, if known.
+    note: Callable[[str, float | None], Awaitable[None]] | None = None
+
+    async def report(self, text: str, fraction: float | None = None) -> None:
+        if self.note is not None:
+            await self.note(text, fraction)
 
 
 @dataclass(frozen=True)
@@ -220,14 +226,56 @@ class Neo4jGraphCategory(BackupCategory):
 
         if ctx.neo4j_session is None:
             raise RuntimeError("Neo4j session is required to back up the graph")
+        service = BackupService()
         destination.mkdir(parents=True, exist_ok=True)
-        summary = await BackupService()._export_neo4j_dump(ctx.neo4j_session, destination)
+        # Same graph.json layout as the legacy dump, streamed so large graphs never sit in memory.
+        counts = {"nodes": 0, "relationships": 0}
+        queries = {
+            "nodes": (
+                "MATCH (n) RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties",
+                ("id", "labels", "properties"),
+            ),
+            "relationships": (
+                "MATCH (a)-[r]->(b) RETURN elementId(r) AS id, elementId(a) AS start_node_id, "
+                "elementId(b) AS end_node_id, type(r) AS type, properties(r) AS properties",
+                ("id", "start_node_id", "end_node_id", "type", "properties"),
+            ),
+        }
+        try:
+            totals = {
+                "nodes": await _single_count(ctx.neo4j_session, "MATCH (n) RETURN count(n) AS c"),
+                "relationships": await _single_count(ctx.neo4j_session, "MATCH ()-[r]->() RETURN count(r) AS c"),
+            }
+        except Exception:  # progress is cosmetic; never fail the backup over it
+            totals = {"nodes": 0, "relationships": 0}
+        grand_total = max(1, totals["nodes"] + totals["relationships"])
+        with open(destination / "graph.json", "w", encoding="utf-8") as handle:
+            handle.write("{")
+            for index, (kind, (query, keys)) in enumerate(queries.items()):
+                handle.write(("," if index else "") + f'"{kind}": [')
+                result = await ctx.neo4j_session.run(query)
+                async for record in result:
+                    if counts[kind]:
+                        handle.write(",")
+                    handle.write(json.dumps({key: record[key] for key in keys}, default=service._json_default))
+                    counts[kind] += 1
+                    if counts[kind] % 5000 == 0:
+                        done = counts["nodes"] + counts["relationships"]
+                        await ctx.report(
+                            f"Graph: {counts[kind]:,} of {totals[kind]:,} {kind} written", min(0.99, done / grand_total)
+                        )
+                handle.write("]")
+            handle.write("}")
+        await ctx.report("Graph: writing schema")
+        schema = await service._export_neo4j_schema(ctx.neo4j_session)
+        with open(destination / "schema.json", "w", encoding="utf-8") as handle:
+            json.dump(schema, handle, default=service._json_default)
         records = [
             FileRecord(f"{name}", path.stat().st_size, path.stat().st_mtime_ns, sha256_file(path))
             for name in ("graph.json", "schema.json")
             if (path := destination / name).exists()
         ]
-        return ExportResult(records, {"nodes": summary.get("nodes"), "relationships": summary.get("relationships")})
+        return ExportResult(records, counts)
 
     async def restore(self, source: Path, ctx: BackupContext) -> dict[str, Any]:
         from app.services.backup_service import BackupService
@@ -387,8 +435,12 @@ class BundleCategory(BackupCategory):
         details: dict[str, Any] = {}
         previous_root = ctx.previous_root
         previous_all = ctx.previous_records
+        outer_note = ctx.note
         try:
-            for part in self.parts:
+            for position, part in enumerate(self.parts):
+                await ctx.report(part.label, position / len(self.parts))
+                if outer_note is not None:
+                    ctx.note = self._windowed(outer_note, position)
                 prefix = f"{part.id}/"
                 ctx.previous_records = {
                     key[len(prefix) :]: value for key, value in previous_all.items() if key.startswith(prefix)
@@ -399,13 +451,24 @@ class BundleCategory(BackupCategory):
                 details[part.id] = result.details
         finally:
             ctx.previous_records, ctx.previous_root = previous_all, previous_root
+            ctx.note = outer_note
         return ExportResult(records, details)
+
+    def _windowed(self, outer: Any, position: int) -> Any:
+        async def note(text: str, fraction: float | None = None) -> None:
+            await outer(text, (position + (fraction or 0)) / len(self.parts))
+
+        return note
 
     async def restore(self, source: Path, ctx: BackupContext) -> dict[str, Any]:
         missing = [part.id for part in self.parts if not (source / part.id).is_dir()]
         if missing:
             raise RuntimeError(f"Snapshot is missing parts of {self.label}: {', '.join(missing)}")
-        return {part.id: await part.restore(source / part.id, ctx) for part in self.parts}
+        summary: dict[str, Any] = {}
+        for position, part in enumerate(self.parts):
+            await ctx.report(part.label, position / len(self.parts))
+            summary[part.id] = await part.restore(source / part.id, ctx)
+        return summary
 
 
 async def _single_count(session: Any, query: str) -> int:

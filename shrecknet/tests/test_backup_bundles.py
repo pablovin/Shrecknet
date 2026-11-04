@@ -178,3 +178,46 @@ async def test_bundle_restore_rejects_a_snapshot_missing_a_part(tmp_path: Path) 
     shutil.rmtree(tmp_path / "backups" / snap["id"] / "worlds" / "imgs")
     with pytest.raises(Exception):
         await bundle.restore(tmp_path / "backups" / snap["id"] / "worlds", BackupContext())
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __aiter__(self):
+        async def gen():
+            for row in self._rows:
+                yield row
+
+        return gen()
+
+
+class _FakeNeo4jSession:
+    def __init__(self, nodes, rels):
+        self.nodes, self.rels = nodes, rels
+
+    async def run(self, query, *args, **kwargs):
+        if "SHOW" in query:
+            return _FakeResult([])
+        return _FakeResult(self.rels if "-[r]->" in query else self.nodes)
+
+
+def test_graph_export_streams_legacy_layout_and_reports_progress(tmp_path):
+    import json
+
+    from app.services.backup.categories import Neo4jGraphCategory
+
+    nodes = [{"id": f"n{i}", "labels": ["Entity"], "properties": {"name": f"e{i}"}} for i in range(5001)]
+    rels = [{"id": "r1", "start_node_id": "n0", "end_node_id": "n1", "type": "KNOWS", "properties": {}}]
+    notes: list[str] = []
+
+    async def note(text, fraction=None):
+        notes.append(text)
+
+    ctx = BackupContext(neo4j_session=_FakeNeo4jSession(nodes, rels), note=note)
+    result = asyncio.run(Neo4jGraphCategory().export(tmp_path / "graph", ctx))
+
+    dump = json.loads((tmp_path / "graph" / "graph.json").read_text())
+    assert len(dump["nodes"]) == 5001 and dump["relationships"][0]["type"] == "KNOWS"
+    assert result.details == {"nodes": 5001, "relationships": 1}
+    assert any("5,000" in text and "nodes" in text for text in notes)

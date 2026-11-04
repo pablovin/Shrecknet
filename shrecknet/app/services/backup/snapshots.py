@@ -210,6 +210,13 @@ class SnapshotService:
             chosen.append(category)
         return chosen
 
+    @staticmethod
+    def _note_for(progress: ProgressCallback | None, category_id: str, heading: str, start: float, span: float):
+        async def note(text: str, fraction: float | None = None) -> None:
+            await _report(progress, f"category:{category_id}", start + span * (fraction or 0), f"{heading} - {text}")
+
+        return note
+
     async def create_snapshot(
         self,
         selected: list[str],
@@ -231,7 +238,9 @@ class SnapshotService:
         try:
             for position, category in enumerate(chosen):
                 start = 0.05 + 0.85 * position / len(chosen)
-                await _report(progress, f"category:{category.id}", start, f"Backing up {category.label}")
+                heading = f"Backing up {category.label} ({position + 1}/{len(chosen)})"
+                await _report(progress, f"category:{category.id}", start, heading)
+                ctx.note = self._note_for(progress, category.id, heading, start, 0.85 / len(chosen))
                 ctx.previous_records = {}
                 ctx.previous_root = None
                 if base_id and base_id != snapshot_id:
@@ -314,7 +323,10 @@ class SnapshotService:
         base = self.snapshot_path(snapshot_id)
         summary: dict[str, Any] = {}
         for position, category in enumerate(chosen):
-            await _report(progress, f"category:{category.id}", 0.3 + 0.65 * position / len(chosen), f"Restoring {category.label}")
+            heading = f"Restoring {category.label} ({position + 1}/{len(chosen)})"
+            start = 0.3 + 0.65 * position / len(chosen)
+            await _report(progress, f"category:{category.id}", start, heading)
+            ctx.note = self._note_for(progress, category.id, heading, start, 0.65 / len(chosen))
             ctx.previous_records, ctx.previous_root = {}, None
             summary[category.id] = await category.restore(base / category.id, ctx)
 

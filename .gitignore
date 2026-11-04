@@ -111,3 +111,6 @@ shrecknet/databases/
 shreckworld/media/
 shreckworld/databases/
 shreckworld/models/
+
+# Category snapshot backups (can be many GB)
+/backups/

@@ -24,6 +24,7 @@ x-shrecknet-env: &shrecknet-env
   SHRECKNET_BACKUP_SHRECKWORLD_DATA_DIR: /backup-sources/shreckworld/data
   SHRECKNET_BACKUP_SHRECKWORLD_MEDIA_DIR: /backup-sources/shreckworld/media
   SHRECKNET_BACKUP_SHRECKLLM_DATA_DIR: /backup-sources/shreckllm/data
+  SHRECKNET_BACKUP_SHRECKRPG_DATA_DIR: /backup-sources/shreckrpg/data
 
 x-shreckworld-env: &shreckworld-env
   SHRECKWORLD_EMBEDDING_MODEL_ID: ${SHRECKWORLD_EMBEDDING_MODEL_ID:-intfloat/multilingual-e5-small}
@@ -276,6 +277,7 @@ services:
     volumes:
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/media
+      - ${SHRECKNET_BACKUP_DIR:-./backups}:/backups
     command:
       - /bin/sh
       - -ec
@@ -286,6 +288,8 @@ services:
         chown -R "$$TARGET_UID:$$TARGET_GID" /data /media
         find /data /media -type d -exec chmod 2775 {} +
         find /data /media -type f -exec chmod 664 {} +
+        chown "$$TARGET_UID:$$TARGET_GID" /backups
+        chmod 2775 /backups
         if [ -d /data/runtime-secrets ]; then
           chown -R "$$TARGET_UID:$$TARGET_GID" /data/runtime-secrets
           find /data/runtime-secrets -type d -exec chmod 700 {} +
@@ -373,6 +377,7 @@ services:
       - ./shreckworld/databases:/backup-sources/shreckworld/data
       - ./shreckworld/media:/backup-sources/shreckworld/media
       - ./shreckLLM/databases:/backup-sources/shreckllm/data
+      - ${SHRECKNET_BACKUP_SHRECKRPG_HOST_DIR:-./shreckrpg/databases}:/backup-sources/shreckrpg/data
       - hf-model-cache:/hf-cache
       - ./configs:/configs:ro
     depends_on:
@@ -418,6 +423,7 @@ services:
       - ./shreckworld/databases:/backup-sources/shreckworld/data
       - ./shreckworld/media:/backup-sources/shreckworld/media
       - ./shreckLLM/databases:/backup-sources/shreckllm/data
+      - ${SHRECKNET_BACKUP_SHRECKRPG_HOST_DIR:-./shreckrpg/databases}:/backup-sources/shreckrpg/data
       - hf-model-cache:/hf-cache
       - ./configs:/configs:ro
     depends_on:

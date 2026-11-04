@@ -363,7 +363,7 @@ def create_snapshot_task(
             job_type=JobType.BACKUP,
             description=f"Creating snapshot ({', '.join(categories)})",
             celery_task_id=create_snapshot_task.request.id,
-            details={"admin_user_id": admin_user_id, "categories": categories, "backup_kind": "snapshot"},
+            details={"admin_user_id": admin_user_id, "categories": categories, "backup_kind": "snapshot", "operation": "create"},
         )
     )
 
@@ -374,7 +374,11 @@ def create_snapshot_task(
         async def report_progress(phase: str, progress: float, status_text: str) -> None:
             nonlocal current_phase
             current_phase = phase
-            await update_job_progress(job_id, progress, {"phase": phase, "status": status_text})
+            await update_job_progress(
+                job_id,
+                progress,
+                {"backup_kind": "snapshot", "operation": "create", "categories": categories, "phase": phase, "status": status_text},
+            )
 
         async def perform() -> dict[str, Any]:
             service = SnapshotService()
@@ -428,7 +432,13 @@ def restore_snapshot_task(
             job_type=JobType.RESTORE,
             description=f"Restoring snapshot {snapshot_id}",
             celery_task_id=restore_snapshot_task.request.id,
-            details={"admin_user_id": admin_user_id, "snapshot_id": snapshot_id, "categories": categories},
+            details={
+                "admin_user_id": admin_user_id,
+                "backup_kind": "snapshot",
+                "operation": "restore",
+                "snapshot_id": snapshot_id,
+                "categories": categories,
+            },
         )
     )
 
@@ -440,7 +450,18 @@ def restore_snapshot_task(
         async def report_progress(phase: str, progress: float, status_text: str) -> None:
             nonlocal current_phase
             current_phase = phase
-            await update_job_progress(job_id, progress, {"phase": phase, "status": status_text})
+            await update_job_progress(
+                job_id,
+                progress,
+                {
+                    "backup_kind": "snapshot",
+                    "operation": "restore",
+                    "snapshot_id": snapshot_id,
+                    "categories": categories,
+                    "phase": phase,
+                    "status": status_text,
+                },
+            )
 
         async def perform() -> dict[str, Any]:
             service = SnapshotService()
@@ -467,6 +488,9 @@ def restore_snapshot_task(
                 job_id,
                 details={
                     "admin_user_id": admin_user_id,
+                    "backup_kind": "snapshot",
+                    "operation": "restore",
+                    "categories": categories,
                     "snapshot_id": snapshot_id,
                     "restored_at": result.get("restored_at"),
                     "restart_required": result.get("restart_required", False),

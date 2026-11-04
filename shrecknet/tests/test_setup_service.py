@@ -97,6 +97,7 @@ async def test_first_world_persists_properties_relationships_and_resumes(session
         assert first.name == 'First World'
         entities = {entity.name: entity for entity in await ontologies.repository.list_entities(first.ontology_id)}
         assert set(entities) == {'Story', 'Character', 'Important Place', 'Important Item', 'Creature'}
+        assert entities['Story'].display_on_world is True
         assert not entities['Story'].auto_generatable
         assert all(entity.auto_generatable for name, entity in entities.items() if name != 'Story')
         property_ids = set()

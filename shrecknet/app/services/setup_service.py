@@ -189,7 +189,7 @@ class SetupService:
 
     def _first_world_entity_specs(self) -> list[_WorldEntitySpec]:
         return [
-            _WorldEntitySpec("Story", "Original story source supplied by a person and stored verbatim in the graph. Never generate, rewrite, or invent source text with AI.", False, False, "Story.png"),
+            _WorldEntitySpec("Story", "Original story source supplied by a person and stored verbatim in the graph. Never generate, rewrite, or invent source text with AI.", False, True, "Story.png"),
             _WorldEntitySpec("Character", "An identifiable person or person-like participant who appears in the source story and acts, speaks, or influences events. Extract only supported facts; do not invent characters or biographies.", True, True, "NPC.png"),
             _WorldEntitySpec("Important Place", "A location, landmark, city, region, or country explicitly mentioned in the story and essential to its events or stakes. Exclude incidental locations and passing geographic references.", True, True, "Place.png"),
             _WorldEntitySpec("Important Item", "An object with its own explicit proper name in the source story that is central to the plot, conflict, or a consequential action. Exclude unnamed objects, generic equipment, and incidental possessions.", True, True, "Item.png"),

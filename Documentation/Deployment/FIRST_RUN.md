@@ -146,6 +146,10 @@ the normal authoring workflow. Setup makes no generation calls.
 | Important Item | Enabled | A plot-relevant object with its own explicit proper name; aliases, item_type, significance, abilities. Excludes unnamed equipment. |
 | Creature | Enabled | A significant non-person creature or creature kind mentioned in the source; aliases, creature_kind, significance, abilities. Person-like participants belong under Character. |
 
+All five entity types, including Story, are created with `display_on_world=true`
+so they appear in the world browser. This default applies to newly created
+types; setup retries preserve visibility choices on existing types.
+
 All properties use text values. `aliases`, `traits`, and `abilities` allow multiple
 values; other properties allow one. Entity aliases hold canonical names. Unknown
 facts stay empty. AI-enabled means eligible for the existing extraction workflow,

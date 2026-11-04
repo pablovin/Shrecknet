@@ -5,7 +5,7 @@ API (admin only), router `shrecknet/app/api/routers/backup_snapshots.py`:
 - `GET /backups/categories` – categories with size, file count, availability and free disk space.
 - `GET|POST /backups/snapshots` – list / create (`categories`, `incremental`, `label`); creation runs as Celery task `backup.create_snapshot`.
 - `POST /backups/snapshots/{id}/restore` – per-category restore (`categories`, `safety_snapshot`, `keep_only_admin_in_rpg` default true), task `backup.restore_snapshot`.
-- `GET|DELETE /backups/snapshots/{id}`, `POST .../download-link`, `POST /backups/snapshots/import` (`.tar`).
+- `GET|DELETE /backups/snapshots/{id}`, `POST .../download-link`, `POST /backups/snapshots/import?filename=x.tar` (raw `application/octet-stream` body, streamed to disk; returns 202 and a `backup.import_snapshot` job that extracts and verifies it, reporting progress). Reverse proxies must allow unlimited request bodies and disable request buffering on this path (ShreckOS and the web nginx templates do).
 
 Bundles (each stored as `<bundle>/<part>/...`, restored atomically per part):
 

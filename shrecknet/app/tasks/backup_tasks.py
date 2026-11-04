@@ -504,3 +504,65 @@ def restore_snapshot_task(
         logger.error("Failed to restore snapshot: %s", exc, exc_info=True)
         run_async(mark_job_failed(job_id, f"[{current_phase}] {exc}"))
         raise
+
+
+@celery_app.task(name="backup.import_snapshot")
+def import_snapshot_task(
+    upload_path: str,
+    original_name: str,
+    author_type: str = "agent",
+    author_id: str = "system",
+    admin_user_id: int | None = None,
+) -> dict[str, Any]:
+    """Extract and verify an uploaded snapshot .tar, then register it as a snapshot."""
+    upload = Path(upload_path)
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType(author_type),
+            author_id=author_id,
+            job_type=JobType.BACKUP,
+            description=f"Importing snapshot {original_name}",
+            celery_task_id=import_snapshot_task.request.id,
+            details={"admin_user_id": admin_user_id, "backup_kind": "snapshot", "operation": "import", "categories": []},
+        )
+    )
+
+    current_phase = "queued"
+    try:
+        run_async(mark_job_running(job_id))
+
+        def report(phase: str, progress: float, status_text: str) -> None:
+            nonlocal current_phase
+            current_phase = phase
+            run_async(
+                update_job_progress(
+                    job_id,
+                    progress,
+                    {"backup_kind": "snapshot", "operation": "import", "categories": [], "phase": phase, "status": status_text},
+                )
+            )
+
+        report("validating", 0.02, "Validating uploaded archive")
+        service = SnapshotService()
+        with service.exclusive():
+            summary = service.import_tar(upload, on_progress=report)
+        run_async(
+            mark_job_done(
+                job_id,
+                details={
+                    "admin_user_id": admin_user_id,
+                    "backup_kind": "snapshot",
+                    "operation": "import",
+                    "categories": list(summary.get("categories", [])),
+                    "snapshot_id": summary["id"],
+                    "backup_size": summary.get("size_bytes"),
+                },
+            )
+        )
+        return {"job_id": job_id, "status": "completed", **summary}
+    except Exception as exc:
+        logger.error("Failed to import snapshot: %s", exc, exc_info=True)
+        run_async(mark_job_failed(job_id, f"[{current_phase}] {exc}"))
+        raise
+    finally:
+        upload.unlink(missing_ok=True)

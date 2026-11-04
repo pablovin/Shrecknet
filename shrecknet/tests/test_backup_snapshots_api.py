@@ -70,7 +70,7 @@ async def test_create_queues_job_and_validates_selection(client, admin_override,
 
 
 @pytest.mark.asyncio
-async def test_list_download_import_delete_round_trip(client, admin_override, service) -> None:
+async def test_list_download_import_delete_round_trip(client, admin_override, service, monkeypatch) -> None:
     summary = await service.create_snapshot(["documents"], BackupContext())
 
     listed = await client.get("/backups/snapshots")
@@ -91,10 +91,32 @@ async def test_list_download_import_delete_round_trip(client, admin_override, se
     assert (await client.delete(f"/backups/snapshots/{summary['id']}")).status_code == 200
     assert (await client.get(f"/backups/snapshots/{summary['id']}")).status_code == 404
 
-    imported = await client.post("/backups/snapshots/import", files={"file": ("x.tar", download.content)})
-    assert imported.status_code == 201, imported.text
-    assert imported.json()["id"] == summary["id"]
-    assert (await client.post("/backups/snapshots/import", files={"file": ("x.zip", b"zip")})).status_code == 400
+    queued = {}
+    monkeypatch.setattr(
+        backup_snapshots.import_snapshot_task,
+        "delay",
+        lambda **kwargs: queued.update(kwargs) or SimpleNamespace(id="import-task"),
+    )
+    imported = await client.post(
+        "/backups/snapshots/import?filename=x.tar",
+        content=download.content,
+        headers={"content-type": "application/octet-stream"},
+    )
+    assert imported.status_code == 202, imported.text
+    assert imported.json()["received_bytes"] == len(download.content)
+    staged = Path(queued["upload_path"])
+    assert staged.parent == service.root and staged.read_bytes() == download.content
+    assert queued["original_name"] == "x.tar" and queued["admin_user_id"] == 1
+
+    # The queued job (run inline here) registers the snapshot from the staged upload.
+    registered = service.import_tar(staged, on_progress=lambda *_: None)
+    assert registered["id"] == summary["id"]
+    staged.unlink()
+    bad = await client.post("/backups/snapshots/import?filename=x.zip", content=b"zip")
+    assert bad.status_code == 400
+    empty = await client.post("/backups/snapshots/import?filename=x.tar", content=b"")
+    assert empty.status_code == 400
+    assert not list(service.root.glob(".upload-*"))
 
 
 @pytest.mark.asyncio

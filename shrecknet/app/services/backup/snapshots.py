@@ -13,7 +13,7 @@ import tarfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from app.core.config_store import get_settings
 from app.services.backup.categories import (
@@ -366,8 +366,18 @@ class SnapshotService:
                 yield b"\0" * padding
         yield b"\0" * (tarfile.BLOCKSIZE * 2)
 
-    def import_tar(self, archive: Path) -> dict[str, Any]:
-        """Register an exported snapshot tar as a snapshot in the backup root."""
+    def import_tar(
+        self, archive: Path, on_progress: Callable[[str, float, str], None] | None = None
+    ) -> dict[str, Any]:
+        """Register an exported snapshot tar as a snapshot in the backup root.
+
+        on_progress(phase, fraction 0..1, text) is called synchronously between steps.
+        """
+
+        def notify(phase: str, fraction: float, text: str) -> None:
+            if on_progress is not None:
+                on_progress(phase, fraction, text)
+
         staging = self.root / f".import-{datetime.now(timezone.utc).strftime('%H%M%S%f')}"
         remove_path(staging)
         staging.mkdir(parents=True)
@@ -385,7 +395,17 @@ class SnapshotService:
                         parts = Path(member.name).parts
                         if Path(member.name).is_absolute() or ".." in parts or not (member.isfile() or member.isdir()):
                             raise SnapshotError("Unsafe entry in snapshot archive")
-                    tar.extractall(staging, members=members, filter="data")
+                    total = sum(member.size for member in members) or 1
+                    done = 0
+                    step = max(total // 100, 1)
+                    next_report = step
+                    notify("extracting", 0.05, "Extracting archive")
+                    for member in members:
+                        tar.extract(member, staging, filter="data")
+                        done += member.size
+                        if done >= next_report:
+                            next_report = done + step
+                            notify("extracting", 0.05 + 0.65 * done / total, f"Extracting archive ({done * 100 // total}%)")
             except tarfile.TarError as exc:
                 raise SnapshotError("Invalid snapshot archive. Expected an uncompressed .tar export") from exc
             extracted = staging / snapshot_id
@@ -395,6 +415,7 @@ class SnapshotService:
             if target.exists():
                 raise SnapshotError(f"Snapshot {snapshot_id} already exists")
             extracted.rename(target)
+            notify("verifying", 0.75, "Verifying checksums")
             try:
                 self.verify(snapshot_id, list(self.read_manifest(snapshot_id)["categories"]))
             except BaseException:

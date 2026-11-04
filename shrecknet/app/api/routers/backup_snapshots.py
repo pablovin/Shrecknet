@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
-import tempfile
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from neo4j import AsyncSession as AsyncNeo4jSession
 
@@ -21,9 +22,11 @@ from app.models.user import User
 from app.schemas.backup_snapshot import SnapshotCreateRequest, SnapshotRestoreRequest
 from app.services.backup.categories import BackupContext
 from app.services.backup.snapshots import BackupBusy, SnapshotError, SnapshotNotFound, SnapshotService
-from app.tasks.backup_tasks import create_snapshot_task, restore_snapshot_task
+from app.tasks.backup_tasks import create_snapshot_task, import_snapshot_task, restore_snapshot_task
 
 logger = logging.getLogger(__name__)
+
+UPLOAD_WRITE_BYTES = 8 * 1024 * 1024
 
 router = APIRouter(prefix="/backups", tags=["backups"])
 
@@ -74,23 +77,45 @@ async def create_snapshot(
     return {"celery_task_id": task.id, "status": "queued", "message": "Snapshot job created."}
 
 
-@router.post("/snapshots/import", status_code=status.HTTP_201_CREATED)
+@router.post("/snapshots/import", status_code=status.HTTP_202_ACCEPTED)
 async def import_snapshot(
-    file: UploadFile = File(...),
+    request: Request,
+    filename: str = Query(..., description="Original file name; must end in .tar"),
     current_user: User = Depends(get_current_admin_user),
 ) -> dict[str, Any]:
-    if not file.filename or not file.filename.endswith(".tar"):
+    """Receive a raw (streamed) snapshot .tar, then extract and verify it in a background job."""
+    if not filename.endswith(".tar"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Expected an uncompressed .tar snapshot export")
     service = SnapshotService()
-    with tempfile.NamedTemporaryFile(dir=service.root, prefix=".upload-", suffix=".tar") as upload:
-        while chunk := await file.read(1024 * 1024):
-            upload.write(chunk)
-        upload.flush()
-        try:
-            with service.exclusive():
-                return service.import_tar(Path(upload.name))
-        except SnapshotError as exc:
-            raise _http_error(exc) from exc
+    declared = int(request.headers.get("content-length") or 0)
+    # The archive is extracted next to its own copy, so roughly twice its size is needed.
+    if declared and declared * 2 > service.disk_usage()["free_bytes"]:
+        raise HTTPException(status.HTTP_507_INSUFFICIENT_STORAGE, "Not enough free disk space for this backup")
+    upload = service.root / f".upload-{uuid.uuid4().hex}.tar"
+    received = 0
+    try:
+        with open(upload, "wb") as handle:
+            pending = bytearray()
+            async for chunk in request.stream():
+                pending += chunk
+                received += len(chunk)
+                if len(pending) >= UPLOAD_WRITE_BYTES:
+                    await asyncio.to_thread(handle.write, bytes(pending))
+                    pending.clear()
+            await asyncio.to_thread(handle.write, bytes(pending))
+        if not received:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "The uploaded file is empty")
+    except BaseException:
+        upload.unlink(missing_ok=True)
+        raise
+    task = import_snapshot_task.delay(
+        upload_path=str(upload),
+        original_name=Path(filename).name,
+        author_type="user",
+        author_id=str(current_user.id),
+        admin_user_id=current_user.id,
+    )
+    return {"celery_task_id": task.id, "status": "queued", "received_bytes": received}
 
 
 @router.get("/snapshots/download-signed")

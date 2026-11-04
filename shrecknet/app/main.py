@@ -17,6 +17,7 @@ from app.api.routers import (
     architect,
     audit_logs,
     auth,
+    backup_snapshots,
     backups,
     character_agents,
     configurations,
@@ -413,6 +414,7 @@ app.include_router(character_companion.retrieval_router)
 app.include_router(events.router)
 app.include_router(foundry_integrations.router)
 app.include_router(contracts.router)
+app.include_router(backup_snapshots.router)
 app.include_router(backups.router)
 app.include_router(llm_status.router)
 app.include_router(setup.router)

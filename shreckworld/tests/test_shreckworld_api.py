@@ -34,6 +34,19 @@ def test_admin_creates_and_configures_a_shreckworld(monkeypatch, tmp_path):
     assert invalid.status_code == 422
 
 
+def test_admin_can_link_a_restored_unlinked_world_to_a_shrecknet_world(monkeypatch, tmp_path):
+    client, headers = _client(monkeypatch, tmp_path)
+    world = client.post("/admin/shreckworlds", headers=headers, json={"name": "Restored", "shrecknet_world_id": "gone-1"}).json()
+    other = client.post("/admin/shreckworlds", headers=headers, json={"name": "Other", "shrecknet_world_id": "taken"}).json()
+
+    linked = client.patch(f"/admin/shreckworlds/{world['id']}", headers=headers, json={"shrecknet_world_id": "42"})
+    assert linked.status_code == 200 and linked.json()["shrecknet_world_id"] == "42"
+    unchanged = client.patch(f"/admin/shreckworlds/{world['id']}", headers=headers, json={"name": "Renamed"})
+    assert unchanged.json()["shrecknet_world_id"] == "42"
+    conflict = client.patch(f"/admin/shreckworlds/{other['id']}", headers=headers, json={"shrecknet_world_id": "42"})
+    assert conflict.status_code == 409
+
+
 def test_query_isolated_to_its_shreckworld(monkeypatch, tmp_path):
     client, headers = _client(monkeypatch, tmp_path)
     one = client.post("/admin/shreckworlds", headers=headers, json={"name": "Pendragon", "shrecknet_world_id": "pendragon"}).json()

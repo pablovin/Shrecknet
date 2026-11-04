@@ -4,6 +4,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## Shared model configuration
 
+- [Category snapshot backups](Deployment/BACKUPS.md) — categories, API, snapshot layout, restore and deployment
 - [Agent web search](Architecture/LLM_WEB_SEARCH.md) — shared model option, gateway capabilities, frontend controls, source contracts, and deployment
 
 ## Authentication

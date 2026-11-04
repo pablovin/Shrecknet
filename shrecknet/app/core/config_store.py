@@ -39,6 +39,12 @@ BOOTSTRAP_ENV_FIELDS = frozenset(
         "neo4j_password",
         "neo4j_database",
         "media_root",
+        "backup_root",
+        "backup_shreckworld_data_dir",
+        "backup_shreckworld_media_dir",
+        "backup_shreckrpg_data_dir",
+        "backup_shreckllm_data_dir",
+        "qdrant_url",
         # Lets a deployment choose CUDA without mutating persistent config.
         "embedding_device",
     }
@@ -221,6 +227,16 @@ class Settings(BaseSettings):
     database_url: str = _sqlite_url(DEFAULT_DATABASE_FILENAME)
     jobs_database_url: str = _sqlite_url(DEFAULT_JOBS_DATABASE_FILENAME)
     media_root: str = "./media"
+    # Folder-based backup snapshots; empty means <media_root>/backups/snapshots.
+    backup_root: str = ""
+    # Newest snapshots to keep after each new one; 0 keeps everything.
+    backup_retention_count: int = 0
+    # Mount points of sibling apps' data, used only by the backup categories.
+    backup_shreckworld_data_dir: str = ""
+    backup_shreckworld_media_dir: str = ""
+    backup_shreckrpg_data_dir: str = ""
+    backup_shreckllm_data_dir: str = ""
+    qdrant_url: str = "http://qdrant:6333"
     media_base_url: str = "/media"
     media_public_url: str | None = None
     max_image_upload_bytes: int = 5 * 1024 * 1024

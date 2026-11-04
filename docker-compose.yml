@@ -20,6 +20,10 @@ x-shrecknet-env: &shrecknet-env
   SENTENCE_TRANSFORMERS_HOME: /hf-cache/sentence_transformers
   DOCLING_ARTIFACTS_PATH: /hf-cache/docling
   SHRECKNET_CONFIG_SEED_FILE: /configs/shrecknet.initial.json
+  SHRECKNET_BACKUP_ROOT: /backups
+  SHRECKNET_BACKUP_SHRECKWORLD_DATA_DIR: /backup-sources/shreckworld/data
+  SHRECKNET_BACKUP_SHRECKWORLD_MEDIA_DIR: /backup-sources/shreckworld/media
+  SHRECKNET_BACKUP_SHRECKLLM_DATA_DIR: /backup-sources/shreckllm/data
 
 x-shreckworld-env: &shreckworld-env
   SHRECKWORLD_EMBEDDING_MODEL_ID: ${SHRECKWORLD_EMBEDDING_MODEL_ID:-intfloat/multilingual-e5-small}
@@ -365,6 +369,10 @@ services:
           create_host_path: false
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/app/media
+      - ${SHRECKNET_BACKUP_DIR:-./backups}:/backups
+      - ./shreckworld/databases:/backup-sources/shreckworld/data
+      - ./shreckworld/media:/backup-sources/shreckworld/media
+      - ./shreckLLM/databases:/backup-sources/shreckllm/data
       - hf-model-cache:/hf-cache
       - ./configs:/configs:ro
     depends_on:
@@ -406,6 +414,10 @@ services:
     volumes:
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/app/media
+      - ${SHRECKNET_BACKUP_DIR:-./backups}:/backups
+      - ./shreckworld/databases:/backup-sources/shreckworld/data
+      - ./shreckworld/media:/backup-sources/shreckworld/media
+      - ./shreckLLM/databases:/backup-sources/shreckllm/data
       - hf-model-cache:/hf-cache
       - ./configs:/configs:ro
     depends_on:

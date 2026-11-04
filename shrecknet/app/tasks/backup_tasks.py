@@ -11,6 +11,9 @@ from app.db.session import get_sessionmaker
 from app.graph.neo4j import get_driver
 from app.models.background_job import AuthorType, JobType
 from app.models.user import User
+from app.core.config_store import get_settings
+from app.services.backup.categories import BackupContext
+from app.services.backup.snapshots import SnapshotService
 from app.services.backup_service import BackupService
 from app.services.legacy_monolith_import_service import LegacyMonolithImportService
 from app.services.maintenance_mode_service import MaintenanceModeService
@@ -336,4 +339,144 @@ def import_legacy_backup_task(
     except Exception as e:
         logger.error("Failed to import legacy backup: %s", str(e), exc_info=True)
         run_async(mark_job_failed(job_id, f"[{current_phase}] {str(e)}"))
+        raise
+
+
+def _snapshot_context(neo4j_session: Any, dispose_engines: Any | None = None) -> BackupContext:
+    return BackupContext(neo4j_session=neo4j_session, dispose_engines=dispose_engines)
+
+
+@celery_app.task(name="backup.create_snapshot")
+def create_snapshot_task(
+    categories: list[str],
+    incremental: bool = True,
+    label: str | None = None,
+    author_type: str = "agent",
+    author_id: str = "system",
+    admin_user_id: int | None = None,
+) -> dict[str, Any]:
+    """Create a category-based folder snapshot under the configured backup root."""
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType(author_type),
+            author_id=author_id,
+            job_type=JobType.BACKUP,
+            description=f"Creating snapshot ({', '.join(categories)})",
+            celery_task_id=create_snapshot_task.request.id,
+            details={"admin_user_id": admin_user_id, "categories": categories, "backup_kind": "snapshot"},
+        )
+    )
+
+    current_phase = "queued"
+    try:
+        run_async(mark_job_running(job_id))
+
+        async def report_progress(phase: str, progress: float, status_text: str) -> None:
+            nonlocal current_phase
+            current_phase = phase
+            await update_job_progress(job_id, progress, {"phase": phase, "status": status_text})
+
+        async def perform() -> dict[str, Any]:
+            service = SnapshotService()
+            with service.exclusive():
+                async with get_driver().session() as neo4j_session:
+                    summary = await service.create_snapshot(
+                        categories,
+                        _snapshot_context(neo4j_session),
+                        incremental=incremental,
+                        label=label,
+                        progress=report_progress,
+                    )
+                removed = service.apply_retention(get_settings().backup_retention_count)
+                return {**summary, "retention_removed": removed}
+
+        result = run_async(perform())
+        run_async(
+            mark_job_done(
+                job_id,
+                details={
+                    "admin_user_id": admin_user_id,
+                    "backup_kind": "snapshot",
+                    "snapshot_id": result["id"],
+                    "backup_size": result["size_bytes"],
+                    "categories": list(result["categories"]),
+                },
+            )
+        )
+        return {"job_id": job_id, "status": "completed", **result}
+    except Exception as exc:
+        logger.error("Failed to create snapshot: %s", exc, exc_info=True)
+        run_async(mark_job_failed(job_id, f"[{current_phase}] {exc}"))
+        raise
+
+
+@celery_app.task(name="backup.restore_snapshot")
+def restore_snapshot_task(
+    snapshot_id: str,
+    categories: list[str],
+    safety_snapshot: bool = True,
+    keep_only_admin_in_rpg: bool = True,
+    author_type: str = "agent",
+    author_id: str = "system",
+    admin_user_id: int | None = None,
+) -> dict[str, Any]:
+    """Replace live data for the selected categories with the files of a snapshot."""
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType(author_type),
+            author_id=author_id,
+            job_type=JobType.RESTORE,
+            description=f"Restoring snapshot {snapshot_id}",
+            celery_task_id=restore_snapshot_task.request.id,
+            details={"admin_user_id": admin_user_id, "snapshot_id": snapshot_id, "categories": categories},
+        )
+    )
+
+    current_phase = "queued"
+    maintenance_service = MaintenanceModeService()
+    try:
+        run_async(mark_job_running(job_id))
+
+        async def report_progress(phase: str, progress: float, status_text: str) -> None:
+            nonlocal current_phase
+            current_phase = phase
+            await update_job_progress(job_id, progress, {"phase": phase, "status": status_text})
+
+        async def perform() -> dict[str, Any]:
+            service = SnapshotService()
+            with service.exclusive():
+                maintenance_service.enable("snapshot_restore")
+                try:
+                    async with get_driver().session() as neo4j_session:
+                        restore_ctx = _snapshot_context(neo4j_session, BackupService()._prepare_sqlite_restore)
+                        if keep_only_admin_in_rpg and admin_user_id is not None:
+                            restore_ctx.options["rpg_keep_user_id"] = admin_user_id
+                        return await service.restore_snapshot(
+                            snapshot_id,
+                            categories,
+                            restore_ctx,
+                            safety_snapshot=safety_snapshot,
+                            progress=report_progress,
+                        )
+                finally:
+                    maintenance_service.disable()
+
+        result = run_async(perform())
+        run_async(
+            mark_job_done(
+                job_id,
+                details={
+                    "admin_user_id": admin_user_id,
+                    "snapshot_id": snapshot_id,
+                    "restored_at": result.get("restored_at"),
+                    "restart_required": result.get("restart_required", False),
+                    "safety_snapshot_id": result.get("safety_snapshot_id"),
+                    "summary": result.get("summary"),
+                },
+            )
+        )
+        return {"job_id": job_id, "status": "completed", **result}
+    except Exception as exc:
+        logger.error("Failed to restore snapshot: %s", exc, exc_info=True)
+        run_async(mark_job_failed(job_id, f"[{current_phase}] {exc}"))
         raise

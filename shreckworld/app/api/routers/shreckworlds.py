@@ -14,6 +14,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request, Response, status
 from fastapi.responses import FileResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -158,9 +159,16 @@ def update_shreckworld(shreckworld_id: str, payload: ShreckWorldUpdate, session:
     policy = updates.get("web_search_policy", world.web_search_policy)
     if not enabled and policy != "disabled":
         raise HTTPException(status_code=422, detail="web_search_policy must be disabled while web search is disabled")
+    if updates.get("shrecknet_world_id") is None:
+        updates.pop("shrecknet_world_id", None)
     for field, value in updates.items():
         setattr(world, field, value)
-    session.commit(); session.refresh(world)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="That Shrecknet world is already linked to another ShreckWorld") from exc
+    session.refresh(world)
     return world
 
 

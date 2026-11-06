@@ -51,6 +51,9 @@ Tools are `{"allowed":["atlas","character_memory"],"web":"disabled"}`;
 `allowed:null` permits configured sources. Web is `disabled`, `allow` or `require`.
 Unavailable required tools fail admission. Retry uses a new idempotency key and
 references the prior failed/cancelled/interrupted turn; never resubmit on reconnect.
+Server startup interrupts unfinished turns with retryable error code
+`server_restarted`; their chats become available for a new turn. Outstanding
+rapport evaluations are settled as failed without changing scores.
 
 Context fields are `surface` (`global`, `atlas`, `shreckworld`, `chronicle`),
 `world_id`, `ontology_id`, `entity_instance_id`, `source_id`, `scene_id`,

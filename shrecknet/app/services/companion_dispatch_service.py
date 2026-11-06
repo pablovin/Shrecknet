@@ -5,11 +5,63 @@ from datetime import timedelta
 from sqlalchemy import select, update, delete
 from app.core.config_store import get_settings
 from app.jobs.companion.runner import database
-from app.models.character_companion import CompanionOutbox, CompanionTurn, CompanionEvent, CompanionAttachment, utcnow
+from app.models.character_companion import CompanionOutbox, CompanionTurn, CompanionEvent, CompanionAttachment, CompanionRapportAudit, utcnow
 from app.repositories.character_companion_repository import CompanionRepository
-from app.schemas.character_companion import TERMINAL
+from app.schemas.character_companion import DIMENSIONS, TERMINAL
 
 logger = logging.getLogger(__name__)
+
+
+async def interrupt_outstanding_model_work_on_startup():
+    """Settle abandoned model work before the dispatcher can republish it.
+
+    Privacy cleanup outbox entries remain pending and must still be dispatched.
+    """
+    async with database() as session:
+        repo = CompanionRepository(session)
+        rows = list((await session.execute(select(CompanionOutbox).where(
+            CompanionOutbox.kind.in_(("turn", "rapport")),
+            CompanionOutbox.status.in_(("pending", "running")),
+        ))).scalars())
+        rapport = []
+        for row in rows:
+            turn = await session.get(CompanionTurn, row.aggregate_id)
+            if row.kind == "turn" and turn and turn.status not in TERMINAL:
+                await repo.terminal(turn, "interrupted", error={"code": "server_restarted", "retryable": True})
+            elif row.kind == "rapport" and turn and turn.rapport_status == "pending":
+                rapport.append((turn, row))
+            row.status = "done"
+            row.lease = None
+            row.updated_at = utcnow()
+
+        # Settle each pair in completion order, without running a model. Advancing
+        # the cursor is necessary for future completed exchanges to be evaluated.
+        rapport.sort(key=lambda item: (item[0].user_id, item[0].character_agent_id, item[0].completion_sequence or 0))
+        for turn, _ in rapport:
+            pair = await repo.pair(turn.user_id, turn.character_agent_id)
+            if turn.completion_sequence != pair.evaluated_sequence + 1:
+                raise RuntimeError("Cannot settle companion rapport out of sequence on startup")
+            scores = {key: getattr(pair, key) for key in DIMENSIONS}
+            base_version = pair.version
+            pair.version += 1
+            pair.evaluated_sequence = turn.completion_sequence
+            pair.interaction_count += 1
+            pair.last_turn_id = turn.id
+            pair.updated_at = utcnow()
+            turn.rapport_status = "failed"
+            session.add(CompanionRapportAudit(
+                user_id=turn.user_id, character_agent_id=turn.character_agent_id,
+                turn_id=turn.id, disposition="failed", data={"before": scores, "after": scores,
+                    "base_version": base_version, "generation": pair.generation,
+                    "completion_sequence": turn.completion_sequence, "proposal": None,
+                    "reason": "server_restarted"}))
+            await repo.event(turn.user_id, "rapport.updated", {
+                "character_agent_id": turn.character_agent_id, "turn_id": turn.id,
+                "version": pair.version, "generation": pair.generation, "scores": scores,
+                "applied_deltas": {key: 0 for key in DIMENSIONS}, "disposition": "failed",
+            }, turn_id=turn.id, chat_id=turn.chat_id)
+        await session.commit()
+        logger.info("Interrupted %s companion model outbox records on startup", len(rows))
 
 
 async def dispatch_once():

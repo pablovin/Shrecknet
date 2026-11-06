@@ -26,6 +26,58 @@ class Characters:
             raise HTTPException(409)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('outbox_status,turn_status', [('pending', 'queued'), ('running', 'synthesizing')])
+async def test_startup_interrupts_model_work_but_preserves_privacy_cleanup(session_maker, monkeypatch, outbox_status, turn_status):
+    from contextlib import asynccontextmanager
+    from app.services import companion_dispatch_service as dispatcher
+    from app.models.character_companion import CompanionChat, CompanionEvent, CompanionOutbox, CompanionRapportAudit
+
+    @asynccontextmanager
+    async def database():
+        async with session_maker() as session:
+            yield session
+    monkeypatch.setattr(dispatcher, 'database', database)
+    async with session_maker() as session:
+        user = await owner(session)
+        svc = CharacterCompanionService(session, Characters())
+        await svc.select(user, 'fiona', 0)
+        chat = await svc.create_chat(user, ChatCreate(character_agent_id='fiona', selection_version=1), str(uuid4()))
+        pair = await svc.repo.pair(user.id, 'fiona')
+        pair.next_sequence = 2
+        completed = []
+        for sequence in (2, 1):
+            turn = CompanionTurn(user_id=user.id, character_agent_id='fiona', chat_id=chat['id'], request={}, principal={}, status='completed', completion_sequence=sequence, rapport_status='pending')
+            session.add(turn)
+            await session.flush()
+            completed.append(turn.id)
+            session.add(CompanionOutbox(kind='rapport', aggregate_id=turn.id, status='running' if sequence == 1 else 'pending', lease='old'))
+        pending = CompanionTurn(user_id=user.id, character_agent_id='fiona', chat_id=chat['id'], request={}, principal={}, status=turn_status, lease='old')
+        session.add(pending)
+        await session.flush()
+        chat_row = await session.get(CompanionChat, chat['id'])
+        chat_row.active_turn_id = pending.id
+        session.add_all([CompanionOutbox(kind='turn', aggregate_id=pending.id, status=outbox_status, lease='old'), CompanionOutbox(kind='attachment_delete', aggregate_id='private-file')])
+        await session.commit()
+        user_id, turn_id, chat_id = user.id, pending.id, chat['id']
+
+    await dispatcher.interrupt_outstanding_model_work_on_startup()
+    await dispatcher.interrupt_outstanding_model_work_on_startup()
+    async with session_maker() as session:
+        turn = await session.get(CompanionTurn, turn_id)
+        assert turn.status == 'interrupted' and turn.error == {'code': 'server_restarted', 'retryable': True}
+        assert (await session.get(CompanionChat, chat_id)).active_turn_id is None
+        outbox = list((await session.execute(select(CompanionOutbox))).scalars())
+        assert all(row.status == 'done' and row.lease is None for row in outbox if row.kind in ('turn', 'rapport'))
+        assert next(row for row in outbox if row.kind == 'attachment_delete').status == 'pending'
+        pair = await CharacterCompanionService(session, Characters()).repo.pair(user_id, 'fiona')
+        assert pair.evaluated_sequence == 2 and pair.trust == 20
+        for identifier in completed:
+            assert (await session.get(CompanionTurn, identifier)).rapport_status == 'failed'
+        assert len(list((await session.execute(select(CompanionRapportAudit))).scalars())) == 2
+        assert len(list((await session.execute(select(CompanionEvent).where(CompanionEvent.type == 'turn.failed'))).scalars())) == 1
+
+
 async def owner(session, suffix='a'):
     user = User(username=suffix, email=f'{suffix}@example.test', role='player')
     session.add(user)

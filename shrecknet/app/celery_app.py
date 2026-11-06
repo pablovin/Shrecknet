@@ -143,17 +143,10 @@ def _clear_librarian_ingestion_locks_on_worker_start() -> None:
 @worker_ready.connect
 def _start_stale_reaper(sender=None, **_kwargs) -> None:  # pragma: no cover - startup hook
     global _stale_reaper_thread_started
-    if str(getattr(sender, "hostname", "")).startswith("companion"):
-        # Dedicated companion workers must not purge other queues on startup.
-        return
-    try:
-        from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
-
-        reset_jobs_and_queues_on_startup()
-    except Exception:  # pragma: no cover - defensive startup logic
-        logger.exception("Startup job/queue reset failed")
-    _clear_librarian_ingestion_locks_on_worker_start()
     _warmup_embedding_model_if_enabled()
+    if str(getattr(sender, "hostname", "")).startswith("companion"):
+        # API startup owns the reset; a worker restart must not discard live jobs.
+        return
     _run_stale_reaper_once()
     with _stale_reaper_lock:
         if _stale_reaper_thread_started:

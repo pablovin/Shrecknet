@@ -186,7 +186,12 @@ def revoke_celery_tasks(task_ids: list[str]) -> int:
 def purge_celery_queues(queue_names: tuple[str, ...] | None = None) -> dict[str, int]:
     settings = get_settings()
     redis_client = redis.Redis.from_url(settings.celery_broker_url, decode_responses=True)
-    queues = queue_names or ("ontology_linking", "architect", "celery")
+    if queue_names is None:
+        from app.celery_app import celery_app
+
+        queues = tuple(dict.fromkeys((*[queue.name for queue in celery_app.conf.task_queues], "celery")))
+    else:
+        queues = queue_names
 
     purged = 0
     inspected = 0

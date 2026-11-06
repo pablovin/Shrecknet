@@ -404,7 +404,7 @@ services:
       retries: 5
       start_period: 60s
 
-  # Existing domain jobs; Companion queues are isolated in the optional profile.
+  # Domain and companion queues have separate workers.
   shrecknet_worker: &shrecknet-worker
     <<: *shrecknet-image
     restart: unless-stopped
@@ -438,18 +438,16 @@ services:
       neo4j:
         condition: service_healthy
       shrecknet_api:
-        condition: service_started
+        condition: service_healthy
       shreckllm:
         condition: service_healthy
 
   shrecknet_companion_worker:
     <<: *shrecknet-worker
-    profiles: [companion]
     command: celery -A app.celery_app:celery_app worker --loglevel=info --queues=companion --concurrency=2 --hostname=companion@%h
 
   shrecknet_companion_rapport_worker:
     <<: *shrecknet-worker
-    profiles: [companion]
     command: celery -A app.celery_app:celery_app worker --loglevel=info --queues=companion_rapport --concurrency=1 --hostname=companion-rapport@%h
 
   shrecknet_auth_session_cleanup:

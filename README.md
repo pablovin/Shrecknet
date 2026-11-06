@@ -125,12 +125,8 @@ Character Companion adds persistent CharacterAgent selection, private conversati
 streaming and per-user rapport. It is disabled by default. Its four model roles
 default to OpenRouter `deepseek/deepseek-v4.1-flash` and are independently editable
 in frontend Administration or `/config/`. Configure and activate OpenRouter (or
-choose another configured provider), then enable the feature and start
-its isolated turn and rapport workers:
-
-```bash
-docker compose --env-file configs/compose.env --env-file configs/neo4j.env --env-file .env --profile companion up --build -d
-```
+choose another configured provider), then enable the feature. The standard
+Compose startup includes its isolated turn and rapport workers.
 
 Deploy the matching ShreckOS/ShreckRPG changes for the global chat panel and
 Chronicle retrieval. See the [Companion guide](Documentation/Agents/Companion/Companion.md)

@@ -101,12 +101,21 @@ older revision of these new tables. Stop workers before restoring backups. Rollb
 by disabling `companion_enabled`, draining workers and restoring the prior images;
 leave additive tables intact unless a separately reviewed cleanup is required.
 
-Enable the optional Compose profile with
-`docker compose --profile companion up -d shrecknet_companion_worker shrecknet_companion_rapport_worker`
-(check service names against the current Compose file). Configure synthesis and
+The standard Compose startup includes `shrecknet_companion_worker` and
+`shrecknet_companion_rapport_worker`. Configure synthesis and
 rapport models before enabling both `enable_ai_agents` and `companion_enabled`.
 Routing/interim models are optional and have separate enable switches. See
 [model configuration](Model%20Configuration.md).
+
+Shrecknet API startup deletes persisted background job history and purges its
+registered Celery queues and reserved messages before the Compose workers start.
+Before dispatch starts, pending or running Companion turns are marked
+`interrupted` with retryable `server_restarted` errors and their chats are unlocked.
+Pending or running rapport evaluations settle in completion order as audited
+`failed` no-ops, advancing the pair cursor without changing scores or calling a
+model. Privacy cleanup outbox entries remain durable and are dispatched normally.
+A worker restart alone does not reset queues. Each worker attempts embedding warmup when enabled;
+warmup failures are logged and do not prevent startup.
 
 The read-only legacy importer defaults to dry run and requires a reviewed user-ID
 mapping plus `--ownership-reviewed --apply` to write. Run from `shrecknet/` with

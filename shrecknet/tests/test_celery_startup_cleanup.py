@@ -40,7 +40,7 @@ def test_reset_jobs_and_queues_on_startup_deletes_jobs_and_purges_queues(
 
     class FakeRedisClient:
         def __init__(self) -> None:
-            self.queues = {"ontology_linking": ["a", "b"], "architect": ["c"], "celery": []}
+            self.queues = {"ontology_linking": ["a", "b"], "architect": ["c"], "character_agent": ["d"], "companion": ["e"], "companion_rapport": ["f"], "celery": []}
 
         def llen(self, queue: str) -> int:
             return len(self.queues.get(queue, []))
@@ -59,11 +59,21 @@ def test_reset_jobs_and_queues_on_startup_deletes_jobs_and_purges_queues(
     stats = reset_jobs_and_queues_on_startup()
 
     assert stats["jobs_deleted"] == 3
-    assert stats["queued_messages_inspected"] == 3
-    assert stats["queues_purged"] == 3
+    assert stats["queued_messages_inspected"] == 6
+    assert stats["queues_purged"] == 6
 
     verify_conn = sqlite3.connect(jobs_db.as_posix())
     rows = verify_conn.execute("SELECT id FROM background_jobs ORDER BY id").fetchall()
     verify_conn.close()
 
     assert rows == []
+
+
+def test_companion_worker_warms_without_resetting_live_queues(monkeypatch):
+    from app import celery_app
+
+    warmed = []
+    monkeypatch.setattr(celery_app, "_warmup_embedding_model_if_enabled", lambda: warmed.append(True))
+    monkeypatch.setattr("app.celery_queue_reaper.reset_jobs_and_queues_on_startup", lambda: (_ for _ in ()).throw(AssertionError("unexpected reset")))
+    celery_app._start_stale_reaper(sender=SimpleNamespace(hostname="companion@worker"))
+    assert warmed == [True]

@@ -289,6 +289,8 @@ async def lifespan(_: FastAPI):
     _log_storage_diagnostics(get_settings())
     await init_db_async()
     init_jobs_db(get_jobs_engine())
+    from app.services.companion_dispatch_service import interrupt_outstanding_model_work_on_startup
+    await interrupt_outstanding_model_work_on_startup()
     try:
         reset_jobs_and_queues_on_startup()
     except Exception:

@@ -27,10 +27,11 @@ export class CompanionWorkspace {
   context() {
     const character = this.selection?.character;
     return { ...this, app: undefined, timer: undefined,
+      hasSelection: Boolean(this.selection?.character_agent_id),
       name: character?.name || "Your next companion",
       subtitle: character?.subtitle || "Every story is better with someone beside you.",
       imageUrl: safeImageUrl(this.app.client.resolveUrl(character?.image_url)),
-      availability: this.selection?.availability || "Choose a companion",
+      availability: ({ none: "Choose a companion", ready: "Ready to talk", identity_pending: "Preparing character", archived: "Archived", unavailable: "Currently unavailable" })[this.selection?.availability] || "Choose a companion",
       candidates: this.candidates.map((c) => ({ ...c, selected: c.id === this.selection?.character_agent_id })),
       chats: this.chats.map((c) => ({ ...c, selected: c.id === this.chat?.id })),
       messages: this.messages.map((m) => ({ ...m, isUser: m.role === "user" })),
@@ -60,7 +61,7 @@ export class CompanionWorkspace {
     this.usage = chats.usage;
     // Preserve legacy accounts above the creation limit as well.
     this.chats = chats.next_cursor ? await this.pages("/chats") : chats.items;
-    const next = this.chats.find((c) => c.id === this.chat?.id)
+    const next = this.chats.find((c) => c.id === this.chat?.id && c.character_agent_id === selection.character_agent_id)
       || this.chats.find((c) => c.character_agent_id === selection.character_agent_id);
     if (next) await this.openChat(next.id);
     else { this.chat = null; this.messages = []; this.before = null; this.busy = false; this.turnId = null; }
@@ -150,6 +151,7 @@ function action(fn, { duringTurn = false } = {}) {
 export const companionActions = {
   openCompanion: action(async (w) => {
     await w.refresh();
+    w.app._releaseObjectUrls?.();
     w.app.resource = { kind: "companion", title: "Companion" };
     w.app.history.navigate(w.app.resource);
   }, { duringTurn: true }),

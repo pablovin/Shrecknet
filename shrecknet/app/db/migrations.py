@@ -1164,3 +1164,13 @@ def migrate_character_embodiment_timeline_column(sync_conn) -> None:
         sync_conn.execute(text(
             "ALTER TABLE character_embodiment_drafts ADD COLUMN generation_checkpoints TEXT"
         ))
+
+
+def migrate_foundry_default_world_column(sync_conn) -> None:
+    """Add the optional admin-selected setup World without changing existing bindings."""
+    inspector = inspect(sync_conn)
+    if "foundry_integrations" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("foundry_integrations")}
+    if "default_world_id" not in columns:
+        sync_conn.execute(text("ALTER TABLE foundry_integrations ADD COLUMN default_world_id VARCHAR(64)"))

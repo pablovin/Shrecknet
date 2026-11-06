@@ -42,3 +42,33 @@ async def test_empty_foundry_world_scope_permits_all_worlds(session_maker) -> No
         integration, _ = await service.create(name="All Worlds", allowed_world_ids=[], created_by_user_id=1)
 
         assert [world.id for world in await service.list_allowed_worlds(integration)] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_default_world_is_optional_and_must_exist_in_allowed_scope(session_maker) -> None:
+    async with session_maker() as session:
+        session.add_all([World(id="a", name="A"), World(id="b", name="B")])
+        await session.commit()
+        service = FoundryIntegrationService(session)
+        for world_id, allowed, message in [("b", ["a"], "allowed Worlds"), ("missing", [], "does not exist")]:
+            with pytest.raises(ValueError, match=message):
+                await service.create(name="Table", allowed_world_ids=allowed, default_world_id=world_id, created_by_user_id=1)
+        integration, key = await service.create(name="Table", allowed_world_ids=["a"], default_world_id="a", created_by_user_id=1)
+        assert (await service.validate_key(key)).default_world_id == "a"
+        assert integration.default_world_id == "a"
+
+
+def test_default_world_migration_is_additive_and_idempotent() -> None:
+    from sqlalchemy import create_engine, inspect, text
+    from app.db.migrations import migrate_foundry_default_world_column
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        migrate_foundry_default_world_column(connection)  # No table yet.
+        connection.execute(text("CREATE TABLE foundry_integrations (id VARCHAR(36), name VARCHAR(255))"))
+        connection.execute(text("INSERT INTO foundry_integrations VALUES ('old', 'Existing table')"))
+        migrate_foundry_default_world_column(connection)
+        migrate_foundry_default_world_column(connection)
+        assert "default_world_id" in {c["name"] for c in inspect(connection).get_columns("foundry_integrations")}
+        assert connection.execute(text("SELECT name, default_world_id FROM foundry_integrations")).one() == ("Existing table", None)
+    engine.dispose()

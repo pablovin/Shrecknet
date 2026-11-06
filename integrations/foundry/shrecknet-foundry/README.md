@@ -9,7 +9,7 @@ repository without imports from the Shrecknet backend repository.
 
 1. Create an integration key on Shrecknet with `POST /config/integrations/foundry`.
 2. As a Foundry GM, open **Game Settings → Configure Settings → Shrecknet Connection**.
-3. Enter the Shrecknet API base URL (for the production proxy, `https://shrecknet.club/backend_api`) and key, then test the connection. The verified state presents the permitted Shrecknet Worlds directly in this panel. Select one and configure the browser-reachable ShreckWorld and ShreckRPG API base URLs before choosing **Enable connection**.
+3. Enter the Shrecknet API URL (production: `https://shrecknet.club/backend_api`) and setup key, then choose **Continue · choose World →**. Select a World; the administrator default is preselected when set. Service URLs are filled automatically and can be changed under **Advanced · service URLs**. Choose **Test all connections**, review the results, then **Save connection**. The scrollable window keeps its footer controls reachable at the default size.
 4. The enabled connection is checked immediately and every five minutes while a GM is connected; the panel shows its shared online/offline status and permits a manual check.
 5. Each Foundry player opens **Shrecknet Worlds** using the Worlds-globe control and signs in with their own Shrecknet account. Their sign-in persists on that browser until they use **Sign out**, the token expires, or it is revoked.
 The service URL defaults use the Shrecknet API host at `/shreckworld-api` and
@@ -18,8 +18,14 @@ The service URL defaults use the Shrecknet API host at `/shreckworld-api` and
 After changing service URLs, close and reopen the Shrecknet workspace so its
 client uses the updated world settings.
 
+Use **Update World connection** in GM settings to re-enter the setup key and
+apply a changed admin binding; existing settings remain until its replacement is
+saved. **Keep saved connection** cancels reconfiguration. After editing service
+URLs, run **Test all connections** before **Save changes**.
+
 The setup key is deliberately never written to a Foundry setting. It is used
-only to validate the server and list Worlds during the GM setup action. User
+only to validate the server and list Worlds during GM setup and final verification.
+It stays in window memory until Save, Back, cancel, or close. User
 tokens are held in browser-local persistent storage and are never shared with
 other Foundry users. A player remains signed in after closing or reloading the
 Foundry table until they choose **Sign out**, their token expires, or it is
@@ -30,10 +36,16 @@ token. The module does not store or use a shared service token. Configure both
 services to allow the Foundry browser origin and the necessary authorization,
 content-type, GET, POST, PUT, DELETE, and OPTIONS requests.
 
+**Test all connections** checks the setup key/selected World and all three API
+health endpoints, with separate results and ten-second HTTP timeouts. A failed
+check or edited setting prevents saving. These are browser reachability/liveness
+checks; each player still signs in to authorize their private content.
+
 ## Architecture
 
 - `scripts/api/` is the only HTTP client and calls existing Shrecknet routes.
-- `scripts/apps/` owns Foundry UI state.
+- `scripts/apps/` owns Foundry UI state; `shrecknet-connection-settings.js` owns
+  the GM wizard independently of the content workspace.
 - `scripts/navigation/` owns Back/Forward/Home state.
 - `templates/` owns markup; `themes/` and `styles/` own visual presentation.
 - The workspace provides persistent Atlas, Shreckworlds, Chronicles, and Companion navigation,
@@ -86,21 +98,16 @@ detail view provides direct Previous scene and Next scene links.
   the account-wide ten-chat limit. This view supports text conversations; see the
   [canonical Foundry guide](https://github.com/pablovin/Shrecknet/blob/main/Documentation/Deployment/FOUNDRY_MODULE.md#character-companion)
   for selection, polling, authorization, CORS, and compatibility details.
-  Narrative Scenes and Elders remain accessible through Atlas home.
+  Narrative Scenes remain accessible through Atlas home. **Change companion** and
+  **Conversation options** expand selection and management controls; source excerpts
+  are available beneath saved replies.
 
-- **Elder** lists Elders assigned to the connected Atlas ontologies. It can
-  include the currently viewed Atlas record or Narrative Scene as context.
-  Conversations are private to the signed-in Shrecknet user and display returned
-  history and citations. Returned answers display directly; interrupted query
-  connections recover saved replies from the same owned chat without repeating
-  generation. Recovery is bounded to about ten minutes. See the canonical
-  Foundry operations guide for proxy requirements and recovery limits.
-- **ShreckWorld** pairs an accessible book library with a grounded rules companion.
-  Queries search all books or selected books; answers show support status and
-  expandable citations. Covers and titles open the Shrecknet web reader in a new
-  tab. Compact windows switch between Books and Companion. See the canonical
-  [Foundry documentation](https://github.com/pablovin/Shrecknet/blob/main/Documentation/Deployment/FOUNDRY_MODULE.md#shreckworld-bookshelf-and-rules-companion)
-  for history lifetime, sharing, reader links, and backend CORS deployment.
+- **Shreckworlds** opens a bookshelf containing only libraries whose
+  `shrecknet_world_id` matches the configured Atlas World. All matching libraries
+  appear together; search filters titles/authors, covers use player authorization,
+  and book links open the web reader without credentials in the URL. No linked
+  libraries produces an explanatory empty state. Elder and rules-question panels
+  have no visible entry point in the four-menu workspace.
 - **Chronicles** supports reading, creating, editing, sharing, and deleting
   documents according to the signed-in user's ShreckRPG permissions. Sharing
   controls appear only when the backend grants the `share` capability. Saves use
@@ -117,7 +124,7 @@ All routes below use the base URL configured for their service. The ShreckWorld
 base defaults to `/shreckworld-api`; the ShreckRPG base defaults to
 `/api/shreckrpg`.
 
-- Atlas Elder: `GET /ontologies/{ontology_id}/elders`,
+- Retained internal Atlas Elder client (no visible menu action): `GET /ontologies/{ontology_id}/elders`,
   `GET /jobs/elder/chats/?agent_id={agent_id}&limit=100&offset=0`,
   `GET /jobs/elder/chats/{chat_id}?include_history=true`,
   `POST /jobs/elder/chats/`, and `POST /jobs/elder/{agent_id}/query` with
@@ -126,7 +133,7 @@ base defaults to `/shreckworld-api`; the ShreckRPG base defaults to
 - ShreckWorld: `GET /shreckworlds`,
   `GET /shreckworlds/{shreckworld_id}/library-items`,
   `GET /shreckworlds/{shreckworld_id}/library-items/{library_item_id}/cover`,
-  and `POST /shreckworlds/{shreckworld_id}/query` with the optional
+  and, in the retained internal rules client, `POST /shreckworlds/{shreckworld_id}/query` with the optional
   `library_item_ids` selection (or legacy `library_item_id`), `mode="answer"`,
   `retrieval_strategy="planned"`, and `response_detail="concise"`.
 - Chronicles: `GET` and `POST /chronicles`,

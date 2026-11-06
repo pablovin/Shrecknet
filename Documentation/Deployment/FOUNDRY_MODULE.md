@@ -25,11 +25,52 @@ existing CORS setup until it adopts the same shared loader.
 
 1. A Shrecknet administrator creates a setup key with
    `POST /config/integrations/foundry` and optionally restricts it to World IDs.
-2. A Foundry GM opens **Game Settings → Configure Settings → Shrecknet Connection**, enters the Shrecknet API base URL and setup key, and validates it. The verified state lists permitted Worlds in the same panel; the GM selects one and configures the browser-reachable ShreckWorld and ShreckRPG API base URLs before choosing **Enable connection**. On the production proxy, the Shrecknet API base URL is `https://shrecknet.club/backend_api`; service defaults use that host at `/shreckworld-api` and `/api/shreckrpg`.
+   Set **Default World** in ShreckOS administration to bind new setup to one World.
+2. A Foundry GM opens **Game Settings → Configure Settings → Shrecknet Connection**.
+   Enter the Shrecknet API URL and setup key, then choose **Continue · choose World →**.
+   Select the World (the administrator default is preselected when set). Service
+   URLs default to the same host; **Advanced · service URLs** exposes overrides.
+   Choose **Test all connections**, review each result, then **Save connection**.
+   On the production proxy, use `https://shrecknet.club/backend_api`; the service
+   defaults are `/shreckworld-api` and `/api/shreckrpg` on the same origin.
 3. The enabled connection is checked immediately and every five minutes while a GM is connected. The panel records the shared online/offline status and permits a manual check.
-4. The module never persists the setup key in a Foundry World setting. After the binding is saved, it does not expose another key-entry form.
+4. The module never persists the setup key in a Foundry World setting. The GM can choose **Update World connection** to re-enter the key and apply a new administrator binding. The saved connection remains until its replacement is enabled.
 5. Each player opens the **Shrecknet Worlds** globe control, signs in with their own Shrecknet account, and remains signed in on that browser until they use **Sign out**, the token expires, or it is revoked. ShreckWorld and ShreckRPG requests use that player's bearer token; do not configure a shared service token in Foundry.
-6. A GM can update the ShreckWorld and ShreckRPG API bases later in the same settings panel. URLs must use HTTPS outside localhost and cannot contain credentials, query parameters, or fragments.
+6. A GM can edit **Advanced · service URLs** on the saved-connection screen. Run **Test all connections** again, then **Save changes**. URLs must use HTTPS outside localhost and cannot contain credentials, query parameters, or fragments.
+
+The default 560×580 setup window uses a scrolling content region and a fixed
+footer. It is constrained to the browser viewport; long results, service URLs,
+and advanced fields scroll inside the window without requiring a resize.
+
+### Setup checks and saving
+
+The initial Continue action validates the key and loads permitted Worlds without
+saving settings. **Test all connections** revalidates that key and World selection
+(including any administrator default change), and independently requests
+`GET /health` from Shrecknet, ShreckWorld, and ShreckRPG. Every check has its own
+result. A health response must be JSON with `status: "ok"`; a website HTML page,
+non-success HTTP status, timeout, or browser/CORS failure prevents saving.
+Each HTTP probe times out after ten seconds. These requests use no player token;
+the setup key is sent only to the Shrecknet credential endpoints. Health checks
+prove browser reachability and service liveness, not player content permissions,
+LLM readiness, or successful generation. Each player authenticates separately.
+
+Save is enabled only after every check succeeds for the exact draft settings.
+Editing a World or service URL disables Save until a new successful test. Nothing
+is saved by Continue or Test. Failed checks retain the selected World and service
+URLs for correction/retry. Existing saved connections remain until a replacement
+is explicitly saved; **Keep saved connection** cancels reconfiguration. Updating
+a World on the same server preserves existing custom service URLs. Saved-connection
+tests check all three health URLs without requiring the discarded setup key;
+the periodic five-minute monitor continues checking Shrecknet only.
+
+The setup key lives only in window memory between Continue and Save. It is never
+included in rendered context or Foundry settings, and is discarded on Save,
+Back, cancel, or close. Closing the window ignores pending setup responses.
+`shrecknet-connection-settings.js` owns this wizard and its draft/check state;
+`connection-settings.js` owns persisted settings and `shrecknet-client.js` owns
+HTTP. The content workspace does not own GM setup actions. No API, SDK, or
+persistence contract change is introduced by this wizard update.
 
 Close and reopen the Shrecknet workspace after changing service URLs so its
 client reads the updated world settings.
@@ -40,11 +81,14 @@ editing again. Chronicle `game_id` is not associated with a Foundry World.
 Protected Chronicle image assets are copied to Foundry-managed storage before
 being shown to players or posted to chat.
 
-The **Elder** workspace lists Elders assigned to the configured Atlas
-ontologies; opening it from a page or Narrative Scene provides that resource as
-optional context. **ShreckWorld** provides a bookshelf and grounded rules companion with cited
-answers and source excerpts. ShreckWorld source visibility
-is determined by that service; Foundry adds no per-world ACL.
+The workspace has exactly four menus: **Atlas**, **Shreckworlds**,
+**Chronicles**, and **Companion**. Atlas opens the configured World directly.
+Shreckworlds opens its linked bookshelves without another World picker.
+Chronicles follows the signed-in account's accessible documents, independently
+of the Foundry World. Companion uses the account's global character selection.
+The sidebar becomes an icon rail in Foundry windows at or below 760px; every
+icon retains its accessible label and tooltip. Elder and rules-question panels
+have no visible entry points in this workspace.
 
 See [Foundry Integration API](../API/FOUNDRY_INTEGRATION_API.md) for the full
 credential lifecycle and endpoint contracts.
@@ -63,7 +107,9 @@ origin as above.
 
 ## Release process
 
-The current module release is **0.3.3**; see the
+The published module manifest remains **0.3.3**. The four-menu redesign is an
+unreleased source update; see [unreleased notes](../../changelogs/unreleased-foundry-workspace.md).
+For the published version, see the
 [release notes](../../changelogs/foundry-v0.3.3.md). The release workflow uses the
 matching `changelogs/foundry-vX.Y.Z.md` as its GitHub Release notes.
 
@@ -118,7 +164,10 @@ module ZIP; never repoint an existing release tag.
 
 The release tag is immutable. Do not move or recreate it after publishing.
 
-## Elder replies and interrupted connections
+## Retained Elder transport and interrupted connections
+
+The specialist Elder client remains for compatibility and tests, with no visible
+entry point in the four-menu workspace. The following describes its transport.
 
 The Elder workspace displays a successful query's `answer` and sources directly
 in the submitted conversation. It does not depend on a subsequent chat-list
@@ -243,6 +292,11 @@ ten-chat limit; the composer shows current usage. Existing chats above that limi
 remain readable. **Load earlier messages** retrieves chronological history using
 the server's opaque `before` cursor.
 
+**Change companion** expands the character chooser; **Conversation options**
+expands rename/delete controls. Returned source titles and excerpts are available
+in expandable source panels, rendered as escaped text. Refresh respects a
+selection made in another client instead of reopening the old character.
+
 The character chooser updates the account's global selection with its current
 optimistic version. Opening a chat for a different character also selects that
 character; chats stay bound to their original character. Unavailable characters
@@ -277,74 +331,31 @@ Companion state and fences late responses without cancelling server work.
 client owns HTTP and authentication. This Foundry view currently supports text
 messages; image uploads, private attachment previews, rapport controls, and live
 SSE deltas remain available through other Companion clients. Backend Companion
-feature/model configuration must already be enabled. No endpoint or database
-migration is introduced. Rollback of the module preserves backend chats.
+feature/model configuration must already be enabled. Companion uses existing
+endpoints and requires no Companion schema migration. The setup default adds
+its own nullable integration column. Rollback preserves backend chats.
 
-## Elder Companion
+## Shreckworlds bookshelf
 
-The Elder workspace displays its portrait (or fallback emblem), name, description,
-and switcher above an active-context strip. The conversation scrolls while the
-identity, context, and composer remain accessible. User messages appear as
-right-aligned bubbles; responses use the Elder's name. Draft questions survive
-rerenders and failures, clear after a successful reply, and clear when switching
-Elders or signing out.
+Opening **Shreckworlds** fetches the authenticated library directory and selects
+only entries whose non-null `shrecknet_world_id` equals the configured Atlas
+World ID. Every linked library appears as a section in the same bookshelf;
+there is no general knowledge-World picker. Unlinked libraries and libraries for
+other Worlds do not appear and their library items are not requested. Search
+filters displayed book titles and authors locally. Empty shelves explain how
+an administrator can link a ShreckWorld to the Atlas World.
 
-Opening Elder from an Atlas page or Narrative Scene captures the page identifier
-and label. **Clear page focus** removes `instance_id` from subsequent queries
-without deleting history. Page focus guides retrieval; it is not an exclusive
-source restriction. Expandable sources display returned `evidence_chunks` text,
-falling back to `canonical_text` or context text. **Open Atlas page** requires an
-explicit parent-page identifier; graph node IDs are never treated as page IDs.
-Answers and excerpts render as escaped text.
+This is UI scoping, not a new service ACL: ShreckWorld still enforces its existing
+authenticated policy. No source records or embeddings are changed.
 
-History still loads the user's most recent Elder chat, without a per-World
-partition. Floating/sidecar modes, claim-level links, Actor mappings, Chronicle
-excerpt saving, and generated answer language/length changes remain future work.
-No API, SDK, database migration, or configuration change is required. Existing
-module rollback instructions apply. `elder-conversation.js` owns source
-presentation and transport recovery; the shell owns UI state.
-
-## ShreckWorld bookshelf and rules companion
-
-Opening **ShreckWorld** lists the signed-in user's accessible knowledge worlds.
-Opening a world displays **Your Books** beside **Shreck Companion**. The shelf
-can be resized horizontally; below 650px of content width, **Show Books** and
-**Show Companion** switch panes. The conversation scrolls independently of the
-composer. Search filters book titles locally.
-
-Book covers and titles open the web reader in a new browser tab using
+Book covers and titles open the web reader in a new tab using
 `/home/shreckworld/shreckworld/shreckworld?collectionId={world_id}&sourceId={item_id}`.
-**Manage library** opens the same route with only `collectionId`. These links
-carry no bearer token; the website uses its own signed-in session. Foundry does
-not embed original files. Covers are fetched through the authenticated service
-API and fall back to an emblem when unavailable.
-
-**Use for questions** controls source selection independently from opening books.
-No selected books means all sources in the current knowledge world. Multiple
-selections send `library_item_ids`; questions request `mode="answer"`,
-`retrieval_strategy="planned"`, and `response_detail="concise"`. The existing
-single-source client contract remains supported. Each question is independent;
-previous turns are displayed but are not sent as conversational model context.
-Drafts, selected books, and completed turns are retained per knowledge world
-within this workspace instance. Signing out clears them; closing the window or
-reloading Foundry does not persist them. Failed questions retain their draft,
-duplicate pending submissions are ignored, and late answers after sign-out are
-discarded.
-
-Answers display backend support status, source warnings, missing information,
-and conflicts without converting unavailable evidence into a supported answer.
-Expandable citations show the supplied authority tier, excerpt, physical page,
-and printed page label when available. Source links open the correct book;
-page-specific navigation and highlighting require a confirmed web reader anchor
-contract and are not currently implemented. System and edition fields are not
-invented when absent from the source API. See the
-[reader API](../API/SHRECKWORLD_READER_API.md) for synthesis and citation guarantees.
-
-**Copy answer** copies the explanation and source excerpts. **Send to Foundry
-chat** explicitly shares that answer and citations using the user's normal
-speaker and default chat visibility, subject to Foundry message permission. Text
-is escaped before posting; tokens and protected cover URLs are never included.
-The sender must choose material appropriate for the chat audience.
+Links contain no bearer token; the website uses its own signed-in session. Covers
+are fetched through the player's authorized API session and fall back to book
+artwork on failure. Closing or leaving the shelf releases its protected image
+URLs. Late list results after sign-out or a World change do not replace the view.
+The older rules-query client remains internal for compatibility with tests and
+existing callers, but has no rendered question panel.
 
 ### Connection and deployment
 
@@ -359,7 +370,10 @@ endpoint can be reachable while cross-origin authenticated requests are blocked.
 The localhost-only legacy CORS policy blocks Foundry even when service health is
 normal. Updating the Foundry module alone does not update that backend policy.
 
-No schema migration or SDK model change is required. Shrecknet automatically
+The default-World setup change requires the additive migration described in the
+[Foundry API guide](../API/FOUNDRY_INTEGRATION_API.md#default-world); deploy the API
+before the matching ShreckOS administration update. Existing plugin setup remains
+compatible. Shrecknet automatically
 removes legacy CORS config rows; `/config` no longer accepts them. Deploy the
 shared file policy in both API images and the module files together. Rollback restores the prior API image and module
 ZIP; source files and indexed content are preserved. `knowledge-companion.js`
@@ -380,11 +394,13 @@ Before tagging, test against a clean Foundry V14 installation:
   long labels wrap, and page/related-record cards remain readable;
 - keyboard focus is visible and the workspace remains usable in a narrow,
   resizable Foundry window;
-- the GM can configure a Shrecknet URL, setup key, and World from Game Settings and see an online status;
+- the GM can complete URL/key → World → Test all connections → Save at the default window size; long settings and results scroll while the action footer stays visible;
+- failed/timeout/CORS checks report the affected service without saving; editing tested settings requires another test;
+- closing or cancelling setup drops the transient key and ignores late results;
 - the GM can configure reachable ShreckWorld and ShreckRPG API bases, and service requests use each player's own session;
 - an individual player can sign in and browse authorized data;
-- Atlas Elders and history load, and an opened Atlas record can be used as optional Elder context;
-- ShreckWorld books open externally, selection scopes grounded answers, source excerpts and warnings render, compact pane switching preserves drafts, and copy/chat actions share only the chosen turn;
+- no Elder or rules-question entry points appear;
+- Shreckworlds displays only libraries linked to the configured World, handles multiple/empty libraries, and books open externally;
 - Chronicle capabilities control available actions, share recipients persist, revision conflicts are reported, and protected images are copied to Foundry storage before reveal;
 - a browser request succeeds from `https://foundry.shrecknet.club`;
 - the release ZIP contains `module.json`, `scripts/main.js`, templates, styles,

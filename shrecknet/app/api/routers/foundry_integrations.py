@@ -34,9 +34,9 @@ async def require_foundry_integration(
 
 @router.post("/validate", response_model=FoundryIntegrationValidation)
 async def validate_integration(
-    _=Depends(require_foundry_integration),
+    integration=Depends(require_foundry_integration),
 ) -> FoundryIntegrationValidation:
-    return FoundryIntegrationValidation(version="0.5.7")
+    return FoundryIntegrationValidation(version="0.5.7", default_world_id=integration.default_world_id)
 
 
 @router.get("/worlds", response_model=list[FoundryWorldRead])

@@ -33,16 +33,16 @@
     <div class="shrecknet-workspace">
       <aside class="shrecknet-sidebar" aria-label="Shrecknet workspace">
         <p class="shrecknet-sidebar-label">WORKSPACE</p>
-        <button type="button" class="shrecknet-sidebar-link {{#if isAtlasWorkspace}}is-active{{/if}}" data-action="openHome" {{#if isAtlasWorkspace}}aria-current="page"{{/if}}>
+        <button type="button" class="shrecknet-sidebar-link {{#if isAtlasWorkspace}}is-active{{/if}}" title="Atlas" aria-label="Atlas" data-action="openHome" {{#if isAtlasWorkspace}}aria-current="page"{{/if}}>
           <span class="fa-solid fa-compass" aria-hidden="true"></span><span>Atlas</span>
         </button>
-        <button type="button" class="shrecknet-sidebar-link {{#if isKnowledgeWorkspace}}is-active{{/if}}" data-action="openKnowledgeWorlds" {{#if isKnowledgeWorkspace}}aria-current="page"{{/if}}>
+        <button type="button" class="shrecknet-sidebar-link {{#if isKnowledgeWorkspace}}is-active{{/if}}" title="Shreckworlds" aria-label="Shreckworlds" data-action="openKnowledgeWorlds" {{#if isKnowledgeWorkspace}}aria-current="page"{{/if}}>
           <span class="fa-solid fa-book" aria-hidden="true"></span><span>Shreckworlds</span>
         </button>
-        <button type="button" class="shrecknet-sidebar-link {{#if isChroniclesWorkspace}}is-active{{/if}}" data-action="openChronicles" {{#if isChroniclesWorkspace}}aria-current="page"{{/if}}>
+        <button type="button" class="shrecknet-sidebar-link {{#if isChroniclesWorkspace}}is-active{{/if}}" title="Chronicles" aria-label="Chronicles" data-action="openChronicles" {{#if isChroniclesWorkspace}}aria-current="page"{{/if}}>
           <span class="fa-solid fa-scroll" aria-hidden="true"></span><span>Chronicles</span>
         </button>
-        <button type="button" class="shrecknet-sidebar-link {{#if isCompanionWorkspace}}is-active{{/if}}" data-action="openCompanion" {{#if isCompanionWorkspace}}aria-current="page"{{/if}}>
+        <button type="button" class="shrecknet-sidebar-link {{#if isCompanionWorkspace}}is-active{{/if}}" title="Companion" aria-label="Companion" data-action="openCompanion" {{#if isCompanionWorkspace}}aria-current="page"{{/if}}>
           <span class="fa-solid fa-comment-dots" aria-hidden="true"></span><span>Companion</span>
         </button>
       </aside>
@@ -52,6 +52,7 @@
             <button type="button" data-action="goBack" aria-label="Go back" title="Go back" {{#unless canGoBack}}disabled{{/unless}}>←</button>
             <button type="button" data-action="goForward" aria-label="Go forward" title="Go forward" {{#unless canGoForward}}disabled{{/unless}}>→</button>
           </div>
+          <span class="shrecknet-workspace-title">{{resource.title}}</span>
           {{#if isAtlasWorkspace}}<form data-shrecknet-submit="search" role="search">
             <label class="shrecknet-visually-hidden" for="shrecknet-atlas-search">Search Atlas and narrative scenes</label>
             <input id="shrecknet-atlas-search" name="query" placeholder="Search {{connection.worldName}}…" required>
@@ -73,17 +74,17 @@
                 <aside class="shrecknet-companion-hero">
                   <div class="shrecknet-companion-portrait">{{#if companion.imageUrl}}<img src="{{companion.imageUrl}}" alt="{{companion.name}}">{{else}}<span aria-hidden="true">✧</span>{{/if}}<small>CHARACTER COMPANION</small></div>
                   <div class="shrecknet-companion-profile"><h3>{{companion.name}}</h3><p>{{companion.subtitle}}</p><span class="shrecknet-companion-badge">{{companion.availability}}</span>
-                    <form data-shrecknet-submit="chooseCompanion"><label for="shrecknet-companion-choice">Travel with</label><select id="shrecknet-companion-choice" name="characterId" {{#if companion.locked}}disabled{{/if}}><option value="">Choose a character…</option>{{#each companion.candidates}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select><button type="submit" {{#if companion.locked}}disabled{{/if}}>Choose companion</button></form>
+                    <details class="shrecknet-companion-chooser" {{#unless companion.hasSelection}}open{{/unless}}><summary>Change companion</summary><form data-shrecknet-submit="chooseCompanion"><label for="shrecknet-companion-choice">Travel with</label><select id="shrecknet-companion-choice" name="characterId" {{#if companion.locked}}disabled{{/if}}><option value="">Choose a character…</option>{{#each companion.candidates}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select><button type="submit" {{#if companion.locked}}disabled{{/if}}>Choose companion</button></form></details>
                     <p class="shrecknet-companion-privacy"><span class="fa-solid fa-lock" aria-hidden="true"></span> Just between you two.<br>Chats belong to your Shrecknet account.</p>
                   </div>
                 </aside>
                 <section class="shrecknet-companion-chat" aria-label="Companion conversations">
                   <div class="shrecknet-companion-tabs" role="group" aria-label="Saved conversations">{{#each companion.chats}}<button type="button" class="{{#if selected}}is-active{{/if}}" aria-pressed="{{selected}}" data-action="selectCompanionChat" data-chat-id="{{id}}" {{#if ../companion.locked}}disabled{{/if}}>{{title}}</button>{{/each}}<button type="button" class="shrecknet-companion-new" data-action="createCompanionChat" {{#unless companion.canCreate}}disabled{{/unless}}>＋ New chat</button></div>
-                  {{#if companion.chat}}<form class="shrecknet-companion-chat-tools" data-shrecknet-submit="renameCompanionChat"><label class="shrecknet-visually-hidden" for="shrecknet-chat-title">Conversation title</label><input id="shrecknet-chat-title" name="title" value="{{companion.chat.title}}" maxlength="255" required {{#if companion.locked}}disabled{{/if}}><button type="submit" {{#if companion.locked}}disabled{{/if}}>Rename</button><button type="button" class="shrecknet-companion-delete" data-action="deleteCompanionChat" {{#if companion.locked}}disabled{{/if}}>Delete</button></form>{{/if}}
+                  {{#if companion.chat}}<details class="shrecknet-companion-management"><summary>Conversation options</summary><form class="shrecknet-companion-chat-tools" data-shrecknet-submit="renameCompanionChat"><label class="shrecknet-visually-hidden" for="shrecknet-chat-title">Conversation title</label><input id="shrecknet-chat-title" name="title" value="{{companion.chat.title}}" maxlength="255" required {{#if companion.locked}}disabled{{/if}}><button type="submit" {{#if companion.locked}}disabled{{/if}}>Rename</button><button type="button" class="shrecknet-companion-delete" data-action="deleteCompanionChat" {{#if companion.locked}}disabled{{/if}}>Delete</button></form></details>{{/if}}
                   {{#if companion.confirmDelete}}<div class="shrecknet-companion-confirm" role="alert">Delete this conversation permanently? Character memory and rapport are kept.<button type="button" data-action="confirmDeleteCompanionChat">Delete conversation</button><button type="button" data-action="dismissDeleteCompanionChat">Keep chat</button></div>{{/if}}
                   <div class="shrecknet-companion-log" role="log" aria-label="Companion messages" aria-live="polite" aria-busy="{{companion.busy}}">
                     {{#if companion.before}}<button type="button" data-action="olderCompanionMessages" {{#if companion.locked}}disabled{{/if}}>Load earlier messages</button>{{/if}}
-                    {{#each companion.messages}}<article class="shrecknet-companion-message {{#if isUser}}role-user{{else}}role-assistant{{/if}}"><small>{{#if isUser}}You{{else}}{{../companion.name}}{{/if}}</small><div>{{content}}</div></article>{{else}}<div class="shrecknet-companion-welcome"><span aria-hidden="true">✧</span><p>A familiar face.<br>A new conversation.</p><small>{{#if companion.chat}}Ask a question, share an idea, or see where the story takes you.{{else}}Choose your companion, then open a chat to begin.{{/if}}</small></div>{{/each}}
+                    {{#each companion.messages}}<article class="shrecknet-companion-message {{#if isUser}}role-user{{else}}role-assistant{{/if}}"><small>{{#if isUser}}You{{else}}{{../companion.name}}{{/if}}</small><div>{{content}}</div>{{#if manifest.length}}<details class="shrecknet-companion-sources"><summary>{{manifest.length}} sources</summary>{{#each manifest}}<article><strong>{{title}}</strong>{{#if excerpt}}<blockquote>{{excerpt}}</blockquote>{{/if}}</article>{{/each}}</details>{{/if}}</article>{{else}}<div class="shrecknet-companion-welcome"><span aria-hidden="true">✧</span><p>A familiar face.<br>A new conversation.</p><small>{{#if companion.chat}}Ask a question, share an idea, or see where the story takes you.{{else}}Choose your companion, then open a chat to begin.{{/if}}</small></div>{{/each}}
                     {{#if companion.busy}}<p class="shrecknet-companion-thinking" role="status">✧ {{companion.name}} · {{companion.status}}</p>{{/if}}
                   </div>
                   <form class="shrecknet-elder-composer shrecknet-companion-composer" data-shrecknet-submit="sendCompanionMessage"><label class="shrecknet-visually-hidden" for="shrecknet-companion-query">Message your companion</label><textarea id="shrecknet-companion-query" name="query" data-companion-draft rows="2" maxlength="8000" required placeholder="Something on your mind?" {{#unless companion.canSend}}disabled{{/unless}}>{{companion.draft}}</textarea><div><small>{{#if companion.usage}}{{companion.usage.count}} / {{companion.usage.limit}} saved chats · {{/if}}Private conversation</small>{{#if companion.busy}}<button type="button" data-action="cancelCompanionTurn" aria-label="Stop reply">■</button>{{else}}<button type="submit" aria-label="Send message" {{#unless companion.canSend}}disabled{{/unless}}>↑</button>{{/if}}</div></form>
@@ -92,9 +93,9 @@
             </section>
 
           {{else if (eq resource.kind "home")}}
-            <h2>Welcome to {{resource.title}}</h2>
-            <div class="shrecknet-atlas-actions"><button type="button" data-action="openSceneCollection">Narrative Scenes</button><button type="button" data-action="openElder">Consult an Elder</button></div>
-            <p class="shrecknet-intro">Explore the connected universe and its narrative scenes.</p>
+            <header class="shrecknet-view-heading"><div><p class="shrecknet-kicker">YOUR CONNECTED WORLD</p><h2>{{resource.title}}</h2><p>People, places, and stories. Find your way through the Atlas.</p></div></header>
+            <div class="shrecknet-atlas-actions"><button type="button" data-action="openSceneCollection">Narrative Scenes</button></div>
+            <p class="shrecknet-intro">Browse collections or search this World.</p>
             <div class="shrecknet-grid">
               {{#each resource.folders}}<button type="button" class="shrecknet-folder" data-action="openFolder" data-ontology-id="{{ontologyId}}" data-definition-id="{{id}}" data-title="{{name}}">{{#if imageUrl}}<img src="{{imageUrl}}" alt="">{{else}}<span class="shrecknet-folder-placeholder" aria-hidden="true"><span class="fa-solid fa-book-open"></span></span>{{/if}}<strong>{{name}}</strong><small>{{ontologyName}}</small></button>{{/each}}
             </div>
@@ -106,7 +107,7 @@
               <header class="shrecknet-atlas-header">
                 {{#if resource.instance.pageImageUrl}}<img src="{{resource.instance.pageImageUrl}}" alt="">{{/if}}
                 <div><p class="shrecknet-kicker">ATLAS EXPLORER</p><h2>{{resource.instance.displayName}}</h2><p>{{resource.instance.typeNames}}</p></div>
-                <div class="shrecknet-atlas-actions"><button type="button" data-action="openElder">Consult an Elder</button><button type="button" data-action="showOnChat">Show in chat</button><button type="button" data-action="toggleReaderFocus" aria-pressed="{{readerFocus}}">{{#if readerFocus}}Show panels{{else}}Focus reading{{/if}}</button></div>
+                <div class="shrecknet-atlas-actions"><button type="button" data-action="showOnChat">Show in chat</button><button type="button" data-action="toggleReaderFocus" aria-pressed="{{readerFocus}}">{{#if readerFocus}}Show panels{{else}}Focus reading{{/if}}</button></div>
               </header>
               <div class="shrecknet-atlas-columns">
                 <details class="shrecknet-atlas-navigation" data-explorer-panel="navigation">
@@ -141,7 +142,7 @@
             {{#if resource.groups.length}}{{#each resource.groups}}<details class="shrecknet-scene-group"><summary>{{#if imageUrl}}<img src="{{imageUrl}}" alt="">{{/if}}<span>{{name}}</span><small>{{scenes.length}} scenes</small></summary><div class="shrecknet-scene-group-content"><button type="button" class="shrecknet-source-page" data-action="openInstance" data-instance-id="{{instanceId}}">Open source page</button><div class="shrecknet-scene-rows">{{#each scenes}}<button type="button" class="shrecknet-scene-row" data-action="openScene" data-instance-id="{{instance_id}}" data-scene-id="{{id}}"><strong>{{name}}</strong><small>{{milestone_count}} milestones · {{perspective_count}} perspectives</small></button>{{/each}}</div></div></details>{{/each}}{{else}}<p class="shrecknet-empty">No scenes found.</p>{{/if}}</section>
           {{else if (eq resource.kind "scene")}}
             <article class="shrecknet-scene-dossier">
-              <header><p>NARRATIVE SCENE</p><h2>{{resource.scene.name}}</h2><button type="button" data-action="openElder">Consult an Elder</button><small>{{resource.scene.milestones.length}} milestones</small></header>
+              <header><p>NARRATIVE SCENE</p><h2>{{resource.scene.name}}</h2><small>{{resource.scene.milestones.length}} milestones</small></header>
               <section class="shrecknet-shortcuts"><h3>Source</h3><div class="shrecknet-card-grid shrecknet-related-grid"><button type="button" class="shrecknet-page-card shrecknet-page-card-small" data-action="openInstance" data-instance-id="{{resource.sourcePageCard.instance_id}}">{{#if resource.sourcePageCard.imageUrl}}<img src="{{resource.sourcePageCard.imageUrl}}" alt="">{{else}}<span class="shrecknet-card-placeholder" aria-hidden="true"><span class="fa-solid fa-file-lines"></span></span>{{/if}}<span>{{resource.sourcePageCard.displayName}}</span></button></div></section>
               <div class="shrecknet-document-text">{{resource.scene.description}}</div>
               {{#if resource.scene.previousScene}}<section class="shrecknet-scene-links"><h3>Previous scene</h3><button type="button" class="shrecknet-page-scene-row" data-action="openScene" data-instance-id="{{resource.scene.instance_id}}" data-scene-id="{{resource.scene.previousScene.id}}">← {{resource.scene.previousScene.name}}</button></section>{{/if}}
@@ -155,44 +156,15 @@
             <section class="shrecknet-search-section"><h3>Pages</h3>{{#if resource.instances.length}}<div class="shrecknet-card-grid">{{#each resource.instances}}<button type="button" class="shrecknet-page-card" data-action="openInstance" data-instance-id="{{instance_id}}">{{#if imageUrl}}<img src="{{imageUrl}}" alt="">{{else}}<span class="shrecknet-card-placeholder" aria-hidden="true"><span class="fa-solid fa-file-lines"></span></span>{{/if}}<span>{{displayName}}</span></button>{{/each}}</div>{{else}}<p class="shrecknet-empty">No page results.</p>{{/if}}</section>
             <section class="shrecknet-search-section"><h3>Narrative Scenes</h3>{{#if resource.sceneGroups.length}}{{#each resource.sceneGroups}}<details class="shrecknet-scene-group"><summary>{{#if imageUrl}}<img src="{{imageUrl}}" alt="">{{/if}}<span>{{name}}</span><small>{{scenes.length}} scene hits</small></summary><div class="shrecknet-scene-group-content"><button type="button" class="shrecknet-source-page" data-action="openInstance" data-instance-id="{{instanceId}}">Open source page</button><div class="shrecknet-scene-rows">{{#each scenes}}<button type="button" class="shrecknet-scene-row" data-action="openScene" data-instance-id="{{instance_id}}" data-scene-id="{{id}}"><strong>{{name}}</strong><small>{{milestone_count}} milestones · {{perspective_count}} perspectives</small></button>{{/each}}</div></div></details>{{/each}}{{else}}<p class="shrecknet-empty">No narrative scene results.</p>{{/if}}</section>
           {{else if (eq resource.kind "knowledgeWorlds")}}
-            <section class="shrecknet-service-page">
-              <p class="shrecknet-kicker">SHRECKWORLD</p><h2>Knowledge worlds</h2>
-              <p class="shrecknet-intro">Choose a library to consult your books with grounded answers and source excerpts.</p>
-              {{#if resource.worlds.length}}<div class="shrecknet-card-grid">{{#each resource.worlds}}
-                <button type="button" class="shrecknet-page-card" data-action="openKnowledgeWorld" data-world-id="{{id}}">
-                  <span class="shrecknet-card-placeholder" aria-hidden="true"><span class="fa-solid fa-book"></span></span>
-                  <span>{{name}}</span>
-                </button>
-              {{/each}}</div>{{else}}<p class="shrecknet-empty">No ShreckWorlds are available to this account.</p>{{/if}}
-            </section>
-          {{else if knowledge}}
-            <section class="shrecknet-knowledge {{#if knowledge.showBooks}}show-books{{else}}show-companion{{/if}}" aria-label="ShreckWorld library and rules companion">
-              <header class="shrecknet-knowledge-heading"><div><h2>ShreckWorld</h2><p>{{resource.world.name}} · Your library and rules companion</p></div><button type="button" class="shrecknet-knowledge-toggle" data-action="toggleKnowledgePane">{{#if knowledge.showBooks}}Show Companion{{else}}Show Books{{/if}}</button></header>
-              <div class="shrecknet-knowledge-columns">
-                <aside class="shrecknet-bookshelf" aria-label="Your Books">
-                  <h3>Your Books</h3><label><span class="shrecknet-visually-hidden">Search your library</span><input type="search" data-knowledge-search placeholder="Search your library…"></label>
-                  <div class="shrecknet-book-list">{{#each knowledge.books}}<article class="shrecknet-book {{#if selected}}is-selected{{/if}}" data-book-title="{{title}}">
-                    <a href="{{readerUrl}}" target="_blank" rel="noopener noreferrer" aria-label="Open {{title}} in Shrecknet">{{#if coverUrl}}<img src="{{coverUrl}}" alt="">{{else}}<span class="shrecknet-book-cover" aria-hidden="true">♧</span>{{/if}}</a>
-                    <div><a href="{{readerUrl}}" target="_blank" rel="noopener noreferrer"><strong>{{title}} ↗</strong></a><small>{{authors}}</small><small>{{authority_tier}}</small><small>{{readiness}}</small><label><input type="checkbox" data-knowledge-source value="{{id}}" {{#if selected}}checked{{/if}} {{#if ../knowledge.busy}}disabled{{/if}}>Use for questions</label></div>
-                  </article>{{else}}<p class="shrecknet-empty">No books in this library.</p>{{/each}}</div>
-                  <a class="shrecknet-manage-library" href="{{knowledge.manageUrl}}" target="_blank" rel="noopener noreferrer">Manage library ↗</a>
-                </aside>
-                <section class="shrecknet-rules-companion" aria-label="Shreck Companion">
-                  <header><span class="shrecknet-elder-emblem" aria-hidden="true">✧</span><div><h3>Shreck Companion</h3><small>Your books, explained</small></div></header>
-                  <div class="shrecknet-book-context"><strong>Searching: {{knowledge.scope}}</strong><small>Select books on the shelf. With none selected, all books are searched.</small></div>
-                  <div class="shrecknet-knowledge-log" role="log" aria-label="Rules conversation" aria-live="polite" aria-busy="{{knowledge.busy}}">
-                    {{#each knowledge.turns}}<div class="shrecknet-rules-turn"><p class="shrecknet-rules-question">{{query}}</p><article><strong>✧ Shreck Companion</strong><p class="shrecknet-rules-answer">{{answer}}</p><small>Answer status: {{status}}</small>
-                      {{#each warnings}}<p class="shrecknet-notice">{{message}}</p>{{/each}}
-                      {{#each conflicts}}<p class="shrecknet-notice"><strong>Source conflict</strong> {{description}} · {{citation_ids}}</p>{{/each}}
-                      {{#each missing}}<p class="shrecknet-notice">{{this}}</p>{{/each}}
-                      {{#each citations}}<details class="shrecknet-rule-citation"><summary>{{source_id}} · {{title}}{{#if page_number}} · Page {{page_number}}{{/if}}</summary><p>{{authority_tier}} {{#if page_label}}· Printed page {{page_label}}{{/if}}</p><blockquote>{{excerpt}}</blockquote>{{#if parent_excerpt}}<details><summary>More context</summary><p>{{parent_excerpt}}</p></details>{{/if}}{{#if readerUrl}}<a href="{{readerUrl}}" target="_blank" rel="noopener noreferrer">Open source in Shrecknet ↗</a>{{/if}}</details>{{/each}}
-                      <div class="shrecknet-answer-actions"><button type="button" data-action="copyKnowledgeAnswer" data-turn="{{index}}">Copy answer</button><button type="button" data-action="shareKnowledgeAnswer" data-turn="{{index}}">Send to Foundry chat</button></div>
-                    </article></div>{{else}}<div class="shrecknet-elder-welcome"><span aria-hidden="true">✧</span><h3>What do your books say?</h3><p>Ask a rules question to find an explanation and its supporting passages.</p></div>{{/each}}
-                    {{#if knowledge.busy}}<p role="status">Consulting your books…</p>{{/if}}
-                  </div>
-                  <form class="shrecknet-elder-composer" data-shrecknet-submit="queryKnowledge"><label class="shrecknet-visually-hidden" for="shrecknet-rules-query">Ask about your books</label><textarea id="shrecknet-rules-query" data-knowledge-draft name="query" rows="2" maxlength="4000" required placeholder="Ask anything about your books…" {{#if knowledge.busy}}disabled{{/if}}>{{knowledge.draft}}</textarea><div><small>♧ Book context · Each question searches the selected books</small><button type="submit" aria-label="Send rules question" {{#if knowledge.busy}}disabled{{/if}}>↑</button></div></form>
-                </section>
-              </div>
+            <section class="shrecknet-library-page" aria-label="World library">
+              <header class="shrecknet-view-heading"><div><p class="shrecknet-kicker">THE WORLD'S BOOKSHELF</p><h2>Shreckworlds</h2><p>Books and references linked to {{connection.worldName}}.</p></div></header>
+              <label class="shrecknet-library-search"><span class="shrecknet-visually-hidden">Search this World's books</span><input type="search" data-knowledge-search placeholder="Find a book…"></label>
+              {{#each resource.libraries}}<section class="shrecknet-library-group"><h3>{{name}}</h3>
+                <div class="shrecknet-books-grid">{{#each sources}}<a class="shrecknet-book-tile" data-book-title="{{title}} {{authors}}" href="{{readerUrl}}" target="_blank" rel="noopener noreferrer" aria-label="Read {{title}} in Shrecknet">
+                  {{#if coverUrl}}<img src="{{coverUrl}}" alt="" loading="lazy">{{else}}<span class="shrecknet-book-art" aria-hidden="true"><span class="fa-solid fa-book-open"></span></span>{{/if}}
+                  <strong>{{title}}</strong><small>{{authors}}</small><span class="shrecknet-book-open">Open reader ↗</span>
+                </a>{{else}}<p class="shrecknet-empty">This library has no books yet.</p>{{/each}}</div>
+              </section>{{else}}<div class="shrecknet-empty-state"><span class="fa-solid fa-book-open" aria-hidden="true"></span><h3>A bookshelf waiting for stories</h3><p>No libraries are linked to {{connection.worldName}}. Ask an administrator to link a ShreckWorld to this Atlas World.</p></div>{{/each}}
             </section>
           {{else if (eq resource.kind "elder")}}
             <section class="shrecknet-elder-page" aria-label="Elder Companion">
@@ -219,14 +191,14 @@
             </section>
           {{else if (eq resource.kind "chronicleLibrary")}}
             <section class="shrecknet-service-page">
-              <p class="shrecknet-kicker">SHRECKRPG</p><h2>Chronicles</h2>
-              <form class="shrecknet-query-form shrecknet-create-chronicle" data-shrecknet-submit="createChronicle">
+              <header class="shrecknet-view-heading"><div><p class="shrecknet-kicker">YOUR STORY, IN YOUR WORDS</p><h2>Chronicles</h2><p>Your private notes and stories shared with you.</p></div></header>
+              <details class="shrecknet-create-panel"><summary>＋ New Chronicle</summary><form class="shrecknet-query-form shrecknet-create-chronicle" data-shrecknet-submit="createChronicle">
                 <label>New Chronicle title<input name="title" maxlength="255" required placeholder="A chronicle for this table"></label>
                 <button type="submit">Create Chronicle</button>
-              </form>
-              {{#if resource.chronicles.length}}<div class="shrecknet-source-list">{{#each resource.chronicles}}
+              </form></details>
+              {{#if resource.chronicles.length}}<div class="shrecknet-chronicle-grid">{{#each resource.chronicles}}
                 <button type="button" class="shrecknet-source-card" data-action="openChronicle" data-chronicle-id="{{id}}">
-                  <strong>{{title}}</strong><span>Revision {{revision}}</span><small>Updated {{updated_at}} · {{#if shared_with.length}}Shared{{else}}Private{{/if}}</small>
+                  <span class="shrecknet-chronicle-glyph fa-solid fa-feather-pointed" aria-hidden="true"></span><strong>{{title}}</strong><span>Revision {{revision}}</span><small>Updated {{updated_at}} · {{#if shared_with.length}}Shared{{else}}Private{{/if}}</small>
                 </button>
               {{/each}}</div>{{else}}<p class="shrecknet-empty">No Chronicles yet. Create one to begin.</p>{{/if}}
             </section>

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class FoundryIntegrationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     allowed_world_ids: list[str] = Field(default_factory=list, max_length=200)
+    default_world_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class FoundryIntegrationRead(BaseModel):
@@ -17,6 +18,7 @@ class FoundryIntegrationRead(BaseModel):
     name: str
     key_prefix: str
     allowed_world_ids: list[str] = Field(default_factory=list)
+    default_world_id: str | None = None
     active: bool
     created_at: datetime
     last_used_at: datetime | None = None
@@ -33,6 +35,7 @@ class FoundryIntegrationValidation(BaseModel):
     valid: bool = True
     server_name: str = "Shrecknet"
     version: str
+    default_world_id: str | None = None
 
 
 class FoundryWorldRead(BaseModel):

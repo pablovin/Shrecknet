@@ -338,3 +338,114 @@
 
 .shrecknet.theme-terminal .shrecknet-companion-composer button { background: var(--shrecknet-accent); color: var(--shrecknet-bg); }
 .shrecknet.theme-terminal .shrecknet-companion-composer textarea:focus-visible { outline: 2px solid var(--shrecknet-accent); outline-offset: 2px; }
+
+/* Respond to the Foundry window width, independently of the table viewport. */
+.shrecknet-shell { container: shrecknet / inline-size; }
+.shrecknet-workspace-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; color: var(--shrecknet-muted); }
+.shrecknet-toolbar:has(form) .shrecknet-workspace-title { display: none; }
+.shrecknet-view-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.6rem 1.25rem .8rem; }
+.shrecknet-view-heading h2 { margin: .3rem 0 .6rem; padding: 0; font-family: var(--shrecknet-font-content); font-size: clamp(1.8rem, 4cqi, 2.8rem); font-weight: 500; letter-spacing: -.035em; border: 0; }
+.shrecknet-view-heading p:last-child { margin: 0; color: var(--shrecknet-muted); font-size: .85rem; line-height: 1.6; }
+.shrecknet-atlas-actions, .shrecknet-intro { margin-inline: 1.25rem; }
+.shrecknet-atlas-header .shrecknet-atlas-actions { margin: 0; }
+.shrecknet-grid { gap: 1rem; padding: 1rem 1.25rem 1.5rem; }
+.shrecknet-folder { border-radius: .9rem; padding: .8rem; transition: border-color .15s, transform .15s; }
+.shrecknet-folder:hover { transform: translateY(-2px); }
+.shrecknet-folder img, .shrecknet-folder-placeholder { border-radius: .6rem; background: var(--shrecknet-bg); }
+.shrecknet-library-page { padding-bottom: 1.5rem; }
+.shrecknet-library-search { display: block; margin: .5rem 1.25rem 1.5rem; max-width: 28rem; }
+.shrecknet-library-search input { width: 100%; }
+.shrecknet-library-group { margin: 0 1.25rem 1.75rem; }
+.shrecknet-library-group h3 { margin: 0 0 1rem; padding: 0; font-size: .85rem; color: var(--shrecknet-muted); }
+.shrecknet-books-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: 1.25rem; }
+.shrecknet-book-tile { display: flex; min-width: 0; flex-direction: column; gap: .5rem; padding: .75rem; border: 1px solid var(--shrecknet-border); border-radius: .8rem; background: var(--shrecknet-panel); color: var(--shrecknet-text); text-decoration: none; }
+.shrecknet-book-tile:hover { border-color: var(--shrecknet-accent); color: var(--shrecknet-text); }
+.shrecknet-book-tile img, .shrecknet-book-art { width: 100%; aspect-ratio: 3 / 4; object-fit: contain; border-radius: .35rem; background: var(--shrecknet-bg); }
+.shrecknet-book-art { display: grid; place-items: center; color: var(--shrecknet-accent); font-size: 2.5rem; background: radial-gradient(ellipse at top, var(--shrecknet-surface), var(--shrecknet-bg)); }
+.shrecknet-book-tile strong { font-size: .85rem; line-height: 1.5; overflow-wrap: anywhere; }
+.shrecknet-book-tile small { font-size: .72rem; color: var(--shrecknet-muted); overflow-wrap: anywhere; }
+.shrecknet-book-open { margin-top: auto; padding-top: .4rem; font-size: .7rem; color: var(--shrecknet-accent); }
+.shrecknet-empty-state { max-width: 28rem; margin: 3rem auto; padding: 1.5rem; text-align: center; color: var(--shrecknet-muted); line-height: 1.7; }
+.shrecknet-empty-state > span { font-size: 2rem; color: var(--shrecknet-accent); }
+.shrecknet-chronicle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 1rem; margin: 1.25rem 0; }
+.shrecknet button.shrecknet-source-card { height: auto; white-space: normal; border: 1px solid var(--shrecknet-border); border-radius: .8rem; padding: 1.1rem; line-height: 1.5; }
+.shrecknet-source-card strong { overflow-wrap: anywhere; }
+.shrecknet-chronicle-glyph { font-size: 1.5rem; margin-bottom: 1rem; color: var(--shrecknet-accent) !important; }
+.shrecknet-create-panel { margin: .75rem 0; border: 1px solid var(--shrecknet-border); border-radius: .65rem; background: var(--shrecknet-panel); }
+.shrecknet-create-panel > summary { cursor: pointer; padding: .8rem 1rem; color: var(--shrecknet-accent); }
+.shrecknet-create-panel form { border: 0; margin: 0; }
+.shrecknet-service-page > .shrecknet-view-heading { padding-inline: 0; }
+.shrecknet-companion-chooser { margin-top: 1rem; }
+.shrecknet-companion-chooser summary, .shrecknet-companion-management summary, .shrecknet-companion-sources summary { cursor: pointer; color: var(--shrecknet-accent); font-size: .75rem; padding: .5rem 0; }
+.shrecknet-companion-chooser form { margin-top: .5rem; }
+.shrecknet-companion-management { padding: .25rem .8rem; border-bottom: 1px solid var(--shrecknet-border); max-height: 35%; overflow: auto; flex: 0 0 auto; }
+.shrecknet-companion-management .shrecknet-companion-chat-tools { padding: .5rem 0; border: 0; }
+.shrecknet-companion-profile h3 { padding: 0; font-family: var(--shrecknet-font-content); font-weight: 500; }
+.shrecknet-companion-sources article { padding: .6rem; margin: .35rem 0; border: 1px solid var(--shrecknet-border); border-radius: .5rem; font-size: .75rem; }
+.shrecknet-companion-sources blockquote { margin: .5rem 0 0; white-space: pre-wrap; color: var(--shrecknet-muted); }
+.shrecknet [hidden] { display: none !important; }
+@container shrecknet (max-width: 760px) {
+  .shrecknet-workspace { grid-template-columns: 3.6rem minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .shrecknet-sidebar { flex-direction: column; flex-wrap: nowrap; padding: .7rem .35rem; border-right: 1px solid var(--shrecknet-border); border-bottom: 0; }
+  .shrecknet-sidebar-label, .shrecknet-sidebar-link > span:last-child { display: none; }
+  .shrecknet-sidebar-link { justify-content: center; flex: 0 0 auto; padding: .65rem; }
+  .shrecknet-sidebar-link .fa-solid { display: inline-block; }
+  .shrecknet-toolbar { padding: .5rem; min-height: 3rem; }
+  .shrecknet-header { min-height: 3rem; padding: .5rem .75rem; }
+  .shrecknet-brand strong { font-size: .85rem; }
+  .shrecknet-account > span:not(.shrecknet-connection-indicator) { max-width: 5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shrecknet-view-heading { padding: 1.1rem .75rem .6rem; }
+  .shrecknet-books-grid { grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr)); gap: .75rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shrecknet-folder { transition: none; }
+  .shrecknet-folder:hover { transform: none; }
+}
+
+/* Setup has one scrolling body and an always reachable action bar. */
+#shrecknet-connection-settings { max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); }
+#shrecknet-connection-settings .window-content { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 0; }
+.shrecknet-connection-settings { flex: 1; min-width: 0; }
+.shrecknet-setup-heading { flex: 0 0 auto; padding: 1rem 1.25rem .85rem; border-bottom: 1px solid var(--shrecknet-border); background: var(--shrecknet-panel); }
+.shrecknet-setup-heading h2 { margin: .3rem 0 .75rem; padding: 0; border: 0; font-size: 1.5rem; font-weight: 500; font-family: var(--shrecknet-font-content); }
+.shrecknet-setup-steps { display: flex; flex-wrap: wrap; gap: .4rem .9rem; list-style: none; margin: 0; padding: 0; color: var(--shrecknet-muted); font-size: .72rem; }
+.shrecknet-setup-steps .is-current { color: var(--shrecknet-accent); }
+.shrecknet-setup-form { display: flex; flex: 1; min-height: 0; min-width: 0; flex-direction: column; gap: 0; overflow: hidden; }
+.shrecknet-setup-body { flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 1rem 1.25rem; }
+.shrecknet-setup-body fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.shrecknet-setup-body :is(p, dd, strong) { overflow-wrap: anywhere; }
+.shrecknet-setup-body .shrecknet-notice { margin: 0 0 1rem; padding: .65rem; border-radius: .5rem; }
+.shrecknet-setup-section { display: grid; min-width: 0; gap: .6rem; }
+.shrecknet-setup-section h3 { margin: 0; padding: 0; font-size: 1rem; }
+.shrecknet-setup-section p { margin: 0 0 .3rem; line-height: 1.6; font-size: .8rem; }
+.shrecknet-setup-section label { font-size: .8rem; font-weight: 600; }
+.shrecknet-setup-section :is(input, select) { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.shrecknet-setup-section > button { width: fit-content; max-width: 100%; }
+.shrecknet-setup-server { color: var(--shrecknet-muted); font-size: .72rem !important; }
+.shrecknet-setup-world { display: flex; align-items: center; gap: .8rem; padding: .8rem; border: 1px solid var(--shrecknet-border); border-radius: .7rem; background: var(--shrecknet-panel); }
+.shrecknet-setup-world > span { color: var(--shrecknet-accent); font-size: 1.4rem; }
+.shrecknet-setup-world > div { min-width: 0; display: grid; gap: .3rem; }
+.shrecknet-setup-world small { color: var(--shrecknet-muted); letter-spacing: .08em; font-size: .6rem; }
+.shrecknet-setup-body .shrecknet-connection-status { grid-template-columns: minmax(0, 6rem) minmax(0, 1fr); font-size: .75rem; }
+.shrecknet-setup-body dd { margin: 0; }
+.shrecknet-setup-body > .shrecknet-help { font-size: .75rem; line-height: 1.6; }
+.shrecknet-setup-advanced { margin-top: 1rem; border: 1px solid var(--shrecknet-border); border-radius: .6rem; }
+.shrecknet-setup-advanced summary { padding: .75rem; cursor: pointer; color: var(--shrecknet-muted); font-size: .8rem; }
+.shrecknet-setup-advanced .shrecknet-setup-section { padding: 0 .75rem .75rem; }
+.shrecknet-setup-results { display: grid; gap: .5rem; font-size: .8rem; }
+.shrecknet-setup-check { display: flex; align-items: start; gap: .65rem; padding: .7rem; border: 1px solid var(--shrecknet-border); border-radius: .6rem; background: var(--shrecknet-panel); }
+.shrecknet-setup-check > div { min-width: 0; }
+.shrecknet-setup-check > span { flex: 0 0 auto; font-weight: bold; }
+.shrecknet-setup-check.is-success > span { color: var(--shrecknet-success); }
+.shrecknet-setup-check.is-failure > span { color: var(--shrecknet-danger); }
+.shrecknet-setup-check p { margin: .25rem 0 0; color: var(--shrecknet-muted); font-size: .75rem; line-height: 1.5; }
+.shrecknet-setup-footer { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: end; gap: .5rem; padding: .8rem 1.25rem; border-top: 1px solid var(--shrecknet-border); background: var(--shrecknet-panel); }
+.shrecknet .shrecknet-setup-footer button { flex: 1 1 10rem; width: auto; min-width: 0; height: auto; min-height: 2.5rem; padding: .5rem .7rem; white-space: normal; line-height: 1.3; }
+.shrecknet-setup-footer-links { display: flex; flex-wrap: wrap; flex: 1 1 100%; gap: .5rem; }
+.shrecknet .shrecknet-setup-footer-links button { flex: 0 1 auto; min-height: 1.5rem; padding: .2rem; font-size: .7rem; border: 0; background: transparent; color: var(--shrecknet-muted); }
+.shrecknet.theme-terminal .shrecknet-setup-primary { background: var(--shrecknet-accent); border-color: var(--shrecknet-accent); color: var(--shrecknet-bg); font-weight: 650; }
+.shrecknet.theme-terminal .shrecknet-setup-primary:not(:disabled):hover { background: var(--shrecknet-text); color: var(--shrecknet-bg); }
+@container shrecknet (max-width: 400px) {
+  .shrecknet-setup-heading, .shrecknet-setup-body, .shrecknet-setup-footer { padding-inline: .75rem; }
+  .shrecknet .shrecknet-setup-footer > button { flex-basis: 8rem; }
+}

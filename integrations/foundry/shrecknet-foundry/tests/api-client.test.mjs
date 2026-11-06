@@ -168,3 +168,26 @@ test("network failures identify the service base without leaking authorization",
     });
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test("setup health probes check each service without sending player or setup credentials", async () => {
+  const client = new ShrecknetClient({ serverUrl: "https://example.test/backend_api", accessToken: "private-player-token" });
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({ status: "ok" });
+  };
+  try {
+    await client.checkServiceHealth("https://example.test/shreckworld-api");
+    assert.equal(calls[0].url, "https://example.test/shreckworld-api/health");
+    assert.equal(calls[0].options.headers.Authorization, undefined);
+    assert.equal(calls[0].options.headers["X-Shrecknet-Integration-Key"], undefined);
+    assert.ok(calls[0].options.signal instanceof AbortSignal);
+    globalThis.fetch = async () => new Response('<html>Website, not API</html>', { headers: { 'content-type': 'text/html' } });
+    await assert.rejects(client.checkServiceHealth(), /healthy JSON response/);
+    globalThis.fetch = async () => Response.json({ status: "degraded" });
+    await assert.rejects(client.checkServiceHealth(), /healthy JSON response/);
+    globalThis.fetch = async () => Response.json({ detail: "Service offline" }, { status: 503 });
+    await assert.rejects(client.checkServiceHealth(), /Service offline/);
+  } finally { globalThis.fetch = originalFetch; }
+});

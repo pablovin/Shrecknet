@@ -109,7 +109,7 @@ export class ShrecknetClient {
     sessionStorage.removeItem(LEGACY_SESSION_KEY);
   }
 
-  async request(path, { method = "GET", body, integrationKey, authenticated = true, baseUrl = this.serverUrl, idempotencyKey } = {}) {
+  async request(path, { method = "GET", body, integrationKey, authenticated = true, baseUrl = this.serverUrl, idempotencyKey, signal } = {}) {
     if (!baseUrl) throw new ShrecknetApiError("A Shrecknet server URL is required.", 0);
     if (authenticated && !this.accessToken) {
       throw new ShrecknetApiError("Sign in to Shrecknet before accessing connected services.", 401);
@@ -120,7 +120,7 @@ export class ShrecknetClient {
     if (integrationKey) headers["X-Shrecknet-Integration-Key"] = integrationKey;
     if (authenticated && this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
 
-    return this._fetchJson(baseUrl, path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    return this._fetchJson(baseUrl, path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal });
   }
 
   async requestAsset(baseUrl, path) {
@@ -164,14 +164,22 @@ export class ShrecknetClient {
     return response;
   }
 
-  validateIntegration(integrationKey) {
-    return this.request("/integrations/foundry/validate", { method: "POST", integrationKey, authenticated: false });
+  validateIntegration(integrationKey, { signal } = {}) {
+    return this.request("/integrations/foundry/validate", { method: "POST", integrationKey, authenticated: false, signal });
+  }
+
+  async checkServiceHealth(baseUrl = this.serverUrl) {
+    const payload = await this.request("/health", {
+      baseUrl, authenticated: false, signal: AbortSignal.timeout(10000),
+    });
+    if (payload?.status !== "ok") throw new ShrecknetApiError("The service did not return a healthy JSON response. Check its API URL.", 0);
+    return payload;
   }
 
   ping() { return this.request("/health", { authenticated: false }); }
 
-  listConnectableWorlds(integrationKey) {
-    return this.request("/integrations/foundry/worlds", { integrationKey, authenticated: false });
+  listConnectableWorlds(integrationKey, { signal } = {}) {
+    return this.request("/integrations/foundry/worlds", { integrationKey, authenticated: false, signal });
   }
 
   async login(identifier, password) {

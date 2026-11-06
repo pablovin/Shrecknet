@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class FoundryIntegrationConfigUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    default_world_id: str | None = Field(default=None, min_length=1, max_length=64)
     allowed_world_ids: list[str] | None = Field(default=None, max_length=200)
 
 

@@ -187,3 +187,20 @@ test("revision failures leave the current chat intact and report the conflict", 
   assert.equal(w.chat.title, "Story");
   assert.equal(w.chat.revision, 2);
 });
+
+test("refresh honors a Companion changed on another device instead of reopening the old character", async () => {
+  const calls = [];
+  const { w } = fixture(async (path, options) => {
+    calls.push([path, options]);
+    if (path === "/selection") return { character_agent_id: "new-hero", version: 5 };
+    if (path.startsWith("/candidates")) return { items: [], next_cursor: null };
+    if (path.startsWith("/chats?")) return { items: [{ id: "chat", character_agent_id: "hero" }, { id: "new-chat", character_agent_id: "new-hero" }], usage: { remaining: 8 } };
+    if (path === "/chats/new-chat") return { id: "new-chat", character_agent_id: "new-hero" };
+    if (path.includes("/messages")) return { items: [], next_cursor: null };
+    throw new Error(path);
+  });
+  await w.refresh();
+  assert.equal(w.selection.character_agent_id, "new-hero");
+  assert.equal(w.chat.id, "new-chat");
+  assert.equal(calls.some(([, options]) => options?.method === "PUT"), false);
+});

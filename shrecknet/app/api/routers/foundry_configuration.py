@@ -44,11 +44,15 @@ async def create_integration(
     current_user: AdminUser,
     session: AsyncSession = Depends(get_db_session),
 ) -> FoundryIntegrationCreated:
-    integration, key = await FoundryIntegrationService(session).create(
-        name=payload.name,
-        allowed_world_ids=payload.allowed_world_ids,
-        created_by_user_id=current_user.id,
-    )
+    try:
+        integration, key = await FoundryIntegrationService(session).create(
+            name=payload.name,
+            allowed_world_ids=payload.allowed_world_ids,
+            created_by_user_id=current_user.id,
+            default_world_id=payload.default_world_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     return FoundryIntegrationCreated(
         **FoundryIntegrationRead.model_validate(integration).model_dump(), key=key
     )
@@ -64,11 +68,16 @@ async def update_integration(
     integration = await service.get(integration_id)
     if integration is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Foundry integration not found")
-    updated = await service.update(
-        integration,
-        name=payload.name,
-        allowed_world_ids=payload.allowed_world_ids,
-    )
+    try:
+        updated = await service.update(
+            integration,
+            name=payload.name,
+            allowed_world_ids=payload.allowed_world_ids,
+            default_world_id=payload.default_world_id,
+            update_default_world="default_world_id" in payload.model_fields_set,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     return FoundryIntegrationRead.model_validate(updated)
 
 

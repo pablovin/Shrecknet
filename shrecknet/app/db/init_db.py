@@ -6,6 +6,7 @@ from app import models as _models  # noqa: F401
 from app.db.base import Base
 from app.db.migrations import (
     migrate_agents_table,
+    migrate_foundry_default_world_column,
     migrate_world_workshop_runs,
     migrate_novelist_agent_preferences,
     migrate_remove_legacy_character_agents,
@@ -27,6 +28,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     migrate_site_elder_chats(engine)
     with engine.begin() as conn:
+        migrate_foundry_default_world_column(conn)
         migrate_agents_table(conn)
         migrate_novelist_agent_preferences(conn)
         migrate_world_workshop_runs(conn)

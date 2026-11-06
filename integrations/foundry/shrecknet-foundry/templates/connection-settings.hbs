@@ -1,53 +1,75 @@
 <div class="shrecknet-shell shrecknet-connection-settings">
-  <header class="shrecknet-header"><strong>SHRECKNET CONNECTION</strong></header>
-  {{#if notice}}<p class="shrecknet-notice">{{notice}}</p>{{/if}}
-
-  {{#if configured}}
-    <section class="shrecknet-form">
-      <h2>Connection active</h2>
-      <dl class="shrecknet-connection-status">
-        <dt>Server</dt><dd>{{connection.serverUrl}}</dd>
-        <dt>Shrecknet World</dt><dd>{{connection.worldName}}</dd>
-        <dt>Status</dt><dd class="status-{{connection.status}}">{{connection.status}}</dd>
-        {{#if connection.checkedAt}}<dt>Last checked</dt><dd>{{connection.checkedAt}}</dd>{{/if}}
-      </dl>
-      <button type="button" data-action="checkConnection">Check connection now</button>
-      <form class="shrecknet-form shrecknet-service-settings" data-shrecknet-submit="saveServiceUrls">
-        <h3>Connected services</h3>
-        <label>ShreckWorld API URL <input name="shreckWorldUrl" type="url" value="{{shreckWorldUrl}}" required></label>
-        <label>ShreckRPG API URL <input name="shreckRpgUrl" type="url" value="{{shreckRpgUrl}}" required></label>
-        <button type="submit">Save service URLs</button>
-      </form>
-      <p class="shrecknet-help">The browser connects directly to these APIs. Configure CORS to allow the Foundry origin. The service key was used only during setup and is not stored in Foundry.</p>
-    </section>
-  {{else if hasWorldChoices}}
-    <form class="shrecknet-form">
-      <h2>Choose Shrecknet World</h2>
-      <p class="shrecknet-help">The connection is verified. Select the World this Foundry World will browse, then enable it.</p>
-      <input name="serverUrl" type="hidden" value="{{connection.serverUrl}}">
-      <label>Shrecknet World
-        <select name="worldId" required>
-          <option value="">Select a World</option>
-          {{#each worldChoices}}<option value="{{id}}">{{name}}</option>{{/each}}
-        </select>
-      </label>
-      <label>ShreckWorld API URL
-        <input name="shreckWorldUrl" type="url" value="{{shreckWorldUrl}}" placeholder="https://example.com/shreckworld-api" required>
-      </label>
-      <label>ShreckRPG API URL
-        <input name="shreckRpgUrl" type="url" value="{{shreckRpgUrl}}" placeholder="https://example.com/api/shreckrpg" required>
-      </label>
-      <button type="button" data-action="saveConnection">Enable connection</button>
-      <p class="shrecknet-help">Use browser-reachable HTTPS API base URLs. Each API must allow requests from this Foundry origin.</p>
-    </form>
-  {{else}}
-    <form class="shrecknet-form">
-      <h2>Initial setup</h2>
-      <p class="shrecknet-help">This is the only place a service key can be entered. It is discarded after the connection is saved.</p>
-      <label>Server URL <input name="serverUrl" type="url" value="{{connection.serverUrl}}" required></label>
-      <label>Service Key <input name="integrationKey" type="password" autocomplete="off" required></label>
-      <button type="button" data-action="testConnection">Test connection</button>
-      {{#if connectionTested}}<p class="shrecknet-help">No Worlds were returned for this service key. Update its allowed World IDs in Shrecknet and test again.</p>{{/if}}
-    </form>
-  {{/if}}
+  <header class="shrecknet-setup-heading">
+    <p class="shrecknet-kicker">YOUR TABLE, CONNECTED</p>
+    <h2>{{#if configured}}Shrecknet connection{{else}}Connect to Shrecknet{{/if}}</h2>
+    {{#unless configured}}<ol class="shrecknet-setup-steps" aria-label="Setup progress">
+      <li class="{{#unless choosingWorld}}is-current{{/unless}}" {{#unless choosingWorld}}aria-current="step"{{/unless}}>1 · URL &amp; key</li>
+      <li class="{{#if worldStep}}is-current{{/if}}" {{#if worldStep}}aria-current="step"{{/if}}>2 · Choose World</li>
+      <li class="{{#if reviewStep}}is-current{{/if}}" {{#if reviewStep}}aria-current="step"{{/if}}>3 · Test &amp; save</li>
+    </ol>{{/unless}}
+  </header>
+  <form class="shrecknet-setup-form" data-shrecknet-submit="{{#if configured}}testSetup{{else if choosingWorld}}testSetup{{else}}loadSetupWorlds{{/if}}">
+    <div class="shrecknet-setup-body" role="region" tabindex="0" aria-label="Connection settings">
+      {{#if notice}}<p class="shrecknet-notice" data-setup-notice role="status">{{notice}}</p>{{/if}}
+      <fieldset {{#if busy}}disabled{{/if}}>
+      {{#if configured}}
+        <section class="shrecknet-setup-section">
+          <div class="shrecknet-setup-world"><span class="fa-solid fa-globe" aria-hidden="true"></span><div><small>CONNECTED WORLD</small><strong>{{connection.worldName}}</strong></div></div>
+          <dl class="shrecknet-connection-status"><dt>Shrecknet API</dt><dd>{{connection.serverUrl}}</dd><dt>Status</dt><dd class="status-{{connection.status}}">{{connection.status}}</dd>{{#if connection.checkedAt}}<dt>Last checked</dt><dd>{{connection.checkedAt}}</dd>{{/if}}</dl>
+          <button type="button" data-action="editSetup">Update World connection</button>
+        </section>
+      {{else if choosingWorld}}
+        <section class="shrecknet-setup-section">
+          <h3>Where does this table belong?</h3>
+          <p class="shrecknet-help">Your setup key is verified. Select the Atlas World for this Foundry table.</p>
+          <label for="shrecknet-setup-world">Shrecknet World</label>
+          <select id="shrecknet-setup-world" name="worldId" required>
+            <option value="">Choose a World…</option>
+            {{#each worldChoices}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}
+          </select>
+          {{#if defaultWorldId}}<p class="shrecknet-help">This World was selected by your Shrecknet administrator.</p>{{/if}}
+          <p class="shrecknet-setup-server">{{draft.serverUrl}}</p>
+        </section>
+      {{else}}
+        <section class="shrecknet-setup-section">
+          <h3>Start with your Shrecknet server</h3>
+          <p class="shrecknet-help">Copy the API URL and Foundry setup key from your Shrecknet administrator.</p>
+          <label for="shrecknet-setup-url">Shrecknet API URL</label>
+          <input id="shrecknet-setup-url" name="serverUrl" type="url" value="{{draft.serverUrl}}" placeholder="https://shrecknet.club/backend_api" autocomplete="url" required>
+          <label for="shrecknet-setup-key">Foundry setup key</label>
+          <input id="shrecknet-setup-key" name="integrationKey" type="password" autocomplete="off" spellcheck="false" required placeholder="Paste your setup key">
+          <p class="shrecknet-help">The key stays in this window only while you complete setup. It is never saved in Foundry settings.</p>
+        </section>
+      {{/if}}
+      {{#if showServices}}
+        <details class="shrecknet-setup-advanced"><summary>Advanced · service URLs</summary><div class="shrecknet-setup-section">
+          <p class="shrecknet-help">We filled these in from your server URL. Change them only if your services use different addresses, then test again.</p>
+          <label for="shrecknet-setup-library-url">ShreckWorld API URL</label><input id="shrecknet-setup-library-url" name="shreckWorldUrl" type="url" value="{{draft.shreckWorldUrl}}" required>
+          <label for="shrecknet-setup-rpg-url">ShreckRPG API URL</label><input id="shrecknet-setup-rpg-url" name="shreckRpgUrl" type="url" value="{{draft.shreckRpgUrl}}" required>
+        </div></details>
+      {{/if}}
+      </fieldset>
+      {{#if configured}}
+        <p class="shrecknet-help">Test checks service health from this browser. Each player signs in separately for Atlas, library, Chronicle, and Companion access.</p>
+      {{else if choosingWorld}}
+        <p class="shrecknet-help">Test checks your key, World selection, and all three APIs. Each player will sign in separately to access their content.</p>
+      {{/if}}
+      <div class="shrecknet-setup-results" data-setup-results aria-live="polite" aria-atomic="true">
+        {{#if busy}}<p role="status">Checking your connection…</p>{{else}}{{#each checks}}<div class="shrecknet-setup-check {{#if ok}}is-success{{else}}is-failure{{/if}}"><span aria-hidden="true">{{#if ok}}✓{{else}}!{{/if}}</span><div><strong>{{label}}</strong><p>{{detail}}</p></div></div>{{/each}}{{/if}}
+      </div>
+    </div>
+    <footer class="shrecknet-setup-footer">
+      {{#if configured}}
+        <button type="submit" {{#if busy}}disabled{{/if}}>Test all connections</button>
+        <button type="button" class="shrecknet-setup-primary" data-action="saveSetup" {{#unless canSave}}disabled{{/unless}}>Save changes</button>
+      {{else if choosingWorld}}
+        <div class="shrecknet-setup-footer-links"><button type="button" data-action="setupBack" {{#if busy}}disabled{{/if}}>← URL &amp; key</button>{{#if hasSavedConnection}}<button type="button" data-action="cancelSetup" {{#if busy}}disabled{{/if}}>Keep saved connection</button>{{/if}}</div>
+        <button type="submit" class="shrecknet-setup-test" {{#if busy}}disabled{{/if}}>Test all connections</button>
+        <button type="button" class="shrecknet-setup-primary" data-action="saveSetup" {{#unless canSave}}disabled{{/unless}}>Save connection</button>
+      {{else}}
+        {{#if hasSavedConnection}}<button type="button" data-action="cancelSetup" {{#if busy}}disabled{{/if}}>Keep saved connection</button>{{/if}}
+        <button type="submit" class="shrecknet-setup-primary" {{#if busy}}disabled{{/if}}>Continue · choose World →</button>
+      {{/if}}
+    </footer>
+  </form>
 </div>

@@ -4,8 +4,7 @@ import { presentElderHistory, presentElderSources, submitElderTurn } from "./eld
 import { selectedTextSource, groupRelationships, renderAtlasChat, safeImageUrl } from "./atlas-content.js";
 import { ShrecknetClient, ShrecknetApiError } from "../api/shrecknet-client.js";
 import { NavigationHistory } from "../navigation/navigation-history.js";
-import { getConnectionState, saveConnectionState, saveServiceUrls } from "../settings/connection-settings.js";
-import { checkConfiguredConnection } from "../settings/connection-monitor.js";
+import { getConnectionState } from "../settings/connection-settings.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -31,10 +30,6 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     position: { width: 1080, height: 760 },
     actions: {
       ...companionActions,
-      testConnection: ShrecknetShell._testConnection,
-      saveConnection: ShrecknetShell._saveConnection,
-      saveServiceUrls: ShrecknetShell._saveServiceUrls,
-      checkConnection: ShrecknetShell._checkConnection,
       signIn: ShrecknetShell._signIn,
       signOut: ShrecknetShell._signOut,
       openHome: ShrecknetShell._openHome,
@@ -78,8 +73,6 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     this.connection = getConnectionState();
     this.client = new ShrecknetClient({ serverUrl: this.connection.serverUrl });
     this.session = this.client.loadSession();
-    this.worldChoices = [];
-    this.connectionTested = false;
     this.notice = null;
     this.isLoading = false;
     this.readerFocus = false;
@@ -124,9 +117,6 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       authenticated: Boolean(this.session?.user),
       user: this.session?.user,
       connection: this.connection,
-      worldChoices: this.worldChoices,
-      hasWorldChoices: this.worldChoices.length > 0,
-      connectionTested: this.connectionTested,
       resource: await this._presentResource(),
       isSceneWorkspace: ["scene", "sceneCollection"].includes(this.resource.kind),
       isKnowledgeWorkspace: ["knowledgeWorlds", "knowledgeLibrary", "knowledgeSource", "knowledgeResults"].includes(this.resource.kind),
@@ -339,7 +329,11 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
 
   async _loadObjectUrl(key, loadBlob) {
     if (this.resourceObjectUrlsByKey.has(key)) return this.resourceObjectUrlsByKey.get(key);
-    return this._objectUrl(key, await loadBlob());
+    const session = this.session;
+    const resources = this.resourceObjectUrls;
+    const blob = await loadBlob();
+    if (session !== this.session || resources !== this.resourceObjectUrls) throw new Error("Shrecknet content changed while loading an image.");
+    return this._objectUrl(key, blob);
   }
 
   async _presentChronicle(chronicle) {
@@ -405,6 +399,21 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   async _presentResource() {
+    if (this.resource.kind === "knowledgeWorlds") {
+      const resource = this.resource;
+      const session = this.session;
+      const libraries = await Promise.all((resource.libraries || []).map(async (library) => ({ ...library,
+        sources: await Promise.all(library.sources.map(async (source) => {
+          if (!source.cover_url) return source;
+          try {
+            const coverUrl = await this._loadObjectUrl(`shreckworld:${library.id}:${source.id}`,
+              () => this.client.getKnowledgeCover(this._serviceUrl("shreckWorld"), library.id, source.id));
+            return { ...source, coverUrl };
+          } catch (_) { return { ...source, coverUrl: null }; }
+        })),
+      })));
+      return session === this.session && resource === this.resource ? { ...resource, libraries } : this.resource;
+    }
     if (this.resource.kind === "knowledgeLibrary") {
       const resource = this.resource;
       resource.sources = await Promise.all(resource.sources.map(async (source) => {
@@ -551,76 +560,6 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     await this.render();
   }
 
-  static async _testConnection(event) {
-    const app = this;
-    const data = app._form(event);
-    try {
-      app.client.setServer(data.get("serverUrl"));
-      await app.client.validateIntegration(data.get("integrationKey"));
-      app.worldChoices = await app.client.listConnectableWorlds(data.get("integrationKey"));
-      app.connectionTested = true;
-      app.connection = { ...app.connection, serverUrl: app.client.serverUrl };
-      app.notice = app.worldChoices.length
-        ? "Connection verified. Select a Shrecknet World and enable the connection."
-        : "Connection verified, but this service key cannot access any Shrecknet Worlds. Ask a Shrecknet administrator to add a World to the integration key.";
-      await app.render();
-    } catch (error) { await app._handleError(error); }
-  }
-
-  static async _saveConnection(event) {
-    const app = this;
-    if (!game.user.isGM) return app._handleError(new Error("Only a Foundry GM can configure Shrecknet."));
-    const data = app._form(event);
-    const worldId = data.get("worldId");
-    const selected = app.worldChoices.find((world) => String(world.id) === String(worldId));
-    if (!selected) return app._handleError(new Error("Test the connection and select a Shrecknet World first."));
-    try {
-      app.client.setServer(data.get("serverUrl"));
-      await app.client.ping();
-      const shreckWorldUrl = ShrecknetClient.normalizeServiceUrl(
-        data.get("shreckWorldUrl") || ShrecknetClient.serviceBaseFromServer(app.client.serverUrl, "/shreckworld-api"),
-      );
-      const shreckRpgUrl = ShrecknetClient.normalizeServiceUrl(
-        data.get("shreckRpgUrl") || ShrecknetClient.serviceBaseFromServer(app.client.serverUrl, "/api/shreckrpg"),
-      );
-      await saveConnectionState({ serverUrl: app.client.serverUrl, worldId, worldName: selected.name, shreckWorldUrl, shreckRpgUrl });
-      app.connection = getConnectionState();
-      app.client.setServer(app.connection.serverUrl);
-      app.notice = "Shrecknet connection saved.";
-      await app.render();
-    } catch (error) { await app._handleError(error); }
-  }
-
-  static async _saveServiceUrls(event) {
-    const app = this;
-    if (!game.user.isGM) return app._handleError(new Error("Only a Foundry GM can configure service URLs."));
-    try {
-      const data = app._form(event);
-      const shreckWorldUrl = ShrecknetClient.normalizeServiceUrl(data.get("shreckWorldUrl"));
-      const shreckRpgUrl = ShrecknetClient.normalizeServiceUrl(data.get("shreckRpgUrl"));
-      if (!shreckWorldUrl || !shreckRpgUrl) throw new Error("Both ShreckWorld and ShreckRPG API URLs are required.");
-      await saveServiceUrls({ shreckWorldUrl, shreckRpgUrl });
-      app.connection = getConnectionState();
-      app._releaseObjectUrls();
-      app.notice = "Connected service URLs saved.";
-      await app.render();
-    } catch (error) { await app._handleError(error); }
-  }
-
-  static async _checkConnection() {
-    const app = this;
-    if (!game.user.isGM) return app._handleError(new Error("Only a Foundry GM can test Shrecknet."));
-    try {
-      await checkConfiguredConnection();
-      app.connection = getConnectionState();
-      app.notice = "Shrecknet is online.";
-      await app.render();
-    } catch (error) {
-      app.connection = getConnectionState();
-      await app._handleError(error);
-    }
-  }
-
   static async _signIn(event) {
     const app = this;
     const data = app._form(event);
@@ -656,25 +595,38 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   static async _openHome() { try { await this._withLoading(() => this._loadHome()); await this.render(); } catch (error) { await this._handleError(error); } }
 
   static async _openKnowledgeWorlds() {
+    const session = this.session;
+    const worldId = this.connection.worldId;
+    const active = () => session === this.session && worldId === this.connection.worldId;
     try {
-      const worlds = await this._withLoading(() => this.client.listKnowledgeWorlds(this._serviceUrl("shreckWorld")));
-      this.knowledgeWorldChoices = worlds;
+      const libraries = await this._withLoading(async () => {
+        const worlds = await this.client.listKnowledgeWorlds(this._serviceUrl("shreckWorld"));
+        if (!active()) return [];
+        const linked = worlds.filter((world) => world.shrecknet_world_id != null && String(world.shrecknet_world_id) === String(worldId));
+        return Promise.all(linked.map(async (world) => ({ ...world,
+          sources: (await this.client.listKnowledgeSources(this._serviceUrl("shreckWorld"), world.id)).map((source) => ({
+            ...source, readerUrl: knowledgeReaderUrl(this.connection.serverUrl, world.id, source.id),
+          })),
+        })));
+      });
+      if (!active()) return;
+      this.knowledgeWorldChoices = libraries;
       this._releaseObjectUrls();
       this.resource = {
-        kind: "knowledgeWorlds", title: "ShreckWorld", worlds,
-        breadcrumbs: [this._homeBreadcrumb(true), { label: "ShreckWorld" }],
+        kind: "knowledgeWorlds", title: "Shreckworlds", libraries,
+        breadcrumbs: [{ label: "Shreckworlds" }, { label: this.connection.worldName }],
       };
       this.history.navigate(this.resource);
       await this.render();
-    } catch (error) { await this._handleError(error); }
+    } catch (error) { if (active()) await this._handleError(error); }
   }
 
   static async _openKnowledgeWorld(event, target) {
     const worldId = getActionTarget(event, target).dataset.worldId;
     if (!worldId) return this._handleError(new Error("The selected ShreckWorld is missing its identifier."));
     try {
-      const world = this.knowledgeWorldChoices.find((item) => item.id === worldId)
-        || { id: worldId, name: "ShreckWorld" };
+      const world = this.knowledgeWorldChoices.find((item) => item.id === worldId);
+      if (!world) throw new Error("This library is not linked to the connected World.");
       const sources = await this._withLoading(() => this.client.listKnowledgeSources(this._serviceUrl("shreckWorld"), worldId));
       this.knowledgeSources = sources;
       this.resource = {
@@ -870,8 +822,10 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   static async _openChronicles() {
+    const session = this.session;
     try {
       const chronicles = await this._withLoading(() => this.client.listChronicles(this._serviceUrl("shreckRpg")));
+      if (session !== this.session) return;
       this._releaseObjectUrls();
       this.resource = {
         kind: "chronicleLibrary", title: "Chronicles",
@@ -880,7 +834,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       };
       this.history.navigate(this.resource);
       await this.render();
-    } catch (error) { await this._handleError(error); }
+    } catch (error) { if (session === this.session) await this._handleError(error); }
   }
 
   static async _createChronicle(event, target) {
@@ -1270,7 +1224,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     const previous = this.history.back();
     const currentId = this.resource.chronicle?.id || this.resource.source?.id;
     const previousId = previous?.chronicle?.id || previous?.source?.id;
-    if (["chronicle", "knowledgeSource"].includes(this.resource.kind) && (previous?.kind !== this.resource.kind || previousId !== currentId)) {
+    if (["chronicle", "knowledgeSource", "knowledgeWorlds"].includes(this.resource.kind) && (previous?.kind !== this.resource.kind || previousId !== currentId)) {
       this._releaseObjectUrls();
     }
     this.resource = previous;
@@ -1280,7 +1234,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     const next = this.history.forward();
     const currentId = this.resource.chronicle?.id || this.resource.source?.id;
     const nextId = next?.chronicle?.id || next?.source?.id;
-    if (["chronicle", "knowledgeSource"].includes(this.resource.kind) && (next?.kind !== this.resource.kind || nextId !== currentId)) {
+    if (["chronicle", "knowledgeSource", "knowledgeWorlds"].includes(this.resource.kind) && (next?.kind !== this.resource.kind || nextId !== currentId)) {
       this._releaseObjectUrls();
     }
     this.resource = next;

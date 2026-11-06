@@ -19,6 +19,7 @@ class FoundryIntegration(Base):
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     # An empty list means the key may be used to bind any current Shrecknet World.
     allowed_world_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    default_world_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by_user_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True

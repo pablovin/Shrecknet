@@ -36,6 +36,8 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## Character Companion
 
+- [Foundry contextual Companion chat plan](./Deployment/FOUNDRY_CONTEXTUAL_COMPANION_PLAN.md) — proposed system-independent sidecar, table/World grounding, document attachments, API extensions and acceptance gates
+
 - [Character Companion](./Agents/Companion/Companion.md) — implemented behavior, ownership, deployment, privacy, recovery and remaining acceptance gates
 
 - [Unified Character Companion backend plan](./Agents/Companion/Companion%20Backend%20Plan.md) — proposed cross-repository reuse audit, architecture, rapport/evidence contracts, migration, and testable delivery milestones; design baseline and acceptance checklist
@@ -73,7 +75,7 @@ Everything you need to deploy Shrecknet
 - [Deployment Workflow](./Deployment/DEPLOYMENT_WORKFLOW.md) - Step-by-step deployment process
 - [Docker Optimization](./Deployment/DOCKER_OPTIMIZATION.md) - Performance optimizations
 - [Deployment Optimization Summary](./Deployment/DEPLOYMENT_OPTIMIZATION_SUMMARY.md)
-- [Foundry Module Deployment](./Deployment/FOUNDRY_MODULE.md) - Atlas Explorer, Character Companion chat tabs, Elder Companion, ShreckWorld bookshelf and rules companion, module releases, CORS, installation, and operations
+- [Foundry Module Deployment](./Deployment/FOUNDRY_MODULE.md) - four-menu workspace, guided scrollable GM setup and service checks, admin World binding, scoped bookshelves, personal Chronicles and Companion, module releases, CORS, installation, and operations
 
 ### [Backend](./Backend/)
 Backend service documentation (FastAPI)

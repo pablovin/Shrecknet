@@ -29,13 +29,22 @@ class FoundryIntegrationManagementService:
         *,
         name: str | None,
         allowed_world_ids: list[str] | None,
+        default_world_id: str | None = None,
+        update_default_world: bool = False,
     ) -> FoundryIntegration:
+        world_ids = (
+            list(dict.fromkeys(value.strip() for value in allowed_world_ids if value.strip()))
+            if allowed_world_ids is not None
+            else integration.allowed_world_ids
+        )
+        default = default_world_id if update_default_world else integration.default_world_id
+        await FoundryIntegrationService(self.session).validate_default_world(default, world_ids)
         if name is not None:
+            if not name.strip():
+                raise ValueError("Integration name cannot be empty")
             integration.name = name.strip()
-        if allowed_world_ids is not None:
-            integration.allowed_world_ids = list(
-                dict.fromkeys(value.strip() for value in allowed_world_ids if value.strip())
-            )
+        integration.allowed_world_ids = world_ids
+        integration.default_world_id = default
         await self.session.commit()
         await self.session.refresh(integration)
         return integration

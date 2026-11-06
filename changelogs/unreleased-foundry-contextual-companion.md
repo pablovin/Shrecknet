@@ -1,4 +1,4 @@
-# Unreleased — contextual Foundry Companion chat
+# Contextual Foundry Companion chat — shipped in 0.4.0
 
 - Add a compact/full Companion layout sharing one workspace, saved conversations,
   authentication and polling lifecycle.
@@ -14,7 +14,7 @@
   sign-out or connection change. No SQL migration or writes to Foundry documents.
 - Deploy backend/Companion workers before the module. Text chat remains available
   against an older server. Live Foundry v14/custom sheet and provider acceptance
-  remain required before publishing a release. Combat/map context is deferred.
+  remain unverified in the 0.4.0 release. Combat/map context is deferred.
 
 See the [canonical Foundry contract](../Documentation/Deployment/FOUNDRY_MODULE.md#contextual-chat-and-compact-sidecar)
 and [Companion snapshot API](../Documentation/Agents/Companion/Frontend%20API.md#foundry-context-snapshots).

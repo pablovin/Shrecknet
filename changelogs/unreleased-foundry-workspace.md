@@ -1,4 +1,4 @@
-# Foundry workspace redesign — unreleased
+# Foundry workspace redesign — shipped in 0.4.0
 
 - Keep Atlas, Shreckworlds, Chronicles, and Companion as the four menus; use a
   responsive icon rail, illustrated bookshelves, and quieter conversation controls.
@@ -11,6 +11,6 @@
   service URLs during same-server rebind, and require retesting edited settings.
 - Display saved Companion source excerpts and respect selection changes from other clients.
 
-This source update has not been published as a Foundry release. See the
+Included in [Foundry 0.4.0](foundry-v0.4.0.md). See the
 [deployment guide](../Documentation/Deployment/FOUNDRY_MODULE.md) for rollout,
 compatibility, and release verification.

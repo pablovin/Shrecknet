@@ -21,6 +21,26 @@ function recordName(page) {
   return nonBlank(page.name) || nonBlank(page.entities?.[0]?.alias) || "Untitled record";
 }
 
+function clearAccountState(app) {
+  app.companion?.reset();
+  app.elderDraft = "";
+  app.elderHistory = [];
+  app.elderChatId = null;
+  app.elderRequestToken = null;
+  app.client.clearSession();
+  for (const key of ["pageCache", "relationshipCardsByInstance", "propertyNamesByEntityDefinition",
+    "atlasDefinitionsByOntology", "activeTextSourceByEntity", "knowledgeSessions", "uploadedChronicleAssets"]) app[key]?.clear();
+  app.knowledgeWorldChoices = [];
+  app.knowledgeSources = [];
+  app.knowledgeResults = null;
+  app.session = null;
+  app.folders = [];
+  app.chronicleRecipients = [];
+  app._releaseObjectUrls();
+  app.resource = app.compact ? { kind: "companion", title: "Companion" } : { kind: "home", title: app.connection.worldName };
+  app.history = new NavigationHistory(app.resource);
+}
+
 export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   static DEFAULT_OPTIONS = {
     id: "shrecknet-shell",
@@ -78,10 +98,19 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     const connection = getConnectionState();
     let app = ShrecknetShell.instance;
     const identity = [connection.serverUrl, connection.worldId, connection.shreckWorldUrl, connection.shreckRpgUrl, game.world.id, game.user.id].join("|");
-    if (app && app.tableIdentity !== identity) {
-      await app.close();
-      app.companion.reset();
-      app = null;
+    if (app) {
+      const previousToken = app.client.accessToken;
+      const saved = app.client.loadSession();
+      const accountChanged = (saved?.accessToken || null) !== (previousToken || null)
+        || saved?.user?.id !== app.session?.user?.id;
+      if (app.tableIdentity !== identity || accountChanged) {
+        app.retired = true;
+        await app.close();
+        app.companion.reset();
+        app.session = null;
+        app.client.setAccessToken(null);
+        app = null;
+      }
     }
     if (!app) app = ShrecknetShell.instance = new ShrecknetShell();
     app.tableIdentity = identity;
@@ -581,21 +610,9 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   async _handleError(error) {
+    if (this.retired) return;
     if (error instanceof ShrecknetApiError && error.isAuthenticationError) {
-      this.companion.reset();
-      this.knowledgeSessions.clear();
-    this.elderDraft = "";
-    this.elderHistory = [];
-    this.elderChatId = null;
-    this.elderRequestToken = null;
-    this.client.clearSession();
-      this.session = null;
-      this.folders = [];
-      this.chronicleRecipients = [];
-      this._releaseObjectUrls();
-      this.uploadedChronicleAssets.clear();
-      this.resource = { kind: "home", title: this.connection.worldName };
-      this.history = new NavigationHistory(this.resource);
+      clearAccountState(this);
       this.notice = "Your Shrecknet session has expired. Sign in again.";
     } else {
       this.notice = error.message || "Unable to complete the Shrecknet request.";
@@ -618,23 +635,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   static async _signOut() {
-    this.companion?.reset();
-    this.elderDraft = "";
-    this.elderHistory = [];
-    this.elderChatId = null;
-    this.elderRequestToken = null;
-    this.client.clearSession();
-    this.pageCache.clear();
-    this.relationshipCardsByInstance.clear();
-    this.propertyNamesByEntityDefinition.clear();
-    this.atlasDefinitionsByOntology.clear();
-    this.activeTextSourceByEntity.clear();
-    this.session = null;
-    this.folders = [];
-    this._releaseObjectUrls();
-    this.uploadedChronicleAssets.clear();
-    this.resource = { kind: "home", title: this.connection.worldName };
-    this.history = new NavigationHistory(this.resource);
+    clearAccountState(this);
     await this.render();
   }
 

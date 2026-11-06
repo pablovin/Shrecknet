@@ -107,19 +107,18 @@ origin as above.
 
 ## Release process
 
-The published module manifest remains **0.3.3**. The four-menu redesign is an
-unreleased source update; see [unreleased notes](../../changelogs/unreleased-foundry-workspace.md).
-For the published version, see the
-[release notes](../../changelogs/foundry-v0.3.3.md). The release workflow uses the
-matching `changelogs/foundry-vX.Y.Z.md` as its GitHub Release notes.
+The module version is **0.4.0**, including contextual Companion chat, the four-menu
+workspace and guided World setup. See the [release notes](../../changelogs/foundry-v0.4.0.md)
+for rollout requirements and known limits. The release workflow uses the matching
+`changelogs/foundry-vX.Y.Z.md` as its GitHub Release notes.
 
 To build an installable archive locally from the repository root:
 
 ```bash
 node --test integrations/foundry/shrecknet-foundry/tests/*.test.mjs
-mkdir -p dist/foundry-v0.3.3
-(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.3.3/shrecknet-foundry-v0.3.3.zip . -x '.DS_Store' -x '__MACOSX/*')
-cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.3.3/module.json
+mkdir -p dist/foundry-v0.4.0
+(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.4.0/shrecknet-foundry-v0.4.0.zip . -x '.DS_Store' -x '__MACOSX/*')
+cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.4.0/module.json
 ```
 
 Use a fresh output directory when rebuilding, so obsolete files cannot remain in
@@ -342,7 +341,10 @@ its own nullable integration column. Rollback preserves backend chats.
 window. **Compact chat** and **Expand** switch that same workspace between layouts;
 there is one conversation controller and polling loop. The main Shrecknet launcher
 restores the full layout. No separate agent, server connection or shared GM token
-is created.
+is created. Opening the cached window rechecks the browser's saved account and
+connection identity. Account/connection changes create fresh state; authentication
+expiry and sign-out clear all content caches. Late errors from replaced windows
+cannot clear the new account's session.
 
 The default **Table** chip includes the Foundry table title and available
 sanitized description, installed system ID/title/version, Foundry version, and
@@ -406,9 +408,8 @@ columns; no database migration or actor synchronization is required. Normal chat
 purge removes snapshots. Module rollback retains saved chats; retain additive
 backend decoding while Foundry sources remain in history.
 
-Browser fixtures validate generic DOM filtering and layouts, but a real v14 table
-must still validate system/custom sheet controls and permission behavior before a
-release. From the module directory, serve it with `python -m http.server 8831` and
+Browser fixtures validate generic DOM filtering and layouts; real v14 table /
+custom-sheet acceptance remains unverified. From the module directory, serve it with `python -m http.server 8831` and
 open `http://localhost:8831/tests/foundry-context.browser.html` for repeatable native
 DOM checks. Scene images, tokens/combat/roll extraction, automatic live lookups,
 selected-text attachments and game-state changes are not implemented.

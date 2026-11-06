@@ -159,7 +159,8 @@ quota enforcement requires a backend rollback. Never delete excess legacy chats.
 `bytes: 65536`, `document_characters: 8000`, `description_characters: 4000`,
 `fields: 100`, and `links: 20`. Clients must check support before sending the
 optional `foundry_context` on `POST /chats/{chat_id}/turns`. Existing text/image
-payloads remain valid. The speaking CharacterAgent, selection version, owner-only
+payloads remain valid. Ordinary text-turn idempotency hashes from before this
+additive field remain replayable across an upgrade. The speaking CharacterAgent, selection version, owner-only
 chat authorization, cancellation, quota and durable admission contracts are unchanged.
 
 Example additive turn input:

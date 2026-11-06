@@ -1,8 +1,8 @@
 {
   "id": "shrecknet-foundry",
   "title": "Shrecknet",
-  "description": "Explore Atlas, Shreckworlds, Chronicles, and private Character Companion chats from a Foundry workspace.",
-  "version": "0.3.3",
+  "description": "Explore Atlas, Shreckworlds, Chronicles, and private contextual Companion chat from a Foundry workspace.",
+  "version": "0.4.0",
   "compatibility": {
     "minimum": "14",
     "verified": "14"
@@ -24,6 +24,6 @@
   "url": "https://github.com/pablovin/Shrecknet/tree/main/integrations/foundry/shrecknet-foundry",
   "readme": "README.md",
   "manifest": "https://raw.githubusercontent.com/pablovin/Shrecknet/main/integrations/foundry/shrecknet-foundry/module.json",
-  "download": "https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.3.3/shrecknet-foundry-v0.3.3.zip",
+  "download": "https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.4.0/shrecknet-foundry-v0.4.0.zip",
   "bugs": "https://github.com/pablovin/Shrecknet/issues"
 }

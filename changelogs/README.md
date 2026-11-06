@@ -28,6 +28,8 @@ This folder contains release notes by application version.
 
 - [Foundry v0.3.3](./foundry-v0.3.3.md) - Character Companion hero card, saved chat tabs and management, durable reply recovery, and refreshed workspace navigation.
 
-- [Unreleased Foundry workspace](unreleased-foundry-workspace.md) - Four menus, scoped bookshelves, personal Companion, and default World setup.
+- [Foundry workspace (shipped in 0.4.0)](unreleased-foundry-workspace.md) - Four menus, scoped bookshelves, personal Companion, and default World setup.
 
-- [Unreleased contextual Foundry Companion](unreleased-foundry-contextual-companion.md) - Compact chat, table/World grounding, permission-filtered attachments and snapshot evidence.
+- [Contextual Foundry Companion (shipped in 0.4.0)](unreleased-foundry-contextual-companion.md) - Compact chat, table/World grounding, permission-filtered attachments and snapshot evidence.
+
+- [Foundry v0.4.0](./foundry-v0.4.0.md) - Contextual Companion sidecar, safe table/document snapshots, scoped workspaces, guided setup and installable release.

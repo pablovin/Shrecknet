@@ -5,6 +5,22 @@ and later. The resizable ShreckOS-style workspace keeps its navigation available
 while browsing. This directory is self-contained so it can become its own
 repository without imports from the Shrecknet backend repository.
 
+## Install or update
+
+Version **0.4.0** supports Foundry VTT 14. In Foundry Setup → Add-on Modules →
+Install Module, use this stable manifest URL:
+
+```text
+https://raw.githubusercontent.com/pablovin/Shrecknet/main/integrations/foundry/shrecknet-foundry/module.json
+```
+
+For this exact version, use the
+[0.4.0 manifest](https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.4.0/module.json).
+See the [release notes](https://github.com/pablovin/Shrecknet/releases/tag/foundry-v0.4.0).
+Deploy the matching backend and Companion workers first for contextual snapshots;
+older servers retain text chat with contextual controls unavailable. Reload the
+Foundry table after updating.
+
 ## Connect a World
 
 1. Create an integration key on Shrecknet with `POST /config/integrations/foundry`.

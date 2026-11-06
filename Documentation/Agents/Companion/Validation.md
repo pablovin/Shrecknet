@@ -144,3 +144,46 @@ its configured `/app` media directory is not writable on the host; rerunning wit
 configuration confirms API, domain worker, and both Companion workers derive
 cookie settings from the same public origin. No database migration is required.
 Old failed turns remain historical failures; retry by sending a new message.
+
+## Foundry contextual chat verification — 2026-11-06
+
+- Module: `node --test tests/*.test.mjs` from
+  `integrations/foundry/shrecknet-foundry/`: 84 passed. Includes header/context-menu
+  signatures, shared compact/full lifecycle, account/cache isolation, immutable
+  retries, fresh permission checks and attachment/source behavior.
+- Backend: `python -m pytest -o addopts='' -q tests/test_companion_foundry_context.py
+  tests/test_character_companion.py tests/test_companion_chat_sessions.py
+  tests/test_foundry_integration_api.py tests/test_foundry_integration_service.py`
+  from `shrecknet/`: 55 passed. Includes strict snapshot bounds, legacy text-action
+  replay across upgrades, World isolation and a mocked-provider execution through
+  final committed history. Three existing dependency/model-validator deprecation
+  warnings remain.
+- SDK: `python -m pytest -q` from `python_sdk/`: 62 passed. Snapshot forwarding and
+  unchanged ordinary calls are included. The example was added but not submitted
+  against a live account/provider.
+- Native browser fixture `tests/foundry-context.browser.html`: five checks passed
+  in both Chromium and Firefox, including inert HTML, hidden/secret filtering,
+  labeled readonly values, revocation and draft/focus/scroll restoration. Three
+  compact/full compiled-template layouts per browser passed overflow/composer
+  checks at 360, 440 and 1080 pixels. These use stub Foundry documents.
+- OpenAPI export and the additive `TurnCreate.foundry_context` schema were checked;
+  `git diff --check` passed.
+
+Backend checks used a temporary `SHRECKNET_DATA_DIR` and
+`SHRECKNET_CONFIG_SEED_FILE` with a writable temporary `media_root`. The first run
+against the local saved configuration failed on `/app` filesystem permissions;
+production/local saved settings were not edited to run tests.
+
+A broader `tests/test_*companion*.py` run plus the Foundry API/service files had
+69 passes and two legacy `/users/me/companion` test failures in
+`test_personal_companion_agents.py`: `test_orchestrator_queue_and_poll_lifecycle`
+expects agents enabled, while the isolated configuration disables them; and
+`test_orchestrator_queue_refreshes_allocated_tools` calls its seeding helper twice
+with ontology ID 301, triggering a duplicate-primary-key error. These legacy
+fixtures/configuration were not changed as part of contextual Character Companion.
+The full Shrecknet suite was not run.
+
+Real Foundry v14/custom-sheet integration, GM/player acceptance, provider answer
+quality and production latency remain unverified. This feature-validation record
+does not certify live table or backend deployment acceptance. Release packaging
+and public asset availability are separate release checks.

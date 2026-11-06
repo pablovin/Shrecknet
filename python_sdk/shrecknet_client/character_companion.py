@@ -112,9 +112,11 @@ class CharacterCompanionAPI:
     async def messages(self, chat_id, **filters):
         return await self.client.raw_request('GET', PREFIX+f'/chats/{chat_id}/messages', params=filters)
 
-    async def send(self, chat_id: str, text: str, selection_version: int, *, idempotency_key: str, attachment_ids=None, context=None, tools=None, retry_of_turn_id=None) -> CompanionTurn:
-        """Admit one turn with a stable UUID key; this returns before synthesis."""
+    async def send(self, chat_id: str, text: str, selection_version: int, *, idempotency_key: str, attachment_ids=None, context=None, tools=None, retry_of_turn_id=None, foundry_context=None) -> CompanionTurn:
+        """Admit one turn with a stable UUID key; optional foundry_context is an immutable client snapshot."""
         body = {'text':text,'selection_version':selection_version,'attachment_ids':attachment_ids or [],'context':context,'retry_of_turn_id':retry_of_turn_id}
+        if foundry_context is not None:
+            body['foundry_context'] = foundry_context
         if tools is not None:
             body['tools'] = tools
         return CompanionTurn.model_validate(await self.client.raw_request('POST', PREFIX+f'/chats/{chat_id}/turns', json=body, headers={'Idempotency-Key':idempotency_key}))

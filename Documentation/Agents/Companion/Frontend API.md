@@ -46,7 +46,7 @@ The selection version must match current selection and the selected character.
 Chats remain bound to their original character after selection changes.
 
 A minimal turn is `{"text":"Hello","selection_version":1}`. Optional fields are
-`attachment_ids` (up to four), `context`, `tools` and `retry_of_turn_id`.
+`attachment_ids` (up to four), `context`, `foundry_context`, `tools` and `retry_of_turn_id`.
 Tools are `{"allowed":["atlas","character_memory"],"web":"disabled"}`;
 `allowed:null` permits configured sources. Web is `disabled`, `allow` or `require`.
 Unavailable required tools fail admission. Retry uses a new idempotency key and
@@ -152,3 +152,114 @@ unchanged; this does not introduce retroactive redaction of historical text.
 Deploy the backend before the updated frontend. No database migration is required.
 Rolling the frontend back retains chats and backend quota enforcement; removing
 quota enforcement requires a backend rollback. Never delete excess legacy chats.
+
+## Foundry context snapshots
+
+`GET /capabilities` adds `foundry_context` with `versions: [1]`, `documents: 6`,
+`bytes: 65536`, `document_characters: 8000`, `description_characters: 4000`,
+`fields: 100`, and `links: 20`. Clients must check support before sending the
+optional `foundry_context` on `POST /chats/{chat_id}/turns`. Existing text/image
+payloads remain valid. The speaking CharacterAgent, selection version, owner-only
+chat authorization, cancellation, quota and durable admission contracts are unchanged.
+
+Example additive turn input:
+
+```json
+{
+  "text": "What can you tell me about this character?",
+  "selection_version": 1,
+  "context": {"surface": "global", "ontology_id": 7},
+  "foundry_context": {
+    "version": 1,
+    "captured_at": "2026-11-06T12:00:00Z",
+    "table": {
+      "foundry_world_id": "campaign-table",
+      "title": "The Night Watch",
+      "description": "A city campaign with house rules.",
+      "foundry_version": "14",
+      "system_id": "custom-system",
+      "system_title": "Our RPG",
+      "system_version": "1",
+      "shrecknet_world_id": "city-world",
+      "shrecknet_world_name": "The City"
+    },
+    "documents": [{
+      "uuid": "Actor.hero",
+      "kind": "Actor",
+      "name": "Bao",
+      "captured_at": "2026-11-06T12:00:00Z",
+      "source_revision": "12",
+      "parent_uuid": null,
+      "coverage": "partial",
+      "text": "A defender of the city.",
+      "fields": [{"label": "Power Points", "value": 8}],
+      "links": []
+    }]
+  }
+}
+```
+
+The strict envelope contains integer `version` (exactly 1), required timezone-aware
+`captured_at`, nullable `table` (default null) and `documents` (default empty).
+It is not a substitute for the existing nonblank text or image requirement.
+Unknown keys, duplicate document UUIDs and normalized compact UTF-8 JSON exceeding
+64 KiB are rejected with 422. Document arrays permit at most six entries.
+
+When present, `table` requires `foundry_world_id` (1–128 characters), `title`
+(1–255), `foundry_version` (at most 64), `system_id` (at most 128), `system_title`
+(at most 255), and `system_version` (at most 64). Optional nullable fields are
+`description` (at most 4,000), `shrecknet_world_id` (1–64) and
+`shrecknet_world_name` (at most 255). Foundry and Shrecknet World IDs are distinct
+strings. `PageContext.world_id` retains its legacy positive-integer contract;
+never put a Shrecknet World string there. A Shrecknet World has no description
+column; this description is supplied Foundry table background.
+
+Each document also accepts optional nullable `foundry_world_id` (1–128 characters)
+for source navigation when table background is omitted. It must match the table
+ID when both are supplied; a mismatch returns 422. Each document requires `uuid`, `kind` (Actor, Item, JournalEntryPage), `name`
+(1–255) and timezone-aware `captured_at`. `source_revision` is nullable, at most
+128 characters. `parent_uuid` is nullable. UUID strings are 3–512 characters,
+dot-separated nonempty components containing letters, digits, `_` or `-`.
+`coverage` is complete/partial/unknown (default partial); `text` defaults empty,
+at most 8,000 characters. `fields` defaults empty, at most 100 objects containing
+`label` (1–80 characters) and required scalar `value` (string at most 500, finite
+number, boolean or null). `links` defaults empty, at most 20 objects containing
+`uuid` under the same identifier rules and `label` (1–255 characters). Objects do
+not accept arbitrary system JSON. Timestamps/revisions/permission claims remain
+client claims, not proof of freshness or visibility.
+
+Admission validates the referenced Shrecknet World and replaces its supplied name
+with the current canonical name. `context.ontology_id`, when supplied, must belong
+to that World. A sole ontology is selected automatically; otherwise no Atlas
+ontology is chosen until the caller selects one. There is no fallback to the
+speaking character's unrelated ontology. `character_ontology_id` still refers to
+that character for subjective memory. Without a table World, explicit ontology or
+Chronicle context is rejected. A missing World returns `422 foundry_world_unavailable`;
+a foreign ontology returns `422 context_scope_mismatch`; detached explicit scope
+returns `422 foundry_world_required`. Foundry turns do not implicitly route
+Chronicle searches; callers must supply an explicit `context.chronicle_id`.
+Rules retrieval uses an explicit `context.shreckworld_id` and existing authorized
+service policies, never a guessed rules edition. Setup-key bindings and browser
+role claims do not grant content access.
+
+Snapshots become evidence with `source_type: "foundry"` and
+`epistemic_category: "user_provided"`. User message manifests retain admitted
+snapshots; assistant manifests contain cited snapshot evidence. Table source
+excerpts contain the typed table JSON. Document evidence carries readable `excerpt`,
+`structured_evidence: {fields, links}`, and `reference` with document UUID/kind,
+capture time/revision, parent UUID and nullable `foundry_world_id`. Generic Foundry
+sources are partial; answer coverage cannot be promoted to complete when such
+partial evidence is present. Source controls should resolve only admitted/cited
+references locally and recheck current table and permission before opening.
+The backend has no live Foundry connection and cannot validate a player's browser
+permissions. Never treat descriptions or document text as agent instructions.
+
+All snapshot sources count against the configured evidence-token budget. Excess
+returns `413 foundry_context_budget_exceeded`; combined image/snapshot overflow is
+also fenced before synthesis. No snapshot records are silently dropped to fit.
+Retain the exact original body and idempotency key across ambiguous retries;
+refresh extraction only for a new turn. Foundry snapshot turns do not reuse prior
+retrieval evidence cached for a different game situation. Snapshots are stored
+in existing turn request JSON and message manifests, removed by normal chat purge;
+no schema migration or writes to Foundry documents occur. Removing a context chip
+affects future turns, not historical conversation content.

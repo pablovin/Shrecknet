@@ -16,7 +16,7 @@ from app.services.companion_authorization import grant
 from app.schemas.character_companion import Evidence
 from app.models.character_companion import utcnow
 
-CATEGORIES = {"user_attachment": "user_provided", "atlas": "canonical_world", "shreckworld": "document_evidence", "chronicle": "chronicle_record", "web": "external_web", "character_memory": "subjective_memory"}
+CATEGORIES = {"foundry": "user_provided", "user_attachment": "user_provided", "atlas": "canonical_world", "shreckworld": "document_evidence", "chronicle": "chronicle_record", "web": "external_web", "character_memory": "subjective_memory"}
 
 
 def evidence(tool, identifier, text, *, title="Source", reference=None, scope=None, rank=1, structured=None):
@@ -93,6 +93,8 @@ class CompanionRetrieval:
                          structured={key: row.get(key, []) for key in ("emotions", "beliefs", "impacts")}) for row in rows]
 
     async def atlas(self, query):
+        if not self.scope.get("ontology_id"):
+            return []
         from app.integrations.retrieval.neo4j_retriever import HybridNeo4jGraphRetriever
         from app.jobs.elder.v2_schemas import RetrievalPlan, RetrievalStep
         from app.services.elder_retrieval_service import retrieve_plan

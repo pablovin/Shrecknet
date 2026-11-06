@@ -1,8 +1,10 @@
 """Typed boundaries for Character Companion HTTP, evidence and streaming."""
 from __future__ import annotations
-from typing import Any, Literal
+from typing import Any, Literal, Annotated
+from datetime import datetime
+import json
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, field_validator, model_validator
 
 Tool = Literal["atlas", "shreckworld", "chronicle", "web", "character_memory"]
 DIMENSIONS = {"connection": 25, "coordination": 20, "trust": 20, "familiarity": 0, "openness": 10, "current_strain": 0}
@@ -79,11 +81,81 @@ class ChatUpdate(StrictModel):
     _normalize_title = field_validator("title", mode="before")(normalized_chat_title)
 
 
+FoundryUUID = Annotated[str, Field(min_length=3, max_length=512, pattern=r"^(?:[A-Za-z0-9_-]+\.)+[A-Za-z0-9_-]+$")]
+FoundryText = Annotated[str, Field(max_length=500, strict=True)]
+
+
+class FoundryTable(StrictModel):
+    foundry_world_id: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(None, max_length=4000)
+    foundry_version: str = Field(max_length=64)
+    system_id: str = Field(max_length=128)
+    system_title: str = Field(max_length=255)
+    system_version: str = Field(max_length=64)
+    shrecknet_world_id: str | None = Field(None, min_length=1, max_length=64)
+    shrecknet_world_name: str | None = Field(None, max_length=255)
+
+
+class FoundryLink(StrictModel):
+    uuid: FoundryUUID
+    label: str = Field(min_length=1, max_length=255)
+
+
+class FoundryField(StrictModel):
+    label: str = Field(min_length=1, max_length=80)
+    value: FoundryText | Annotated[float, Field(strict=True, allow_inf_nan=False)] | Annotated[bool, Field(strict=True)] | None
+
+
+class FoundryDocument(StrictModel):
+    foundry_world_id: str | None = Field(None, min_length=1, max_length=128)
+    uuid: FoundryUUID
+    kind: Literal["Actor", "Item", "JournalEntryPage"]
+    name: str = Field(min_length=1, max_length=255)
+    captured_at: AwareDatetime
+    source_revision: str | None = Field(None, max_length=128)
+    parent_uuid: FoundryUUID | None = None
+    coverage: Literal["complete", "partial", "unknown"] = "partial"
+    text: str = Field("", max_length=8000)
+    fields: list[FoundryField] = Field(default_factory=list, max_length=100)
+    links: list[FoundryLink] = Field(default_factory=list, max_length=20)
+
+
+FOUNDRY_CONTEXT_LIMITS = {"versions": [1], "documents": 6, "bytes": 65536,
+                         "document_characters": 8000, "description_characters": 4000,
+                         "fields": 100, "links": 20}
+
+
+class FoundryContext(StrictModel):
+    version: Literal[1]
+    table: FoundryTable | None = None
+    documents: list[FoundryDocument] = Field(default_factory=list, max_length=6)
+    captured_at: AwareDatetime
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def integer_version(cls, value):
+        if type(value) is not int:
+            raise ValueError("Foundry context version must be integer 1")
+        return value
+
+    @model_validator(mode="after")
+    def validate_snapshot(self):
+        if self.table and any(doc.foundry_world_id and doc.foundry_world_id != self.table.foundry_world_id for doc in self.documents):
+            raise ValueError("Foundry document belongs to another table")
+        if len({doc.uuid for doc in self.documents}) != len(self.documents):
+            raise ValueError("Duplicate Foundry documents")
+        if len(json.dumps(self.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")).encode()) > FOUNDRY_CONTEXT_LIMITS["bytes"]:
+            raise ValueError("Foundry context exceeds 64 KiB")
+        return self
+
+
 class TurnCreate(StrictModel):
     text: str = Field("", max_length=8000)
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=4)
     selection_version: int = Field(ge=0)
     context: PageContext | None = None
+    foundry_context: FoundryContext | None = None
     tools: Tools = Field(default_factory=Tools)
     retry_of_turn_id: UUID | None = None
 
@@ -101,7 +173,7 @@ class TurnCreate(StrictModel):
 class Evidence(StrictModel):
     evidence_id: str
     source_id: str
-    source_type: Literal["atlas", "shreckworld", "chronicle", "web", "character_memory", "user_attachment"]
+    source_type: Literal["atlas", "shreckworld", "chronicle", "web", "character_memory", "user_attachment", "foundry"]
     title: str
     excerpt: str
     structured_evidence: dict[str, Any] | None = None
@@ -116,7 +188,6 @@ class Evidence(StrictModel):
 
 # Response models are additive; keep transport contracts visible in OpenAPI.
 from typing import Generic, TypeVar
-from datetime import datetime
 T = TypeVar('T')
 
 

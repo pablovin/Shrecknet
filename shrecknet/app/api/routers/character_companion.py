@@ -16,7 +16,7 @@ from app.core.config_store import get_settings, COMPANION_MODEL_FIELDS
 from app.core.security import decode_access_token
 from app.models.character_companion import CompanionChat, CompanionTurn, CompanionMessage, CompanionRapport, CompanionRapportAudit, CompanionEvent
 from app.repositories.character_companion_repository import fail, record, cursor, decode_cursor, utc_iso
-from app.schemas.character_companion import Page, CandidateRead, SelectionRead, RapportRead, ChatRead, MessageRead, TurnQueued, TurnRead, AttachmentRead, RapportAuditRead
+from app.schemas.character_companion import FOUNDRY_CONTEXT_LIMITS, Page, CandidateRead, SelectionRead, RapportRead, ChatRead, MessageRead, TurnQueued, TurnRead, AttachmentRead, RapportAuditRead
 from app.schemas.character_companion import SelectionWrite, VersionWrite, ChatCreate, ChatUpdate, ChatPage, TurnCreate, TERMINAL
 from app.services.character_companion_service import CharacterCompanionService, MAX_COMPANION_CHATS
 from app.services.companion_attachment_service import CompanionAttachmentService, private_root
@@ -50,7 +50,7 @@ async def idempotency_key(value: UUID = Header(alias="Idempotency-Key")):
 @router.get("/capabilities")
 async def capabilities(actor=Depends(get_current_user)):
     s = get_settings()
-    return {"contract_version": 1, "enabled": s.companion_enabled and s.enable_ai_agents,
+    return {"contract_version": 1, "foundry_context": FOUNDRY_CONTEXT_LIMITS, "enabled": s.companion_enabled and s.enable_ai_agents,
             "streaming": bool(s.model_companion_synthesis.name), "images": f"{s.model_companion_synthesis.provider}/{s.model_companion_synthesis.name}" in s.companion_image_models,
             "chat_sessions": {"max_chats": MAX_COMPANION_CHATS, "limit_scope": "user"},
             "event_versions": [1], "tools": {key: {"available": value, "reason": None if value else "not_configured"} for key, value in

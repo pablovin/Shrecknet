@@ -15,8 +15,8 @@ repository without imports from the Shrecknet backend repository.
 The service URL defaults use the Shrecknet API host at `/shreckworld-api` and
 `/api/shreckrpg`; a GM can change them later.
 
-After changing service URLs, close and reopen the Shrecknet workspace so its
-client uses the updated world settings.
+After changing service URLs, open the Shrecknet workspace again so its client uses
+the updated world settings.
 
 Use **Update World connection** in GM settings to re-enter the setup key and
 apply a changed admin binding; existing settings remain until its replacement is
@@ -95,7 +95,7 @@ detail view provides direct Previous scene and Next scene links.
   hero card and saved chat tabs. Choose a character, create or switch chats,
   rename them, delete with confirmation, and load earlier messages. Running
   replies can be stopped or recovered by reopening the chat. The server enforces
-  the account-wide ten-chat limit. This view supports text conversations; see the
+  the account-wide ten-chat limit. This view supports contextual text conversations; see the
   [canonical Foundry guide](https://github.com/pablovin/Shrecknet/blob/main/Documentation/Deployment/FOUNDRY_MODULE.md#character-companion)
   for selection, polling, authorization, CORS, and compatibility details.
   Narrative Scenes remain accessible through Atlas home. **Change companion** and
@@ -143,6 +143,28 @@ base defaults to `/shreckworld-api`; the ShreckRPG base defaults to
   using the URL returned by the upload route. Chronicle updates send
   `expected_revision` and, when permitted, `share_user_ids`.
 
+## Contextual Companion
+
+The **Ask Companion** scene-control launcher opens compact chat. The workspace's
+**Compact chat**/**Expand** controls switch the same conversation between layouts.
+Actor, Item and current Journal page header actions attach the document without
+sending. Drag/drop, UUID links and an explicit assigned-character action use the
+same permission-filtered extractor. Table title/description, system metadata and
+the connected Shrecknet World appear as removable context. Quick questions fill
+the composer; Send remains explicit.
+
+Expand **Review attached context** to preview content and choose World lore and a
+linked rules library. Attachments refresh on each new Send and remain per chat in
+memory. Ambiguous retries reuse the original snapshot. Partial generic extraction
+uses visible text/readonly labeled fields; closed or unsupported sheets provide
+metadata only. Raw system JSON, hidden content and unrevealed secrets are excluded.
+Foundry source controls reopen permitted documents in their original table.
+
+Deploy the updated backend and Companion workers before the module; old servers
+retain text chat with a notice. No new database columns are needed. See the
+[canonical contextual chat contract](https://github.com/pablovin/Shrecknet/blob/main/Documentation/Deployment/FOUNDRY_MODULE.md#contextual-chat-and-compact-sidecar)
+for limits, trust boundaries, recovery, and remaining live Foundry checks.
+
 ## Current limits
 
 The module does not create Foundry Actors, Items, Journals, or Canvas Scenes and
@@ -155,4 +177,4 @@ Scene" always means a Shrecknet narrative resource, not a Foundry Canvas Scene.
 
 From this directory, run `node --test tests/*.test.mjs` to exercise the
 service URL, authorization, Character Companion admission/recovery and chat management, Elder pagination, ShreckWorld query, and Chronicle
-revision/asset request contracts, plus manifest download and packaged-file checks.
+revision/asset request contracts, Foundry snapshot isolation/retry/navigation, plus manifest download and packaged-file checks.

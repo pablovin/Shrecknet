@@ -30,6 +30,12 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     position: { width: 1080, height: 760 },
     actions: {
       ...companionActions,
+      toggleCompanionLayout: function() {
+        this.compact = !this.compact;
+        this.element?.classList?.toggle("is-companion-sidecar", this.compact);
+        this.setPosition(this.compact ? { width: 440, height: 700 } : { width: 1080, height: 760 });
+        return this.render();
+      },
       signIn: ShrecknetShell._signIn,
       signOut: ShrecknetShell._signOut,
       openHome: ShrecknetShell._openHome,
@@ -67,6 +73,34 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   };
 
   static PARTS = { main: { template: "modules/shrecknet-foundry/templates/shell.hbs" } };
+
+  static async openWorkspace({ companion = false, document = null, sourceApp = null } = {}) {
+    const connection = getConnectionState();
+    let app = ShrecknetShell.instance;
+    const identity = [connection.serverUrl, connection.worldId, connection.shreckWorldUrl, connection.shreckRpgUrl, game.world.id, game.user.id].join("|");
+    if (app && app.tableIdentity !== identity) {
+      await app.close();
+      app.companion.reset();
+      app = null;
+    }
+    if (!app) app = ShrecknetShell.instance = new ShrecknetShell();
+    app.tableIdentity = identity;
+    app.compact = companion;
+    app.element?.classList?.toggle("is-companion-sidecar", companion);
+    if (companion) app.resource = { kind: "companion", title: "Companion" };
+    if (companion && app.session?.user) {
+      await app.companion.act(async () => {
+        await app.companion.refresh();
+        await app.companion.prepareFoundry();
+        if (document) await app.companion.attach(document.uuid, sourceApp);
+      });
+    } else if (document) await app.companion.attach(document.uuid, sourceApp);
+    app.companion.focusDraft = companion;
+    await app.render({ force: true });
+    app.setPosition(companion ? { width: 440, height: 700 } : { width: 1080, height: 760 });
+    app.bringToFront();
+    return app;
+  }
 
   constructor(options = {}) {
     super(options);
@@ -109,6 +143,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       }
     }
     return {
+      compact: Boolean(this.compact),
       companion: this.resource.kind === "companion" ? this.companion.context() : null,
       isCompanionWorkspace: this.resource.kind === "companion",
       readerFocus: this.readerFocus,
@@ -156,10 +191,16 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     };
   }
 
+  async _preRender(context, options) {
+    this.companion.captureView();
+    await super._preRender(context, options);
+  }
+
   _onRender(context, options) {
     super._onRender(context, options);
     const root = this.element instanceof HTMLElement ? this.element : this.element?.[0];
     const explorer = root?.querySelector(".shrecknet-atlas-explorer");
+    root?.classList?.toggle("is-companion-sidecar", Boolean(this.compact));
     root?.querySelectorAll("details[data-explorer-panel]").forEach((panel) => {
       const key = panel.dataset.explorerPanel;
       panel.open = this.explorerPanelState.get(key) ?? (explorer.clientWidth >= 1100);
@@ -468,7 +509,9 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   async close(options = {}) {
-    this.companion.reset();
+    clearTimeout(this.companion.timer);
+    this.companion.generation += 1;
+    this.companion.locked = false;
     this.elderRequestToken = null;
     this._releaseObjectUrls();
     return super.close(options);
@@ -566,7 +609,10 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     try {
       app.session = { user: await app._withLoading(() => app.client.login(data.get("identifier"), data.get("password"))) };
       app.notice = null;
-      await app._withLoading(() => app._loadHome({ push: false }));
+      if (app.resource.kind === "companion") {
+        await app.companion.refresh();
+        await app.companion.prepareFoundry();
+      } else await app._withLoading(() => app._loadHome({ push: false }));
       await app.render();
     } catch (error) { await app._handleError(error); }
   }

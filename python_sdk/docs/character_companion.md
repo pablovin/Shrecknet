@@ -85,3 +85,18 @@ unchanged; this does not introduce retroactive redaction of historical text.
 Deploy the backend before the updated frontend. No database migration is required.
 Rolling the frontend back retains chats and backend quota enforcement; removing
 quota enforcement requires a backend rollback. Never delete excess legacy chats.
+
+## Foundry snapshots
+
+`send(..., foundry_context=snapshot)` forwards an optional version-1 dictionary
+without changing its Foundry/Shrecknet identifiers. Check
+`(await api.capabilities()).get("foundry_context", {}).get("versions", [])` for
+version 1 before submitting. Snapshot text is client-provided context, not verified
+Foundry state. The optional argument is omitted for existing callers.
+
+The same snapshot and idempotency key must be retained on ambiguous transport
+failure; do not regenerate timestamps while retrying. A deliberately new question
+gets a fresh snapshot and key. Table/World scope is separate from the speaking
+CharacterAgent. See the [complete typed contract](../../Documentation/Agents/Companion/Frontend%20API.md#foundry-context-snapshots)
+for limits, errors and source manifests, and the
+[runnable table-context example](../examples/12_character_companion/foundry_context.py).

@@ -51,3 +51,22 @@ async def test_private_attachment_bytes_use_auth_and_preserve_http_errors():
         with pytest.raises(NotFoundError):await api.attachment_content('missing')
         assert all(call.headers['Authorization']=='Bearer private-token' for call in calls)
     finally:await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_foundry_snapshot_forwarded_without_changing_table_identifiers():
+    calls = []
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(202, json={"turn_id": "turn", "chat_id": "chat", "status": "queued"})
+    client = AsyncShrecknetClient('http://test', token='private-token')
+    await client._client.aclose()
+    client._client = httpx.AsyncClient(base_url='http://test', transport=httpx.MockTransport(handler))
+    value = {"version": 1, "captured_at": "2026-11-06T12:00:00Z", "table": None, "documents": []}
+    try:
+        await CharacterCompanionAPI(client).send('chat', 'Hello', 1, idempotency_key='same', foundry_context=value)
+        assert calls[-1]['foundry_context'] == value
+        await CharacterCompanionAPI(client).send('chat', 'Hello', 1, idempotency_key='other')
+        assert 'foundry_context' not in calls[-1]
+    finally:
+        await client.aclose()

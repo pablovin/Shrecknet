@@ -188,3 +188,36 @@ unchanged; this does not introduce retroactive redaction of historical text.
 Deploy the backend before the updated frontend. No database migration is required.
 Rolling the frontend back retains chats and backend quota enforcement; removing
 quota enforcement requires a backend rollback. Never delete excess legacy chats.
+
+## Foundry contextual conversations
+
+Foundry uses this same Character Companion pipeline with optional typed
+`foundry_context` snapshots. `companion_foundry_context.py` owns Shrecknet
+World/ontology scope validation and conversion to user-provided evidence;
+`CharacterCompanionService` admits an immutable snapshot and saves its manifest.
+Before Stage 1, the worker constructs bounded snapshot evidence without another
+model call. The router receives table/system titles and attached document names
+as context, and retrieval queries include bounded document/system names. No
+backend-to-Foundry live lookup occurs. Stage 2 receives those sources alongside
+ordinary retrieval evidence. Foundry facts remain client-supplied observations,
+not verified rules or authority to change the speaking identity. Existing citation
+validation applies, and partial snapshot coverage keeps the answer partial.
+Stage 3 continues to evaluate only delivered conversation quotations; it does not
+use the snapshot manifest as relational evidence or modify canonical identity.
+
+A selected table World never silently falls back to the character's unrelated
+ontology. Atlas scope is the explicit member ontology, or the sole member; an
+ambiguous collection disables Atlas routing. Character memory retains its original
+character scope. Chronicle routing requires an explicit Chronicle ID. Existing
+ShreckWorld grants still require explicit rules-library scope and authorization.
+Snapshot turns bypass same-chat retrieval reuse so old game data cannot select a
+cached source bundle. Document extraction/permissions occur in the player's
+Foundry browser; the backend cannot attest their truth. Image plus snapshot data
+is checked against the configured evidence budget before synthesis.
+
+The additive field uses existing JSON storage and owner-only history/purge paths.
+Deploy backend and worker support before the updated module. Older servers retain
+text chat with contextual controls unavailable. Keep additive evidence decoding
+when rolling a module back. See the [Foundry guide](../../Deployment/FOUNDRY_MODULE.md#contextual-chat-and-compact-sidecar)
+and [snapshot API](Frontend%20API.md#foundry-context-snapshots) for the current
+contract, bounds, trust limits and remaining live Foundry acceptance checks.

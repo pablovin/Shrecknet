@@ -1,7 +1,20 @@
 # Foundry contextual Companion chat plan
 
-Status: proposed; no runtime implementation. Reviewed on 2026-11-06 against the
-current working tree, including pending Foundry workspace changes.
+Status: implementation/design record, updated 2026-11-06. The compact shared chat,
+table metadata, document snapshots, API/SDK support and explicit single-ontology /
+linked rules-library selection are implemented. Live Foundry v14 acceptance and
+provider quality evaluation remain pending. The original design baseline below
+records intent, including deferred capabilities; the [canonical Foundry guide](FOUNDRY_MODULE.md#contextual-chat-and-compact-sidecar)
+and [API contract](../Agents/Companion/Frontend%20API.md#foundry-context-snapshots)
+describe current behavior.
+
+Implementation choices: one `ShrecknetShell` instance switches compact/full layouts
+instead of creating a second window/controller. Generic extraction excludes
+editable input values; selected-text attachment, suggested new-window attachments,
+multi-ontology fan-out and live scene/combat context remain deferred. References,
+drafts and context controls are chat-local in memory, not persisted browser snapshots.
+World scope selects one explicit ontology, automatically using a sole collection.
+Rules-library selection is explicit. No SQL migration was needed.
 
 ## Goal and feasibility
 

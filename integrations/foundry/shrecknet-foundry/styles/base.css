@@ -449,3 +449,38 @@
   .shrecknet-setup-heading, .shrecknet-setup-body, .shrecknet-setup-footer { padding-inline: .75rem; }
   .shrecknet .shrecknet-setup-footer > button { flex-basis: 8rem; }
 }
+
+/* The compact Companion uses the same template/controller and private session. */
+.shrecknet.is-companion-sidecar .shrecknet-sidebar,
+.shrecknet.is-companion-sidecar .shrecknet-toolbar { display: none; }
+.shrecknet.is-companion-sidecar .shrecknet-workspace { grid-template-columns: minmax(0, 1fr); }
+.shrecknet.is-companion-sidecar .shrecknet-companion-layout { display: flex; flex-direction: column; gap: 0.6rem; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-hero { display: block; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-portrait,
+.shrecknet.is-companion-sidecar .shrecknet-companion-profile > p { display: none; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-profile { padding: 0.4rem; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-heading { flex-wrap: wrap; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-heading h2 { font-size: 1.1rem; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-heading .shrecknet-kicker { display: none; }
+.shrecknet.is-companion-sidecar .shrecknet-header { padding: 0.5rem; flex-wrap: wrap; }
+.shrecknet.is-companion-sidecar .shrecknet-companion { padding: 0.6rem; }
+.shrecknet .shrecknet-companion-context { padding: 0.6rem; border-bottom: 1px solid var(--shrecknet-border, #555); font-size: 0.85rem; }
+.shrecknet .shrecknet-context-chips, .shrecknet .shrecknet-companion-questions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.shrecknet .shrecknet-context-chip { display: inline-flex; align-items: center; gap: 0.3rem; border: 1px solid var(--shrecknet-border, #555); border-radius: 0.4rem; padding-left: 0.4rem; }
+.shrecknet .shrecknet-context-chip button { width: auto; }
+.shrecknet .shrecknet-context-preview { white-space: pre-wrap; max-height: 10rem; overflow: auto; }
+.shrecknet .shrecknet-context-scope { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 0.5rem; }
+.shrecknet .shrecknet-context-scope label { display: flex; flex-direction: column; }
+.shrecknet .shrecknet-companion-context details { margin: 0.5rem 0; }
+.shrecknet .shrecknet-companion-context details > form { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.shrecknet .shrecknet-context-help { opacity: 0.8; }
+
+.shrecknet .shrecknet-companion-context { flex: 0 1 auto; max-height: 42%; overflow: auto; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-layout { overflow: hidden; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-chat { flex: 1; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-hero { flex: 0 0 auto; max-height: 8rem; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-profile { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-profile h3 { flex: 1; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-profile .shrecknet-companion-chooser[open] { flex-basis: 100%; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-profile form { margin-top: 0.4rem; }
+.shrecknet.is-companion-sidecar .shrecknet-companion-heading { gap: 0.4rem; }

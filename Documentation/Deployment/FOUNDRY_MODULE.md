@@ -72,8 +72,8 @@ Back, cancel, or close. Closing the window ignores pending setup responses.
 HTTP. The content workspace does not own GM setup actions. No API, SDK, or
 persistence contract change is introduced by this wizard update.
 
-Close and reopen the Shrecknet workspace after changing service URLs so its
-client reads the updated world settings.
+Open the workspace again after changing service URLs. The module replaces its cached
+workspace when the server, World, service URLs, or Foundry user changes.
 
 Chronicle access and sharing follow ShreckRPG authorization and capability
 responses. Saves include the expected revision; on a conflict, reload before
@@ -318,22 +318,103 @@ ambiguous retries. Configure the Shrecknet browser CORS policy to permit
 See the [canonical HTTP contract](../Agents/Companion/Frontend%20API.md).
 
 Replies use durable admission and two-second snapshot polling while the workspace
-is visible. Only saved messages are displayed as replies; provisional drafts are
-not presented as final output. Reopening or refreshing a running chat resumes its
+is visible. Provisional snapshot drafts are labeled **Reply in progress** and are never
+presented as final output. Reopening or refreshing a running chat resumes its
 `active_turn_id` without resending a question. **Stop reply** cancels the saved
 turn. Turn failures are reported and leave history available. A transport failure
 pauses polling; **Refresh** checks saved state before further sending. Changing
 chat, character, or chat metadata is disabled during a running reply. Navigation
-away pauses polling; returning resumes it. Closing or signing out clears local
-Companion state and fences late responses without cancelling server work.
+away pauses polling; returning resumes it. Closing pauses polling and fences late responses while retaining in-memory drafts
+and context references for reopening. Signing out clears all local Companion state.
+Neither action cancels server work.
 
 `character-companion.js` owns this workspace's state and actions; the shared API
-client owns HTTP and authentication. This Foundry view currently supports text
-messages; image uploads, private attachment previews, rapport controls, and live
+client owns HTTP and authentication. This Foundry view supports text
+messages and the contextual snapshots below; image uploads, private attachment previews, rapport controls, and live
 SSE deltas remain available through other Companion clients. Backend Companion
 feature/model configuration must already be enabled. Companion uses existing
 endpoints and requires no Companion schema migration. The setup default adds
 its own nullable integration column. Rollback preserves backend chats.
+
+### Contextual chat and compact sidecar
+
+**Ask Companion** in the Shrecknet scene controls opens one compact resizable
+window. **Compact chat** and **Expand** switch that same workspace between layouts;
+there is one conversation controller and polling loop. The main Shrecknet launcher
+restores the full layout. No separate agent, server connection or shared GM token
+is created.
+
+The default **Table** chip includes the Foundry table title and available
+sanitized description, installed system ID/title/version, Foundry version, and
+configured Shrecknet World ID/name. **Review attached context** displays the
+background and attached document previews. Toggle the table chip off to exclude
+that background and its lore/rules selection from the next question. The speaking
+CharacterAgent remains independent of any attached Foundry Actor.
+
+Standard v14 Actor, Item, and currently viewed Journal page headers gain **Ask
+Companion** in their header controls. Actor/Item/Journal page context menus also
+provide the action. It opens/focuses chat and attaches the document without sending.
+Drag documents or a UUID link into chat, use **Attach a document link**, or explicitly
+attach the player's assigned Actor. A Journal link resolves its current page, or
+its sole readable page; otherwise open the desired page first. Quick questions
+populate the composer and require Send.
+
+Chips can be removed independently. References remain attached to that chat in
+memory until removed, sign-out, connection change, or browser reload. New chats
+start with table context and no prior document attachments. Saved user messages
+retain their submitted snapshot manifests; removing a chip affects future turns,
+not the existing transcript. Send rechecks permissions and extracts a fresh
+snapshot. Ambiguous retries preserve the original body, timestamp and key; they
+never silently refresh the pending message. A definite validation rejection lets
+the user edit again. Refresh can recover an already admitted turn.
+
+The extractor is system independent. It reads safe core metadata and visible sheet
+text, definition-list values and labeled readonly/disabled inputs. It excludes
+unrevealed secret blocks, hidden DOM, password/hidden inputs, editable controls and
+unrendered tabs, and never serializes `system` or `flags`. Journal text uses the
+current page's sanitized document content. Actor/Item sheets that are closed or
+unsupported fall back to metadata only; open the sheet to include readable text.
+Every document snapshot has partial coverage. This does not promise complete
+mechanics or combat awareness. Six documents, 8,000 text characters each, 4,000
+characters of table description and 64 KiB per envelope are maximums; excessive
+text is rejected rather than silently truncated. Structured fields and links have
+additional API limits. The configured backend evidence-token budget can reject a
+smaller snapshot with `413 foundry_context_budget_exceeded`.
+
+Under **Review attached context**, **World lore** selects an ontology belonging to
+the connected World. A sole ontology is used automatically; multiple ontologies
+require an explicit selection and are never searched as an unbounded fan-out.
+**Rules library** lists ShreckWorld libraries linked to that World and defaults to
+none. Library discovery failure leaves chat available with a notice. A table name
+or system name does not establish a rules edition. Character memory stays tied
+to the speaking CharacterAgent. There is no implicit Chronicle game/table mapping
+or campaign-note search in Foundry turns; the backend requires an explicit Chronicle
+reference before routing that tool.
+
+Source panels label Foundry material as client-provided snapshots. **Open document**
+and attached link controls resolve only submitted references, checking the current
+table and current permission before opening a sheet. Model text remains escaped.
+The backend verifies Shrecknet World/ontology associations and chat ownership, but
+cannot attest browser-side Foundry permissions, claimed timestamps or field values.
+Snapshots and document instructions never grant tools or override agent policy.
+
+The module reads `GET /users/me/character-companion/capabilities` and sends optional
+`foundry_context` on the existing turns endpoint. Older servers retain text chat
+with a notice and disable contextual transmission. Deploy the updated backend and
+Companion worker before the module. Snapshot JSON and manifests use existing SQL
+columns; no database migration or actor synchronization is required. Normal chat
+purge removes snapshots. Module rollback retains saved chats; retain additive
+backend decoding while Foundry sources remain in history.
+
+Browser fixtures validate generic DOM filtering and layouts, but a real v14 table
+must still validate system/custom sheet controls and permission behavior before a
+release. From the module directory, serve it with `python -m http.server 8831` and
+open `http://localhost:8831/tests/foundry-context.browser.html` for repeatable native
+DOM checks. Scene images, tokens/combat/roll extraction, automatic live lookups,
+selected-text attachments and game-state changes are not implemented.
+
+See the [implementation/design record](FOUNDRY_CONTEXTUAL_COMPANION_PLAN.md) and
+[typed HTTP contract](../Agents/Companion/Frontend%20API.md#foundry-context-snapshots).
 
 ## Shreckworlds bookshelf
 

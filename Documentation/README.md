@@ -36,7 +36,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## Character Companion
 
-- [Foundry contextual Companion chat plan](./Deployment/FOUNDRY_CONTEXTUAL_COMPANION_PLAN.md) — proposed system-independent sidecar, table/World grounding, document attachments, API extensions and acceptance gates
+- [Foundry contextual Companion chat plan](./Deployment/FOUNDRY_CONTEXTUAL_COMPANION_PLAN.md) — implementation/design record for system-independent chat, table/World grounding, document attachments and remaining acceptance gates
 
 - [Character Companion](./Agents/Companion/Companion.md) — implemented behavior, ownership, deployment, privacy, recovery and remaining acceptance gates
 

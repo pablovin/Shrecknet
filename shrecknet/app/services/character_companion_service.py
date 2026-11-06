@@ -146,6 +146,10 @@ class CharacterCompanionService:
     async def admit(self, actor, chat_id, payload, key, principal):
         settings = get_settings()
         body = payload.model_dump(mode="json")
+        # Preserve hashes for ordinary turns admitted before this additive field
+        # existed; a rolling upgrade must still replay those exact actions.
+        if body.get("foundry_context") is None:
+            body.pop("foundry_context", None)
         previous, digest = await self.repo.replay(actor.id, f"turn:{chat_id}", key, body)
         if previous:
             return previous
@@ -171,8 +175,13 @@ class CharacterCompanionService:
             ontology = await self.session.get(Ontology, explicit_ontology)
             if not ontology or (context.get("world_id") and ontology.world_id != context["world_id"]):
                 fail(422, "context_scope_mismatch")
-        context = {**context, "ontology_id": explicit_ontology or agent.ontology_id,
+        context = {**context, "ontology_id": explicit_ontology if body.get("foundry_context") is not None else (explicit_ontology or agent.ontology_id),
                    "chronicle_ontology_id": explicit_ontology, "character_ontology_id": agent.ontology_id}
+        foundry_sources = []
+        if body.get("foundry_context") is not None:
+            from app.services.companion_foundry_context import resolve_foundry_scope, validate_foundry_budget
+            context = await resolve_foundry_scope(self.session, body["foundry_context"], context)
+            foundry_sources = validate_foundry_budget(body["foundry_context"], settings)
         body["context"] = context
         if payload.tools.web == "require" and not web_available(settings):
             fail(503, "required_tool_unavailable")
@@ -201,7 +210,7 @@ class CharacterCompanionService:
         if total_size > 20 * 1024 * 1024:
             fail(413, "turn_attachment_budget_exceeded")
         await self.repo.reserve(chat, turn)
-        user_message = CompanionMessage(turn_id=turn.id, chat_id=chat.id, role="user", content=payload.text, committed=False, manifest=image_sources)
+        user_message = CompanionMessage(turn_id=turn.id, chat_id=chat.id, role="user", content=payload.text, committed=False, manifest=image_sources + foundry_sources)
         self.session.add(user_message)
         await self.session.flush()
         result = {"turn_id": turn.id, "chat_id": chat.id, "status": "queued", "user_message_id": user_message.id,

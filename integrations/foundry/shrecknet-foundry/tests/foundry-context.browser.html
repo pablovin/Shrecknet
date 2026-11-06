@@ -1,0 +1,89 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Foundry context browser checks</title>
+<h1>Foundry context browser checks</h1>
+<p>Serve the module directory over HTTP and open this page. These checks use native
+DOM APIs with stub Foundry documents; they do not certify Foundry runtime behavior.</p>
+<pre id="results">Running…</pre>
+<script type="module">
+import { CompanionWorkspace } from "../scripts/apps/character-companion.js";
+import { cleanContent, documentSnapshot, tableSnapshot, buildSnapshot } from "../scripts/apps/foundry-context.js";
+const results = [];
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+const docs = new Map();
+globalThis.game = { user: { id: "player" }, world: { id: "table", title: "Our table", description: "<h2>City game</h2><p>House rules apply.</p><section class='secret'>GM private</section>" }, version: "14", system: { id: "custom", title: "Custom RPG", version: "1" } };
+globalThis.foundry = { utils: { fromUuid: async (uuid) => docs.get(uuid) }, applications: { ux: { TextEditor: { implementation: { enrichHTML: async (html, options) => {
+  assert(options.secrets === false && options.embeds === false && options.rolls === false, "Unsafe enrichment options");
+  return html;
+} } } } } };
+async function test(name, run) {
+  try { await run(); results.push({ name, passed: true }); }
+  catch (error) { results.push({ name, passed: false, error: error.message }); }
+}
+await test("Generic sheets exclude secret, hidden and editable fields across arbitrary systems", () => {
+  const root = document.createElement("section");
+  root.innerHTML = `<style>.system-secret { display:none }</style><h2>Master Bao</h2>
+    <dl><dt>Parry</dt><dd>7</dd></dl><label>Resource<input type="number" readonly value="8"></label>
+    <section class="secret">GM-only stat block</section><section hidden>Hidden ability</section>
+    <details><summary>Closed section</summary><p>Closed detail text</p></details><div style="display:none">Inline-hidden text</div><div class="system-secret">CSS-hidden secret</div><div aria-hidden="true">Aria secret</div>
+    <input type="hidden" value="secret flag"><textarea>Unsaved description</textarea>
+    <div contenteditable="true">Unsaved editor</div><label>Password<input type="password" readonly value="private"></label>`;
+  document.body.append(root);
+  const value = cleanContent(root, { live: true });
+  assert(value.text.includes("Master Bao") && value.text.includes("Parry"), "Readable text missing");
+  for (const secret of ["GM-only stat block", "Hidden ability", "CSS-hidden secret", "Aria secret", "secret flag", "Unsaved description", "Unsaved editor", "private", "Closed detail text", "Inline-hidden text"]) assert(!JSON.stringify(value).includes(secret), `Leaked ${secret}`);
+  assert(value.fields.some((field) => field.label === "Parry" && field.value === "7"), "Definition pair missing");
+  assert(value.fields.some((field) => field.label === "Resource" && field.value === "8"), "Readonly labeled field missing");
+  root.remove();
+});
+await test("Table title and description are separate from the selected Shrecknet World", async () => {
+  const value = await tableSnapshot({ worldId: "atlas-city", worldName: "City Atlas" });
+  assert(value.foundry_world_id === "table" && value.shrecknet_world_id === "atlas-city", "Table and Atlas IDs were conflated");
+  assert(value.description.includes("House rules") && !value.description.includes("GM private"), "Unsafe description");
+  assert(value.system_id === "custom", "System metadata missing");
+});
+await test("Journal snapshots stay inert, strip secrets and recheck permissions after link resolution", async () => {
+  const page = { uuid: "JournalEntry.j.JournalEntryPage.p", documentName: "JournalEntryPage", name: "Notes", type: "text", text: { content: "<h2>Public heading</h2><p>Visible text.</p><section class='secret'>Hidden revelation</section>" }, testUserPermission: () => true };
+  docs.set(page.uuid, page);
+  const value = await documentSnapshot({ uuid: page.uuid });
+  assert(value.text.includes("Public heading") && !value.text.includes("Hidden revelation"), "Secret text leaked");
+  page.text.content += '<a data-uuid="Actor.link">Linked character</a><img src="invalid" onerror="globalThis.contextEventExecuted = true">';
+  foundry.utils.fromUuid = async (uuid) => {
+    if (uuid === "Actor.link") { page.testUserPermission = () => false; return { documentName: "Actor", testUserPermission: () => true }; }
+    return docs.get(uuid);
+  };
+  let rejected = false;
+  try { await documentSnapshot({ uuid: page.uuid }); } catch { rejected = true; }
+  assert(rejected, "Revoked Journal was transmitted");
+  assert(!globalThis.contextEventExecuted, "Untrusted HTML event handler executed");
+  foundry.utils.fromUuid = async (uuid) => docs.get(uuid);
+});
+await test("Unsupported system data is never serialized and excessive attachments are rejected", async () => {
+  const actor = { uuid: "Actor.custom", name: "Custom character", documentName: "Actor", system: { nested: { gmSecret: "private" } }, testUserPermission: () => true };
+  docs.set(actor.uuid, actor);
+  const value = await documentSnapshot({ uuid: actor.uuid });
+  assert(value.coverage === "partial" && !JSON.stringify(value).includes("gmSecret"), "Raw system data leaked");
+  let rejected = false;
+  try { await buildSnapshot({}, { includeTable: false, references: Array(7).fill({ uuid: actor.uuid }) }); } catch { rejected = true; }
+  assert(rejected, "Attachment limit was bypassed");
+});
+await test("Chat rerenders preserve the draft, caret, expanded context and reading position", () => {
+  const markup = '<section class="shrecknet-companion"><details data-companion-details="context"><summary>Context</summary><p>Table</p></details><div class="shrecknet-companion-log" style="height:60px;overflow:auto"><div style="height:240px">History</div></div><textarea data-companion-draft></textarea></section>';
+  const root = document.createElement("div"); root.innerHTML = markup; document.body.append(root);
+  const app = { element: root, resource: { kind: "companion" }, session: {}, client: {} };
+  const w = new CompanionWorkspace(app); app.companion = w; w.chat = { id: "chat" };
+  w.bind(root);
+  const draft = root.querySelector("textarea"); draft.value = "A draft message"; draft.focus(); draft.setSelectionRange(2, 7); draft.dispatchEvent(new Event("input"));
+  const details = root.querySelector("details"); details.open = true; details.dispatchEvent(new Event("toggle"));
+  const log = root.querySelector(".shrecknet-companion-log"); log.scrollTop = 40; log.dispatchEvent(new Event("scroll"));
+  w.captureView();
+  root.innerHTML = markup; root.querySelector("textarea").value = w.draft; w.bind(root);
+  assert(root.querySelector("textarea").value === "A draft message", "Draft lost");
+  assert(document.activeElement === root.querySelector("textarea") && document.activeElement.selectionStart === 2 && document.activeElement.selectionEnd === 7, "Focus/caret lost");
+  assert(root.querySelector("details").open, "Context panel collapsed");
+  assert(root.querySelector(".shrecknet-companion-log").scrollTop === 40, "Reading position lost");
+  w.reset(); root.remove();
+});
+globalThis.contextTestResults = results;
+document.getElementById("results").textContent = results.map((r) => `${r.passed ? "PASS" : "FAIL"}: ${r.name}${r.error ? ": " + r.error : ""}`).join("\n");
+</script>

@@ -23,6 +23,7 @@ from app.schemas.character_companion import DIMENSIONS, TERMINAL
 from app.services.character_agent_service import CharacterAgentService
 from app.services.companion_authorization import active_principal
 from app.services.companion_attachment_service import private_root, attachment_evidence
+from app.services.companion_foundry_context import foundry_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +78,19 @@ def turn_target(target, turn):
 async def route(turn, llm, recent):
     s = get_settings()
     query = turn.request["text"].lower().strip(" !?.")
-    context = turn.request.get("context") or {}
+    context = dict(turn.request.get("context") or {})
+    snapshot = turn.request.get("foundry_context")
+    if snapshot:
+        table = snapshot.get("table") or {}
+        context["foundry"] = {"table_title": table.get("title"), "system_title": table.get("system_title"),
+                              "documents": [{"kind": doc["kind"], "name": doc["name"]} for doc in snapshot["documents"]]}
     allowed = turn.request["tools"]["allowed"]
     candidates = set(allowed if allowed is not None else ["atlas", "character_memory", "shreckworld", "chronicle", "web"])
+    if turn.request.get("foundry_context") is not None:
+        if not context.get("ontology_id"):
+            candidates.discard("atlas")
+        if not context.get("chronicle_id"):
+            candidates.discard("chronicle")
     if turn.request["tools"]["web"] == "disabled":
         candidates.discard("web")
     if not web_available(s):
@@ -136,6 +147,10 @@ async def execute_turn(turn, lease):
                 raise ValueError("attachment_deleted")
             image_sources.append(attachment_evidence(attachment, turn.chat_id))
             images.append({"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode((private_root()/attachment.storage_key).read_bytes()).decode()}})
+    snapshot_sources = foundry_evidence(turn.request.get("foundry_context"))
+    # A different Foundry snapshot cannot reuse retrieval selected for old game data.
+    if turn.request.get("foundry_context") is not None:
+        previous = None
     llm = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.companion_turn_timeout_s, max_retries=0)
     try:
         tools = await route(turn, llm, recent)
@@ -146,6 +161,14 @@ async def execute_turn(turn, lease):
                             and (permitted is None or row["source_type"] in permitted)
                             and (row["source_type"] != "web" or (turn.request["tools"]["web"] != "disabled" and web_available(settings)))})
         retrieval_query = turn.request["text"]
+        snapshot = turn.request.get("foundry_context")
+        if snapshot:
+            names = [doc["name"] for doc in snapshot["documents"]]
+            table = snapshot.get("table") or {}
+            if table.get("system_title"):
+                names.append(table["system_title"])
+            if names:
+                retrieval_query = retrieval_query[:3000] + "\nAttached context: " + "; ".join(names)[:900]
         if images and tools:
             interpreted = ""
             async for part in llm.stream_chat(model=settings.model_companion_synthesis.model_copy(update={"web_search_enabled": False}),
@@ -168,8 +191,10 @@ async def execute_turn(turn, lease):
 
         await mutate(turn.id, lease, stage="retrieving", event="routing.status", payload={"status": "done", "tools": tools, "reason": "bounded_source_routing"})
         retrieval = CompanionRetrieval(turn, actor)
-        results, evidence = [], image_sources
-        for source in image_sources:
+        results, evidence = [], image_sources + snapshot_sources
+        if sum(estimate_tokens(json.dumps(e)) for e in evidence) > settings.companion_max_evidence_tokens:
+            raise ValueError("foundry_context_budget_exceeded")
+        for source in evidence:
             await mutate(turn.id, lease, event="source.discovered", payload=source)
         async def one(tool):
             await mutate(turn.id, lease, event="retrieval.status", payload={"tool": tool, "status": "started"})

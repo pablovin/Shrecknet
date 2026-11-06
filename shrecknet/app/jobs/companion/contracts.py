@@ -41,10 +41,11 @@ class Answer(BaseModel):
                 if segment.kind == "fact" and item["source_type"] == "character_memory":
                     raise ValueError("Subjective memory cannot establish objective fact")
                 citations.append({"citation_id": f"c{len(citations)+1}", "segment_ids": [segment.id], **item})
-        partial = any(row["status"] not in {"ok", "empty"} for row in tool_results)
+        snapshot_partial = any(row["source_type"] == "foundry" and row["coverage"]["status"] != "complete" for row in evidence)
+        partial = snapshot_partial or any(row["status"] not in {"ok", "empty"} for row in tool_results)
         return {"text": "\n\n".join(row.text for row in self.segments), "segments": [row.model_dump() for row in self.segments],
                 "citations": citations, "evidence": evidence, "coverage": "partial" if partial else self.coverage,
-                "warnings": self.warnings + [f"{row['tool']}: {row['status']}" for row in tool_results if row["status"] != "ok"]}
+                "warnings": self.warnings + (["Foundry snapshot coverage is partial; missing game state remains unknown."] if snapshot_partial else []) + [f"{row['tool']}: {row['status']}" for row in tool_results if row["status"] != "ok"]}
 
 
 def provisional_text(raw):

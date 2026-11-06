@@ -64,9 +64,9 @@ No description.
 
 No description.
 
-### `send(self, chat_id, text, selection_version, *, idempotency_key, attachment_ids=None, context=None, tools=None, retry_of_turn_id=None)`
+### `send(self, chat_id, text, selection_version, *, idempotency_key, attachment_ids=None, context=None, tools=None, retry_of_turn_id=None, foundry_context=None)`
 
-Admit one turn with a stable UUID key; this returns before synthesis.
+Admit one turn with a stable UUID key; optional foundry_context is an immutable client snapshot.
 
 ### `turn(self, turn_id)`
 

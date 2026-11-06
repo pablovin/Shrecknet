@@ -1,7 +1,7 @@
 {
   "id": "shrecknet-foundry",
   "title": "Shrecknet",
-  "description": "Explore Atlas, Shreckworlds, Chronicles, and private contextual Companion chat from a Foundry workspace.",
+  "description": "Atlas, rules libraries, Chronicles, and contextual Companion chat for Foundry VTT.",
   "version": "0.4.0",
   "compatibility": {
     "minimum": "14",

@@ -2,6 +2,10 @@ name: Release Foundry module
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - "integrations/foundry/shrecknet-foundry/module.json"
     tags:
       - "foundry-v*"
 
@@ -16,7 +20,7 @@ jobs:
       MODULE_DIR: integrations/foundry/shrecknet-foundry
       MODULE_ID: shrecknet-foundry
     steps:
-      - name: Check out release tag
+      - name: Check out release commit
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -29,12 +33,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#foundry-v}"
-          test "$tag" != "$version"
-          test -n "$version"
           manifest="$MODULE_DIR/module.json"
-          test "$(node -p "require('./' + process.argv[1]).version" "$manifest")" = "$version"
+          version="$(node -p "require('./' + process.argv[1]).version" "$manifest")"
+          tag="foundry-v${version}"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            test "$GITHUB_REF_NAME" = "$tag"
+          fi
           test "$(node -p "require('./' + process.argv[1]).id" "$manifest")" = "$MODULE_ID"
           expected_download="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${MODULE_ID}-v${version}.zip"
           test "$(node -p "require('./' + process.argv[1]).download" "$manifest")" = "$expected_download"
@@ -45,6 +49,7 @@ jobs:
           node --check "$MODULE_DIR/scripts/settings/connection-monitor.js"
           node --test "$MODULE_DIR"/tests/*.test.mjs
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Build and validate release ZIP
         id: package
@@ -70,6 +75,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" "${{ steps.package.outputs.asset_path }}#${{ steps.package.outputs.asset_name }}" "$MODULE_DIR/module.json" \
+          gh release create "${{ steps.metadata.outputs.tag }}" "${{ steps.package.outputs.asset_path }}#${{ steps.package.outputs.asset_name }}" "$MODULE_DIR/module.json" \
+            --target "$GITHUB_SHA" \
             --title "Shrecknet Foundry ${{ steps.metadata.outputs.version }}" \
             --notes-file "changelogs/foundry-v${{ steps.metadata.outputs.version }}.md"

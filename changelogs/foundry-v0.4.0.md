@@ -51,6 +51,10 @@ at its root. Reload the Foundry table after updating. Existing installations can
 check for updates through their stable manifest URL. Restore the previous module
 archive to roll back; backend chat history remains available.
 
+The existing release workflow also publishes a manifest version change merged to
+`main`, creating its matching tag at the tested commit. Explicit release tags
+remain supported; existing published tags/assets are not moved or overwritten.
+
 ## Backend compatibility and verification
 
 Deploy the matching Shrecknet API and Companion workers before the module for

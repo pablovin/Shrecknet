@@ -139,8 +139,12 @@ For a release `X.Y.Z`:
 1. Update `integrations/foundry/shrecknet-foundry/module.json` so its version is
    `X.Y.Z` and its download URL is
    `https://github.com/pablovin/Shrecknet/releases/download/foundry-vX.Y.Z/shrecknet-foundry-vX.Y.Z.zip`.
-2. Commit and merge that change.
-3. Create and push the `foundry-vX.Y.Z` tag on that commit.
+2. Commit and merge that manifest change to `main`. Changes to the manifest on
+   `main` trigger the release workflow automatically. Alternatively, create and
+   push the matching `foundry-vX.Y.Z` tag on a prepared release commit.
+3. The workflow derives the release tag from the manifest and verifies an explicit
+   tag against it. For a branch-triggered release, GitHub creates the tag at the
+   exact checked-out commit, never a later moving branch head.
 4. The `Release Foundry module` workflow validates the version and manifest,
    builds a ZIP containing only module-root files, and creates the GitHub
    Release with `shrecknet-foundry-vX.Y.Z.zip` and `module.json` attached.

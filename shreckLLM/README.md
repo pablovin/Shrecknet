@@ -120,3 +120,5 @@ pytest
 ```
 
 See [incremental chat streaming](Documentation/Chat/Streaming.md) for the internal `/chat/stream` contract.
+
+Provider metadata updates persist incomplete or unreachable configurations so administrators can correct them later. Empty or unavailable model lists leave the provider inactive after validation; successful configuration storage does not imply that generation is available.

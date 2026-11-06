@@ -176,3 +176,5 @@ Primary backend implementation points:
 - `shrecknet/app/repositories/personal_companion_agent_repository.py`
 - `shrecknet/app/models/personal_companion_agent.py`
 - `shrecknet/app/schemas/personal_companion_agent.py`
+
+Orchestrator turn polling returns the completed job details as an object in `payload`, including `final` and `claims`. Details already decoded by the job service are preserved; legacy JSON strings are decoded before returning the same response contract.

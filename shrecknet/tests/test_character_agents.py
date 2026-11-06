@@ -38,7 +38,7 @@ async def test_decision_snapshot_loads_identity_and_owned_memories_only(monkeypa
     service = CharacterAgentService(None, None)
 
     async def one(query, **params):
-        assert params == {"node_id": "agent-1", "public_only": True}
+        assert params == {"node_id": "agent-1", "public_only": True, "include_memories": True}
         assert "HAS_PERSPECTIVE" in query
         assert "HAS_ASPECT" not in query
         assert "PURSUES" not in query

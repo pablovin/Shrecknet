@@ -444,7 +444,6 @@ async def test_apply_enrichment_updates_processes_all_targets_without_skip() -> 
         scene_ref_to_entities={},
         proposal_scene_refs={},
         entity_scene_refs={},
-        original_text="global context",
         author_id="system",
     )
 

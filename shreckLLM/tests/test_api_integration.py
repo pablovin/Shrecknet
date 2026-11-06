@@ -399,52 +399,35 @@ async def test_put_provider_updates_and_returns_operational_payload(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_put_provider_rejects_empty_models_before_persisting(monkeypatch) -> None:
+async def test_put_provider_saves_empty_models_as_inactive_configuration(monkeypatch) -> None:
     import app.api as api
-    from app.api import ProviderMetadataUpdateRequest, put_provider
-    from fastapi import HTTPException
-
     service = FakeService()
     updates = []
     monkeypatch.setattr(api, "update_runtime_config", lambda patch: updates.append(patch))
     monkeypatch.setattr(api, "reload_runtime_config", lambda: service._runtime)
-
-    with pytest.raises(HTTPException) as exc_info:
-        await put_provider(
-            provider_id="ollama",
-            payload=ProviderMetadataUpdateRequest(models=[]),
-            service=service,
-            _user=object(),
-        )
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail["error"] == "provider_requires_model"
-    assert updates == []
+    async def inactive(*args, **kwargs):
+        return {"providers": {"ollama": {"active": False}}, "operational_provider_ids": []}
+    monkeypatch.setattr(service, "refresh_runtime_and_validate", inactive)
+    result = await api.put_provider("ollama", api.ProviderMetadataUpdateRequest(models=[]), service, object())
+    assert updates[0]["provider_defaults"]["ollama"].models == []
+    assert result["provider"]["active"] is False
+    assert result["operational_provider_ids"] == []
 
 
 @pytest.mark.asyncio
-async def test_put_provider_rejects_unknown_model_before_persisting(monkeypatch) -> None:
+async def test_put_provider_saves_unknown_model_as_inactive_configuration(monkeypatch) -> None:
     import app.api as api
-    from app.api import ProviderMetadataUpdateRequest, put_provider
-    from fastapi import HTTPException
-
     service = FakeService()
     updates = []
     monkeypatch.setattr(api, "update_runtime_config", lambda patch: updates.append(patch))
     monkeypatch.setattr(api, "reload_runtime_config", lambda: service._runtime)
-
-    with pytest.raises(HTTPException) as exc_info:
-        await put_provider(
-            provider_id="ollama",
-            payload=ProviderMetadataUpdateRequest(models=["missing-model"]),
-            service=service,
-            _user=object(),
-        )
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail["error"] == "invalid_provider_models"
-    assert exc_info.value.detail["invalid_models"] == ["missing-model"]
-    assert updates == []
+    async def inactive(*args, **kwargs):
+        return {"providers": {"ollama": {"active": False}}, "operational_provider_ids": []}
+    monkeypatch.setattr(service, "refresh_runtime_and_validate", inactive)
+    result = await api.put_provider("ollama", api.ProviderMetadataUpdateRequest(models=["missing-model"]), service, object())
+    assert updates[0]["provider_defaults"]["ollama"].models == ["missing-model"]
+    assert result["provider"]["active"] is False
+    assert result["operational_provider_ids"] == []
 
 
 @pytest.mark.asyncio

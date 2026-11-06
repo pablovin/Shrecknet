@@ -161,20 +161,20 @@ def test_config_store_overrides_non_bootstrap_env_but_not_bootstrap_env(
     _reset_runtime_state()
 
     initial = get_settings()
-    assert initial.model_novelist == LLMModelTarget(provider="openai", name="gpt-5-nano")
+    assert initial.model_novelist_writer == LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     assert initial.database_url == env_db_url
 
     updated = update_settings(
         {
-            "model_novelist": {"provider": "openai", "name": "db-model"},
+            "model_novelist_writer": {"provider": "openai", "name": "gpt-4o-mini"},
             "database_url": f"sqlite:///{tmp_path / 'db-value.db'}",
         }
     )
-    assert updated.model_novelist == LLMModelTarget(provider="openai", name="db-model")
+    assert updated.model_novelist_writer == LLMModelTarget(provider="openai", name="gpt-4o-mini")
     assert updated.database_url == env_db_url
 
     reloaded = reload_settings()
-    assert reloaded.model_novelist == LLMModelTarget(provider="openai", name="db-model")
+    assert reloaded.model_novelist_writer == LLMModelTarget(provider="openai", name="gpt-4o-mini")
     assert reloaded.database_url == env_db_url
 
 
@@ -256,13 +256,13 @@ def test_blank_model_targets_remain_blank_after_reload(monkeypatch, tmp_path) ->
     update_settings({
         "model_character_agent_character_incorporation": {"provider": "", "name": ""},
         "model_character_agent_scene_interpretation": {"provider": "", "name": ""},
-        "model_character_agent_update": {"provider": "", "name": ""},
+        "model_character_agent_scene_interpretation": {"provider": "", "name": ""},
     })
 
     reloaded = reload_settings()
     assert reloaded.model_character_agent_character_incorporation == LLMModelTarget(provider="", name="")
     assert reloaded.model_character_agent_scene_interpretation == LLMModelTarget(provider="", name="")
-    assert reloaded.model_character_agent_update == LLMModelTarget(provider="", name="")
+    assert reloaded.model_character_agent_scene_interpretation == LLMModelTarget(provider="", name="")
 
 
 @pytest.mark.asyncio
@@ -280,17 +280,11 @@ async def test_graphrag_index_status_uses_config_store_settings(
     )
     assert (tmp_path / "shrecknet_config.db").is_file()
 
-    async def _fake_ensure_vector_index(self, index_name: str) -> bool:
-        assert index_name == "entity_text_vec_idx"
-        return True
-
-    monkeypatch.setattr(
-        embedding_service.EmbeddingService,
-        "ensure_vector_index",
-        _fake_ensure_vector_index,
-    )
-
-    response = await ensure_index(graph_session=None, current_user=None)
+    class Graph:
+        async def run(self, query):
+            assert "semantic_document_vec_idx" in query
+            assert "123" in query
+    response = await ensure_index(graph_session=Graph(), current_user=None)
 
     assert response.embedding_model == "test-model-id"
     assert response.embedding_dim == 123

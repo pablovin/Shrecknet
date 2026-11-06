@@ -134,11 +134,12 @@ async def test_poll_timeout_never_submits_duplicate_chat_job(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_chat_polling_has_no_caller_generation_deadline(monkeypatch) -> None:
+async def test_chat_polling_uses_the_configured_job_polling_deadline(monkeypatch) -> None:
     client = ShreckLLMClient(
         base_url="http://test",
         timeout=0.1,
-        poll_without_deadline=False,
+        chat_job_timeout_s=91.0,
+        poll_without_deadline=True,
     )
     observed_timeout = object()
 
@@ -168,7 +169,7 @@ async def test_chat_polling_has_no_caller_generation_deadline(monkeypatch) -> No
     )
 
     assert answer == "answer"
-    assert observed_timeout is None
+    assert observed_timeout == 91.0
     await client.aclose()
 
 

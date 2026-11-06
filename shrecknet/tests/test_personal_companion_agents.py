@@ -3,6 +3,15 @@ from __future__ import annotations
 from sqlalchemy import select
 
 import pytest
+from types import SimpleNamespace
+
+@pytest.fixture(autouse=True)
+def isolated_companion_runtime(monkeypatch, session_maker):
+    from app.api import agent_feature_gate
+    from app.utils import job_tracking
+    monkeypatch.setattr(agent_feature_gate, "get_settings", lambda: SimpleNamespace(enable_ai_agents=True))
+    monkeypatch.setattr(job_tracking, "JobsSessionMaker", session_maker)
+
 
 from app.core.security import create_access_token
 from app.models import Agent, BackgroundJob, JobStatus, Ontology
@@ -30,7 +39,9 @@ async def _create_user(session_maker, role: UserRole, suffix: str) -> tuple[User
 
 async def _seed_ontology_with_tools(session_maker, *, ontology_id: int, suffix: str) -> None:
     async with session_maker() as session:
-        ontology = Ontology(id=ontology_id, name=f"World-{suffix}", description="Test world")
+        ontology = await session.get(Ontology, ontology_id)
+        if ontology is None:
+            ontology = Ontology(id=ontology_id, name=f"World-{suffix}", description="Test world")
         elder = Agent(
             id=f"elder-{suffix}",
             name=f"elder-{suffix}",
@@ -45,7 +56,7 @@ async def _seed_ontology_with_tools(session_maker, *, ontology_id: int, suffix: 
         )
         elder.ontologies.append(ontology)
         librarian.ontologies.append(ontology)
-        session.add_all([ontology, elder, librarian])
+        session.add_all([elder, librarian])
         await session.commit()
 
 

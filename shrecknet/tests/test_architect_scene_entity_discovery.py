@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import pytest
 
 from app.tasks.architect_analysis import (
     _build_scene_proposals,
@@ -71,13 +72,11 @@ def test_flatten_scene_inputs_preserves_scene_fields() -> None:
     assert flattened[0]["scene_name"] == "Arrival"
     assert flattened[0]["scene_description"] == "The group enters the city."
     assert flattened[0]["scene_text"] == "[P1] They arrive at dawn."
-    assert flattened[0]["chunk_start_paragraph"] == 1
-    assert flattened[0]["chunk_end_paragraph"] == 15
-    assert flattened[0]["source_paragraphs_local"] == [1, 2, 3]
-    assert flattened[0]["source_paragraphs_absolute"] == [1, 2, 3]
+    assert flattened[0]["start_paragraph"] == 1
+    assert flattened[0]["end_paragraph"] == 3
 
 
-def test_flatten_scene_inputs_keeps_local_and_absolute_scene_text_variants() -> None:
+def test_flatten_scene_inputs_uses_the_single_global_scene_text() -> None:
     chunk_results = [
         {
             "status": "ok",
@@ -99,8 +98,6 @@ def test_flatten_scene_inputs_keeps_local_and_absolute_scene_text_variants() -> 
 
     flattened = _flatten_scene_inputs(chunk_results)
     assert flattened[0]["scene_text"] == "[P10] They arrive at dawn."
-    assert flattened[0]["scene_text_local"] == "[P1] They arrive at dawn."
-    assert flattened[0]["scene_text_absolute"] == "[P10] They arrive at dawn."
 
 
 def test_build_scene_proposals_keeps_additive_paragraph_metadata_and_schema_compat() -> None:
@@ -127,13 +124,8 @@ def test_build_scene_proposals_keeps_additive_paragraph_metadata_and_schema_comp
 
     proposals = _build_scene_proposals(scenes, [], author_id="agent-1")
 
-    assert proposals[0]["chunk_start_paragraph"] == 1
-    assert proposals[0]["chunk_end_paragraph"] == 15
     assert proposals[0]["start_paragraph"] == 4
     assert proposals[0]["end_paragraph"] == 6
-    assert proposals[0]["absolute_start_paragraph"] == 34
-    assert proposals[0]["absolute_end_paragraph"] == 36
-    assert proposals[0]["source_paragraphs_local"] == [4, 5, 6]
     assert proposals[0]["source_paragraphs_absolute"] == [34, 35, 36]
 
     parsed = FrontendSceneProposal.model_validate(
@@ -142,200 +134,8 @@ def test_build_scene_proposals_keeps_additive_paragraph_metadata_and_schema_comp
     assert parsed.scene_ref == "chunk_2_scene_1"
 
 
-def test_run_scene_merge_phase_merges_metadata_without_scene_text_in_prompt() -> None:
-    class _FakeLLMClient:
-        def __init__(self) -> None:
-            self.prompts: list[str] = []
-
-        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
-            del model, temperature, kwargs
-            prompt = str(messages[0].get("content") or "")
-            self.prompts.append(prompt)
-            return (
-                '{"merged_scenes":['
-                '{"scene_refs":["chunk_0_scene_0","chunk_1_scene_0"],"name":"Arrival","description":"Arthur arrives in Londinium."},'
-                '{"scene_refs":["chunk_1_scene_1"],"name":"Separate","description":"A separate conflict begins."}'
-                ']}'
-            )
-
-    client = _FakeLLMClient()
-    result = asyncio.run(
-        _run_scene_merge_phase(
-            run_id="run-1",
-            llm_client=client,
-            model="test-model",
-            chunk_results=[
-                {
-                    "status": "ok",
-                    "entity_instance_id": "entity-1",
-                    "entity_alias": "Source",
-                    "chunk_index": 0,
-                    "paragraph_count": 2,
-                    "token_count": 10,
-                    "paragraph_start": 1,
-                    "paragraph_end": 2,
-                    "marked_paragraphs": "[P1] Arthur arrives",
-                    "scenes": [
-                        {
-                            "scene_id": 0,
-                            "name": "Arrival",
-                            "description": "Arthur arrives.",
-                            "start_paragraph": 1,
-                            "end_paragraph": 2,
-                            "text": "[P1] Arthur arrives.",
-                        }
-                    ],
-                },
-                {
-                    "status": "ok",
-                    "entity_instance_id": "entity-1",
-                    "entity_alias": "Source",
-                    "chunk_index": 1,
-                    "paragraph_count": 3,
-                    "token_count": 12,
-                    "paragraph_start": 3,
-                    "paragraph_end": 5,
-                    "marked_paragraphs": "[P1] Arthur enters Londinium",
-                    "scenes": [
-                        {
-                            "scene_id": 0,
-                            "name": "City arrival",
-                            "description": "Arthur enters Londinium.",
-                            "start_paragraph": 1,
-                            "end_paragraph": 1,
-                            "text": "[P1] Arthur enters Londinium.",
-                        },
-                        {
-                            "scene_id": 1,
-                            "name": "Separate",
-                            "description": "A separate conflict begins.",
-                            "start_paragraph": 2,
-                            "end_paragraph": 3,
-                            "text": "[P2] A separate conflict begins.",
-                        },
-                    ],
-                },
-            ],
-        )
-    )
-
-    assert len(client.prompts) == 1
-    assert "[P1] Arthur arrives." not in client.prompts[0]
-    merged_scenes = result["chunk_results"][0]["scenes"]
-    assert len(merged_scenes) == 2
-    assert "Arthur arrives." in merged_scenes[0]["text"]
-    assert "Arthur enters Londinium." in merged_scenes[0]["text"]
-    assert merged_scenes[0]["start_paragraph"] == 1
-    assert merged_scenes[0]["end_paragraph"] == 3
 
 
-def test_run_scene_merge_phase_receives_all_chunk_metadata_and_repairs_overlap() -> None:
-    class _FakeLLMClient:
-        def __init__(self) -> None:
-            self.prompts: list[str] = []
-
-        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
-            del model, temperature, kwargs
-            prompt = str(messages[0].get("content") or "")
-            self.prompts.append(prompt)
-            return (
-                '{"merged_scenes":['
-                '{"scene_refs":["chunk_0_scene_0"],"name":"Opening","description":"The opening continues."},'
-                '{"scene_refs":["chunk_1_scene_0"],"name":"Opening Again","description":"The same opening overlaps."},'
-                '{"scene_refs":["chunk_2_scene_0"],"name":"Later","description":"A later scene remains separate."}'
-                ']}'
-            )
-
-    client = _FakeLLMClient()
-    result = asyncio.run(
-        _run_scene_merge_phase(
-            run_id="run-1",
-            llm_client=client,
-            model="test-model",
-            chunk_results=[
-                {
-                    "status": "ok",
-                    "entity_instance_id": "entity-1",
-                    "entity_alias": "Source",
-                    "chunk_index": 0,
-                    "paragraph_count": 30,
-                    "token_count": 10,
-                    "paragraph_start": 1,
-                    "paragraph_end": 30,
-                    "marked_paragraphs": "[P1] A",
-                    "scenes": [
-                        {
-                            "scene_id": 0,
-                            "name": "Opening",
-                            "description": "The opening starts.",
-                            "start_paragraph": 20,
-                            "end_paragraph": 30,
-                            "text": "[P20] A",
-                        }
-                    ],
-                },
-                {
-                    "status": "ok",
-                    "entity_instance_id": "entity-1",
-                    "entity_alias": "Source",
-                    "chunk_index": 1,
-                    "paragraph_count": 30,
-                    "token_count": 10,
-                    "paragraph_start": 25,
-                    "paragraph_end": 54,
-                    "marked_paragraphs": "[P1] B",
-                    "scenes": [
-                        {
-                            "scene_id": 0,
-                            "name": "Opening Again",
-                            "description": "The opening overlaps.",
-                            "start_paragraph": 1,
-                            "end_paragraph": 12,
-                            "text": "[P1] B",
-                        }
-                    ],
-                },
-                {
-                    "status": "ok",
-                    "entity_instance_id": "entity-1",
-                    "entity_alias": "Source",
-                    "chunk_index": 2,
-                    "paragraph_count": 30,
-                    "token_count": 10,
-                    "paragraph_start": 55,
-                    "paragraph_end": 84,
-                    "marked_paragraphs": "[P1] C",
-                    "scenes": [
-                        {
-                            "scene_id": 0,
-                            "name": "Later",
-                            "description": "A later scene.",
-                            "start_paragraph": 1,
-                            "end_paragraph": 5,
-                            "text": "[P1] C",
-                        }
-                    ],
-                },
-            ],
-        )
-    )
-
-    prompt = client.prompts[0]
-    assert "[P20] A" not in prompt
-    assert "chunk_0_scene_0" in prompt
-    assert "chunk_1_scene_0" in prompt
-    assert "chunk_2_scene_0" in prompt
-    assert '"start_paragraph": 25' in prompt
-    assert '"end_paragraph": 36' in prompt
-
-    merged_scenes = result["chunk_results"][0]["scenes"]
-    assert len(merged_scenes) == 2
-    assert merged_scenes[0]["start_paragraph"] == 20
-    assert merged_scenes[0]["end_paragraph"] == 36
-    assert set(merged_scenes[0]["source_scene_refs"]) == {
-        "chunk_0_scene_0",
-        "chunk_1_scene_0",
-    }
 
 
 def test_classify_entities_splits_new_and_updated() -> None:
@@ -767,7 +567,7 @@ def test_run_milestone_proposal_phase_keeps_all_scenes_and_coerces_boundaries() 
     assert result["removed_scene_count"] == 0
     assert result["removed_scene_refs"] == []
     assert len(result["per_scene"]) == 6
-    assert len(client.prompts) == 2
+    assert len(client.prompts) == 6
     for row in result["per_scene"]:
         milestones = row["milestones"]
         assert len(milestones) >= 2
@@ -869,3 +669,30 @@ def test_build_scene_proposals_related_to_targets_deduped_entities() -> None:
     assert related[1]["proposal_index"] == 1
     assert related[1]["canonical"] == "londinium"
     assert related[1]["entity_instance_id"] == "node-2"
+
+@pytest.mark.parametrize("include_unknown_ref", [False, True])
+def test_scene_merge_preserves_global_text_and_orphan_scenes(include_unknown_ref):
+    chunks = [{"status": "ok", "chunk_index": i, "entity_instance_id": "source", "scenes": [{
+        "scene_id": 0, "name": f"Scene {i}", "description": f"Description {i}",
+        "start_paragraph": start, "end_paragraph": end, "text": text,
+    }]} for i, (start, end, text) in enumerate([(20, 30, "[P20] First source"), (25, 36, "[P25] Second source"), (80, 84, "[P80] Orphan source")])]
+    prompts = []
+    class Client:
+        async def chat(self, *, messages, **kwargs):
+            prompts.append(messages[0]["content"])
+            refs = ["entity_source_chunk_0_scene_0", "entity_source_chunk_1_scene_0"]
+            if include_unknown_ref:
+                refs.append("not-a-source")
+            return json.dumps({"scenes": [{"scene_ref": "merged", "name": "Merged opening", "description": "Two descriptions", "source_scene_refs": refs}]})
+    merged, summary = asyncio.run(_run_scene_merge_phase(run_id="test", llm_client=Client(), model="test-model", chunk_results=chunks, max_scenes_after_merge=2))
+    assert summary["applied"] is True
+    assert summary["scene_count_before"] == 3
+    assert summary["scene_count_after"] == 2
+    scenes = merged[0]["scenes"]
+    assert scenes[0]["start_paragraph"] == 20
+    assert scenes[0]["end_paragraph"] == 36
+    assert scenes[0]["text"] == "[P20] First source\n[P25] Second source"
+    assert scenes[1]["text"] == "[P80] Orphan source"
+    assert scenes[1]["start_paragraph"] == 80
+    assert "[P20] First source" not in prompts[0]
+    assert "Description 0" in prompts[0]

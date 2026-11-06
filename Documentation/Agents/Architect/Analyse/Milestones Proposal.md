@@ -149,3 +149,5 @@ This phase is analysis-only and does not write milestones to the graph. Results 
 - [Scene Chunking.md](Scene%20Chunking.md)
 - [Entity Proposal.md](Entity%20Proposal.md)
 - [Scene Proposal.md](Scene%20Proposal.md)
+
+If milestone extraction returns an empty list, the active analysis phase inserts opening and closing boundary placeholders before retaining the scene. Single or incomplete generated lists pass through the same boundary normalization; manually authored scene payloads may remain partial.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.jobs.architect.scene_centric_chunking import (
-    _normalize_scene_ranges,
+    _normalize_scene_ranges_global,
     extract_paragraphs_from_sources,
     segment_chunk_into_scenes,
 )
@@ -90,12 +90,12 @@ def test_normalize_scene_ranges_accepts_zero_based_model_output() -> None:
         },
     ]
 
-    normalized = _normalize_scene_ranges(scenes, paragraph_count=3)
+    normalized = _normalize_scene_ranges_global(scenes, allowed_ids=list(range(1, 4)))
 
     assert normalized[0]["start_paragraph"] == 1
-    assert normalized[0]["end_paragraph"] == 2
-    assert normalized[1]["start_paragraph"] == 3
-    assert normalized[1]["end_paragraph"] == 3
+    assert normalized[0]["end_paragraph"] == 1
+    assert normalized[1]["start_paragraph"] == 2
+    assert normalized[1]["end_paragraph"] == 2
 
 
 def test_normalize_scene_ranges_preserves_gaps_without_repair() -> None:
@@ -116,7 +116,7 @@ def test_normalize_scene_ranges_preserves_gaps_without_repair() -> None:
         },
     ]
 
-    normalized = _normalize_scene_ranges(scenes, paragraph_count=3)
+    normalized = _normalize_scene_ranges_global(scenes, allowed_ids=list(range(1, 4)))
     assert normalized[0]["start_paragraph"] == 1
     assert normalized[0]["end_paragraph"] == 1
     assert normalized[1]["start_paragraph"] == 3
@@ -141,7 +141,7 @@ def test_normalize_scene_ranges_does_not_repair_gaps() -> None:
         },
     ]
 
-    normalized = _normalize_scene_ranges(scenes, paragraph_count=26)
+    normalized = _normalize_scene_ranges_global(scenes, allowed_ids=list(range(1, 27)))
     assert normalized[0]["start_paragraph"] == 1
     assert normalized[0]["end_paragraph"] == 14
     assert normalized[1]["start_paragraph"] == 15
@@ -149,7 +149,7 @@ def test_normalize_scene_ranges_does_not_repair_gaps() -> None:
 
 
 @pytest.mark.asyncio
-async def test_segment_chunk_into_scenes_preserves_out_of_bounds_without_annotation() -> None:
+async def test_segment_chunk_into_scenes_clips_to_available_global_paragraphs() -> None:
     client = _FakeLLMClient(
         responses=[
             '{"scenes":[{"scene_id":0,"name":"A","description":"A desc","start_paragraph":57,"end_paragraph":100}]}',
@@ -157,14 +157,15 @@ async def test_segment_chunk_into_scenes_preserves_out_of_bounds_without_annotat
     )
     scenes = await segment_chunk_into_scenes(
         llm_client=client,
+        repair_model="test-model",
         model="test-model",
-        marked_paragraphs="[P1] one\\n[P2] two\\n[P3] three",
+        marked_paragraphs="[P1] one\n[P2] two\n[P3] three",
         paragraph_count=3,
         paragraphs=["one", "two", "three"],
     )
     assert len(scenes) == 1
-    assert scenes[0]["start_paragraph"] == 57
-    assert scenes[0]["end_paragraph"] == 100
+    assert scenes[0]["start_paragraph"] == 3
+    assert scenes[0]["end_paragraph"] == 3
     assert scenes[0]["description"] == "A desc"
     assert scenes[0]["text"] == "[P3] three"
 
@@ -180,6 +181,7 @@ async def test_segment_chunk_into_scenes_uses_single_scene_only_call() -> None:
     paragraphs = ["one", "two", "three"]
     scenes = await segment_chunk_into_scenes(
         llm_client=client,
+        repair_model="test-model",
         model="test-model",
         marked_paragraphs="[P1] one\n[P2] two\n[P3] three",
         paragraph_count=3,
@@ -206,6 +208,7 @@ async def test_segment_chunk_into_scenes_discards_milestone_fields() -> None:
     paragraphs = ["one", "two", "three"]
     scenes = await segment_chunk_into_scenes(
         llm_client=client,
+        repair_model="test-model",
         model="test-model",
         marked_paragraphs="[P1] one\n[P2] two\n[P3] three",
         paragraph_count=3,

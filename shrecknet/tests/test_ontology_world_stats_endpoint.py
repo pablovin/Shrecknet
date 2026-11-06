@@ -13,7 +13,6 @@ from app.models import (
     LibraryItem,
     Ontology,
     OntologyEntity,
-    OntologyInstance,
     User,
     UserRole,
 )
@@ -76,7 +75,7 @@ async def test_world_stats_aggregates_counts_per_ontology(client, session_maker)
                     keywords=[],
                     display_on_world=True,
                     auto_generatable=False,
-                    author_type=AuthorType.HUMAN,
+                    author_type=AuthorType.USER,
                     user_id="1",
                     agent_id=None,
                 ),
@@ -88,7 +87,7 @@ async def test_world_stats_aggregates_counts_per_ontology(client, session_maker)
                     keywords=[],
                     display_on_world=True,
                     auto_generatable=False,
-                    author_type=AuthorType.HUMAN,
+                    author_type=AuthorType.USER,
                     user_id="1",
                     agent_id=None,
                 ),
@@ -100,7 +99,7 @@ async def test_world_stats_aggregates_counts_per_ontology(client, session_maker)
                     keywords=[],
                     display_on_world=True,
                     auto_generatable=False,
-                    author_type=AuthorType.HUMAN,
+                    author_type=AuthorType.USER,
                     user_id="1",
                     agent_id=None,
                 ),
@@ -121,22 +120,6 @@ async def test_world_stats_aggregates_counts_per_ontology(client, session_maker)
                 {"name": "Scene without milestones"},
             ]
         }
-        session.add_all(
-            [
-                OntologyInstance(
-                    instance_id="inst-1",
-                    ontology_id=ont1.id,
-                    name="Page 1",
-                    payload_json=json.dumps(payload_1),
-                ),
-                OntologyInstance(
-                    instance_id="inst-2",
-                    ontology_id=ont1.id,
-                    name="Page 2",
-                    payload_json=json.dumps(payload_2),
-                ),
-            ]
-        )
         session.add_all(
             [
                 LibraryItem(
@@ -238,7 +221,7 @@ async def test_world_stats_supports_csv_filter_and_disable_content_counts(
                     keywords=[],
                     display_on_world=True,
                     auto_generatable=False,
-                    author_type=AuthorType.HUMAN,
+                    author_type=AuthorType.USER,
                     user_id="1",
                     agent_id=None,
                 ),
@@ -250,24 +233,11 @@ async def test_world_stats_supports_csv_filter_and_disable_content_counts(
                     keywords=[],
                     display_on_world=True,
                     auto_generatable=False,
-                    author_type=AuthorType.HUMAN,
+                    author_type=AuthorType.USER,
                     user_id="1",
                     agent_id=None,
                 ),
             ]
-        )
-        session.add(
-            OntologyInstance(
-                instance_id="inst-3",
-                ontology_id=ont2.id,
-                name="Page 3",
-                payload_json=json.dumps(
-                    {
-                        "entities": [{"id": "e-1"}, {"id": "e-2"}],
-                        "scenes": [{"milestones": [{"id": "m4"}]}],
-                    }
-                ),
-            )
         )
         session.add(
             LibraryItem(

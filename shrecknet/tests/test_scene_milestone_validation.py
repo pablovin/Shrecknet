@@ -72,7 +72,7 @@ async def test_validate_scene_milestones_payload_accepts_valid_minimal_scene() -
 
 
 @pytest.mark.asyncio
-async def test_validate_scene_milestones_payload_rejects_missing_end_boundary() -> None:
+async def test_validate_scene_milestones_payload_allows_partial_authored_boundaries() -> None:
     service = OntologyInstanceService(sql_session=None, graph_session=_FakeGraphSession())
     milestones = [
         MilestoneCreate(
@@ -97,11 +97,10 @@ async def test_validate_scene_milestones_payload_rejects_missing_end_boundary() 
         ),
     ]
 
-    with pytest.raises(ValueError, match="begin boundary milestone and one end"):
-        await service._validate_scene_milestones_payload(
-            instance_id="inst-1",
-            milestones=milestones,
-        )
+    await service._validate_scene_milestones_payload(
+        instance_id="inst-1",
+        milestones=milestones,
+    )
 
 
 @pytest.mark.asyncio

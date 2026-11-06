@@ -1,27 +1,21 @@
 import pytest
-from app.jobs.architect.architect_v2 import ArchitectOrchestratorV2
+from unittest.mock import AsyncMock
+from types import SimpleNamespace
 from app.jobs.architect.schemas import SceneMilestoneProposalResponse, RelatesToProposalResponse
 from app.schemas.ontology_instance import MilestoneCreate, SceneCreate
 from app.services.ontology_instance_service import OntologyInstanceService
 
-@pytest.mark.asyncio
-async def test_coerce_scene_milestones_enforces_begin_end():
-    orch = ArchitectOrchestratorV2()
-    milestones = [
-        {"name": "Middle", "boundary_type": "none"},
-        {"name": "End", "boundary_type": "end"},
-    ]
-    result = orch._coerce_scene_milestones(milestones)
-    assert any(m["boundary_type"] == "begin" for m in result)
-    assert any(m["boundary_type"] == "end" for m in result)
+def test_scene_boundary_defaults_are_injected_by_the_active_pipeline():
+    from app.tasks.architect_analysis import _ensure_scene_milestone_boundaries
+    result = _ensure_scene_milestone_boundaries([], scene_ref="scene-1", scene_id="scene-1", source_entity_instance_id="entity-1", author_id="tester")
+    assert {item["boundary_type"] for item in result} == {"begin", "end"}
 
 
-def test_parse_relates_to_response_drops_ambiguous():
-    orch = ArchitectOrchestratorV2()
-    response = '{"proposals": [{"source": "A", "target": "B", "confidence": 0.5, "ambiguous": true}]}'
-    parsed = orch._parse_relates_to_response(response)
-    assert isinstance(parsed, RelatesToProposalResponse)
-    assert len(parsed.proposals) == 0
+def test_relationship_proposals_require_explicit_source_and_target():
+    from pydantic import ValidationError
+    from app.jobs.architect.schemas import RelatesToProposalResponse
+    with pytest.raises(ValidationError):
+        RelatesToProposalResponse.model_validate({"relationships": [{"source_ref": "scene-1", "source_kind": "scene"}]})
 
 
 class _FakeResult:
@@ -139,6 +133,7 @@ async def test_create_milestone_persists_milestone_relates_to_edges(monkeypatch)
     monkeypatch.setattr(service, "_validate_milestone_derived_from", _fake_validate_derived)
     monkeypatch.setattr(service, "_milestone_ids_for_scene", _fake_milestone_ids_for_scene)
     monkeypatch.setattr(service, "get_milestone", _fake_get_milestone)
+    monkeypatch.setattr(service, "get_scene", AsyncMock(return_value=SimpleNamespace(ontology_id=42, milestones=[])))
 
     from app.tasks.neo4j_embedding import embed_reconciliation as embed_reconciliation_task
 

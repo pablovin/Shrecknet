@@ -16,7 +16,7 @@ class _FakeClient:
 
     async def chat(self, *, model, messages, temperature, usage_tag):  # noqa: ANN001
         del messages, temperature, usage_tag
-        key = str(model)
+        key = f"{model.provider}:{model.name}"
         self.calls.append(key)
         if key in self.fail_on:
             raise RuntimeError(f"failed: {key}")
@@ -28,6 +28,7 @@ class _FakeClient:
 
 def _settings(elder: str = "shared", librarian: str = "shared") -> SimpleNamespace:
     return SimpleNamespace(
+        companion_enabled=False,
         shreckllm_base_url="http://shreckllm:8110",
         shreckllm_request_timeout_s=60.0,
         llm_prewarm_on_startup=True,
@@ -61,7 +62,7 @@ async def test_llm_prewarm_dedupes_identical_targets(monkeypatch):
 
     await main._run_llm_prewarm()
 
-    assert fake_client.calls == ["provider='ollama' name='shared' reasoning=False"]
+    assert fake_client.calls == ["ollama:shared"]
 
 
 @pytest.mark.asyncio
@@ -76,8 +77,8 @@ async def test_llm_prewarm_warms_each_unique_target(monkeypatch):
     await main._run_llm_prewarm()
 
     assert fake_client.calls == [
-        "provider='ollama' name='elder-model' reasoning=False",
-        "provider='ollama' name='librarian-model' reasoning=False",
+        "ollama:elder-model",
+        "ollama:librarian-model",
     ]
 
 
@@ -95,10 +96,10 @@ async def test_llm_prewarm_includes_architect_and_novelist_targets(monkeypatch):
 
     await main._run_llm_prewarm()
 
-    assert "provider='ollama' name='architect-scenes' reasoning=False" in fake_client.calls
-    assert "provider='ollama' name='architect-proposals' reasoning=False" in fake_client.calls
-    assert "provider='ollama' name='novelist-analysis' reasoning=False" in fake_client.calls
-    assert "provider='ollama' name='novelist-writer' reasoning=False" in fake_client.calls
+    assert "ollama:architect-scenes" in fake_client.calls
+    assert "ollama:architect-proposals" in fake_client.calls
+    assert "ollama:novelist-analysis" in fake_client.calls
+    assert "ollama:novelist-writer" in fake_client.calls
 
 
 @pytest.mark.asyncio
@@ -116,7 +117,7 @@ async def test_llm_prewarm_includes_four_active_character_roles_only(monkeypatch
     monkeypatch.setattr(main, 'get_all_provider_validations', _runtime)
     await main._run_llm_prewarm()
     for field in CHARACTER_AGENT_MODEL_FIELDS:
-        assert str(getattr(settings, field)) in client.calls
+        assert f"{getattr(settings, field).provider}:{getattr(settings, field).name}" in client.calls
     assert not any('retired-' in call for call in client.calls)
 
 
@@ -124,7 +125,7 @@ async def test_llm_prewarm_includes_four_active_character_roles_only(monkeypatch
 async def test_llm_prewarm_failure_isolated_per_model(monkeypatch):
     fake_settings = _settings("elder-model", "librarian-model")
     fake_client = _FakeClient()
-    fake_client.fail_on.add("provider='ollama' name='elder-model'")
+    fake_client.fail_on.add("ollama:elder-model")
 
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main, "ShreckLLMClient", lambda **kwargs: fake_client)
@@ -133,8 +134,8 @@ async def test_llm_prewarm_failure_isolated_per_model(monkeypatch):
     await main._run_llm_prewarm()
 
     assert fake_client.calls == [
-        "provider='ollama' name='elder-model' reasoning=False",
-        "provider='ollama' name='librarian-model' reasoning=False",
+        "ollama:elder-model",
+        "ollama:librarian-model",
     ]
 
 

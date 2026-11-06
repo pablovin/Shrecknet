@@ -2204,7 +2204,13 @@ async def _run_milestone_proposal_phase(
         rows: list[dict[str, Any]] = []
         for scene in batch:
             scene_ref = str(scene.get("scene_ref") or "")
-            milestones = _normalize_raw_milestones(scene, raw_by_ref.get(scene_ref, []))
+            milestones = _ensure_scene_milestone_boundaries(
+                _normalize_raw_milestones(scene, raw_by_ref.get(scene_ref, [])),
+                scene_ref=scene_ref,
+                scene_id=str(scene.get("scene_id") or ""),
+                source_entity_instance_id=scene.get("source_entity_instance_id"),
+                author_id=author_id,
+            )
             logger.info(
                 "milestone_proposal_scene_total: run_id=%s scene_ref=%s milestone_count=%d",
                 run_id,

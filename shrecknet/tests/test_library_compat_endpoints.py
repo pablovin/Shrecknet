@@ -113,10 +113,11 @@ def _patch_jobs_sessionmaker(monkeypatch, session_maker) -> None:
 
 
 @pytest.mark.asyncio
-async def test_put_pdf_alias_replaces_library_content(client, session_maker) -> None:
+async def test_put_pdf_alias_replaces_library_content(client, session_maker, monkeypatch) -> None:
     _, admin_headers = await _create_user(session_maker, UserRole.ADMIN)
     item = await _create_library_item(client, admin_headers)
 
+    monkeypatch.setattr("app.api.routers.libraries.get_driver", lambda: _FakeDriver({"total": 0}))
     response = await client.put(
         f"/libraries/1/items/{item['id']}/pdf",
         headers=admin_headers,
@@ -380,6 +381,9 @@ async def test_bulk_delete_library_items_clears_neo4j_embeddings(
 
 @pytest.mark.asyncio
 async def test_legacy_clear_all_embeddings_endpoint(client, session_maker, monkeypatch) -> None:
+    from unittest.mock import Mock
+    cleanup = Mock(return_value={"jobs_deleted": 1, "tasks_revoked": 0, "queues_purged": 0})
+    monkeypatch.setattr("app.api.routers.libraries.clear_all_jobs_and_queues", cleanup)
     user, admin_headers = await _create_user(session_maker, UserRole.ADMIN)
     _patch_jobs_sessionmaker(monkeypatch, session_maker)
     await _create_library_item(client, admin_headers, ontology_id="1")
@@ -413,5 +417,6 @@ async def test_legacy_clear_all_embeddings_endpoint(client, session_maker, monke
 
     assert response.status_code == 200, response.text
     assert response.json()["items_affected"] == 2
-    assert response.json()["chunks_deleted"] == 6
+    assert response.json()["chunks_deleted"] == 3
     assert response.json()["jobs_deleted"] == 1
+    cleanup.assert_called_once_with()

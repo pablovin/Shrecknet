@@ -300,9 +300,9 @@ async def get_orchestrator_turn_result(
             detail="Job is not a companion orchestrator turn",
         )
 
-    payload_data: dict = {}
     raw_details = job.details
-    if raw_details:
+    payload_data: dict = raw_details if isinstance(raw_details, dict) else {}
+    if raw_details and not isinstance(raw_details, dict):
         import json
 
         try:

@@ -28,6 +28,7 @@ def _log_indexing_summary(job: ShreckWorldEmbeddingJob, metrics: IndexingJobMetr
     summary = {
         "job_id": job.id, "library_item_id": job.library_item_id, "status": job.status,
         "embedding_backend": metrics.embedding_backend,
+        "parser_name": metrics.parser_name, "parser_version": metrics.parser_version,
         "elapsed_seconds": result.elapsed_seconds, "queue_wait_seconds": result.queue_wait_seconds,
         "processing_seconds": result.processing_seconds,
         "phase_seconds": metrics.phase_seconds, "parser_seconds": metrics.parser_seconds,
@@ -77,7 +78,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
     try:
         embedder = get_embedder()
         health = embedder.ensure_ready()
-        metrics.parser_table_structure_enabled = get_settings().parser_table_structure_enabled
+        settings = get_settings()
         metrics.embedding_backend = embedder.backend
         metrics.embedding_model = embedder.settings.embedding_model_id
         metrics.embedding_fingerprint = str(health["fingerprint"])
@@ -87,7 +88,10 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         if _sha256(path) != item.source_sha256:
             raise ValueError("Source hash changed after upload; refusing to index a different document")
         world = session.get(ShreckWorld, item.shreckworld_id) if item.shreckworld_id else None
-        phase("parsing", 5, "Parsing structure with Docling; waiting for page progress; OCR disabled", indeterminate=True)
+        parser = settings.pdf_parser if path.suffix.lower() == ".pdf" else ("plain text" if path.suffix.lower() == ".txt" else "docling")
+        metrics.parser_name = parser.replace(" ", "_")
+        metrics.parser_table_structure_enabled = settings.parser_table_structure_enabled if parser != "pymupdf" else None
+        phase("parsing", 5, f"Parsing structure with {parser}; OCR disabled", indeterminate=True)
 
         def parsing_heartbeat(total: int | None) -> None:
             metrics.total_pages = total
@@ -124,6 +128,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
             document=normalized, ingestion_id=ingestion_id, library_item_id=source_item_id,
             ontology_id=scope_id, book_title=book_title, rpg_system=system_name,
             tokenizer=tokenizer, max_embedding_tokens=embedder.token_limit,
+            preserve_unit_boundaries=parsed.parser_name == "pymupdf",
         ), lambda: checkpoint(force=True))
         children = [chunk for chunk in chunks if chunk.chunk_role == "child"]
         parents = {chunk.chunk_id for chunk in chunks if chunk.chunk_role == "parent"}
@@ -171,14 +176,15 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
             source_block_ids=chunk.source_block_ids, page_numbers=chunk.physical_page_numbers,
             token_count=token_counts.get(chunk.chunk_id),
         ) for chunk in chunks]
+        embedding_version = "pymupdf-e5-context-v1" if parsed.parser_name == "pymupdf" else EMBEDDING_VERSION
         document = ShreckWorldDocument(id=job.id, library_item_id=item.id,
             source_sha256=item.source_sha256, parser_name=parsed.parser_name, parser_version=parsed.parser_version,
-            embedding_version=EMBEDDING_VERSION, embedding_model=embedder.settings.embedding_model_id,
+            embedding_version=embedding_version, embedding_model=embedder.settings.embedding_model_id,
             embedding_fingerprint=metrics.embedding_fingerprint, embedding_dimension=embedder.settings.embedding_dimension,
             manifest_path=str((output_dir / "ingestion_manifest.json").resolve()))
         phase("storing", 95, "Staging vectors and activating structured SQL records")
         manifest = {"ingestion_id": job.id, "source_sha256": item.source_sha256, "status": "prepared",
-                    "embedding_version": EMBEDDING_VERSION, "metrics": metrics.model_dump()}
+                    "embedding_version": embedding_version, "metrics": metrics.model_dump()}
         _atomic_json(Path(document.manifest_path), manifest)
         attempted_projection = True
         upsert_item_chunks(item, [record for record in records if record.chunk_role == "child"], document=document)

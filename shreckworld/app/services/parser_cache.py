@@ -43,7 +43,15 @@ def _artifact_digest(files: tuple[tuple[str, str, int, int, int], ...]) -> str:
     return digest.hexdigest()
 
 
-def cache_identity(path: Path, settings: Any, parser_version: str) -> str:
+def cache_identity(path: Path, settings: Any, parser_version: str, *, parser_name: str = "docling") -> str:
+    if parser_name == "pymupdf":
+        identity = {
+            "format_version": CACHE_VERSION, "adapter_version": 1,
+            "source_sha256": _sha256(path), "suffix": path.suffix.lower(),
+            "parser": parser_name, "parser_version": parser_version,
+            "ocr": False, "table_mode": "isolate", "merge_small_chunks": False,
+        }
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     artifacts = settings.docling_artifacts_path.resolve()
     files = []
     for file in sorted(artifacts.rglob("*")):

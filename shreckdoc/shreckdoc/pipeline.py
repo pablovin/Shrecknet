@@ -736,6 +736,7 @@ def build_chunks(
     *, document: NormalizedDocument, ingestion_id: str, library_item_id: int | str,
     ontology_id: int | str, book_title: str, rpg_system: str, tokenizer: Any,
     max_embedding_tokens: int = MAX_EMBEDDING_TOKENS,
+    preserve_unit_boundaries: bool = False,
 ) -> list[NormalizedChunk]:
     block_map = {block.block_id: block for block in document.blocks}
     child_section_ids = {section.parent_section_id for section in document.sections if section.parent_section_id}
@@ -780,7 +781,7 @@ def build_chunks(
         # It keeps every source block together while still preserving the parent
         # relationship for later expansion.
         parent_context = build_embedding_text(parent)
-        if _token_count(tokenizer, parent_context) <= max_embedding_tokens:
+        if not preserve_unit_boundaries and _token_count(tokenizer, parent_context) <= max_embedding_tokens:
             child = NormalizedChunk(
                 **{
                     **asdict(parent),

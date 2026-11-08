@@ -105,6 +105,66 @@ def test_live_progress_structural_chunks_and_final_metrics(api, runtime, monkeyp
         assert session.execute(text("SELECT count(*) FROM shreckworld_chunk_fts")).scalar_one() == metrics["total_chunks"]
 
 
+def test_pymupdf_indexing_persists_parser_provenance_and_children(api, runtime, monkeypatch):
+    from app.services.document_parsing import parse_source
+    from test_document_metadata import pdf_bytes
+    from app.tasks.embedding import embed_shreckworld_library_item
+
+    monkeypatch.setenv("SHRECKWORLD_PDF_PARSER", "pymupdf")
+    monkeypatch.setattr("app.services.ingestion.parse_source", parse_source)
+    monkeypatch.setattr("app.services.document_parsing.version", lambda _: "2.1")
+    monkeypatch.setattr("app.services.document_parsing.parse_pdf", lambda path: (
+        {"pages": {"1": {"size": {"width": 600, "height": 800}}}},
+        [
+            {"reference": "heading", "block_type": "heading", "text": "Combat", "level": 1,
+             "reading_order": 0, "provenance": [{"page_no": 1}]},
+            {"reference": "c0", "block_type": "paragraph", "text": "Attack.", "reading_order": 1,
+             "provenance": [{"page_no": 1}], "chunk_metadata": {"element_ids": ["p1.b0"]}},
+            {"reference": "c1", "block_type": "paragraph", "text": "Defend.", "reading_order": 2,
+             "provenance": [{"page_no": 1}], "chunk_metadata": {"element_ids": ["p1.b1"]}},
+        ], []))
+    monkeypatch.setattr(embed_shreckworld_library_item, "delay", lambda *args: None)
+    client, headers, world_id = api
+    response = upload(api, "book.pdf", pdf_bytes(), data={"title": "Book"})
+    assert response.status_code == 201
+    item_id = response.json()["id"]
+    prefix = f"/admin/shreckworlds/{world_id}/library-items/{item_id}"
+    job_id = client.post(f"{prefix}/index", headers=headers).json()["id"]
+    run(item_id, job_id)
+    result = client.get(f"{prefix}/index-jobs/{job_id}", headers=headers).json()
+    assert result["status"] == "completed", result
+    assert result["metrics"]["parser_name"] == "pymupdf"
+    assert result["metrics"]["parser_table_structure_enabled"] is None
+    assert result["metrics"]["total_chunks"] == 2
+    with session_factory()() as session:
+        document = session.get(ShreckWorldDocument, job_id)
+        assert document.parser_name == "pymupdf"
+        assert document.embedding_version == "pymupdf-e5-context-v1"
+        blocks = list(session.scalars(select(ShreckWorldDocumentBlock)))
+        assert next(block for block in blocks if block.docling_reference == "c0").block_metadata["pymupdf_chunk"]["element_ids"] == ["p1.b0"]
+        children = list(session.scalars(select(ShreckWorldDocumentChunk).where(ShreckWorldDocumentChunk.chunk_role == "child")))
+        assert {child.text for child in children} == {"Attack.", "Defend."}
+        assert all(child.parent_chunk_id for child in children)
+
+
+def test_readiness_reports_selected_pdf_parser_and_missing_api(api, runtime, monkeypatch, tmp_path):
+    from fastapi import HTTPException
+    import app.main as main
+
+    monkeypatch.setattr(main.settings, "docling_artifacts_path", tmp_path)
+    monkeypatch.setattr(main.settings, "pdf_parser", "pymupdf")
+    monkeypatch.setattr(main, "get_embedder", lambda: runtime)
+    monkeypatch.setattr(main, "validate_parser", lambda: None)
+    assert main.readiness()["pdf_parser"] == "pymupdf"
+    def unavailable():
+        raise RuntimeError("PyMuPDF 2.1 required")
+    monkeypatch.setattr(main, "validate_parser", unavailable)
+    with pytest.raises(HTTPException) as error:
+        main.readiness()
+    assert error.value.status_code == 503
+    assert "PyMuPDF 2.1" in error.value.detail
+
+
 @pytest.mark.parametrize("failure", ["model", "empty", "parsing", "embedding", "storage", "activation", "coverage", "source_changed"])
 def test_failed_reindex_preserves_active_generation(api, runtime, monkeypatch, failure):
     client, headers, _ = api

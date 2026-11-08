@@ -55,17 +55,21 @@ as a private cover. See [upload API](../API/SHRECKWORLD_UPLOAD_API.md) and
 ## Structured indexing pipeline
 
 1. Verify the real sentence-transformer model and source SHA-256 before parsing.
-2. Parse PDF/DOCX/Markdown with Docling. PDF parsing enables layout, reading order,
-   accurate tables, parsed-page retention, and heading inference. OCR, remote
-   services, external plugins, and exported page/picture images are disabled.
-   Plain text uses paragraph blocks with logical page 1.
-3. Save canonical Docling JSON, inspection Markdown, and a normalized JSON artifact.
+2. Parse PDFs with the configured Docling or PyMuPDF layout adapter; Compose
+   defaults to the experimental PyMuPDF adapter. DOCX/Markdown use Docling;
+   plain text uses paragraph blocks with logical page 1. OCR is disabled.
+   The PyMuPDF adapter consumes `to_chunks()` with isolated tables, records
+   section paths, chunk/element/table/figure IDs and page boxes, and retains
+   extraction diagnostics. Layout and heading recognition are heuristic.
+3. Save parser-specific JSON, optional Docling Markdown, and a normalized JSON artifact.
    Normalize pages (physical number and printed label), nested sections, blocks,
    reading order, source references, bounding boxes, and character spans.
 4. Use Librarian's shared builder to create complete semantic parents and
    structural children. Headers/footers are excluded from embeddings. Table row
    groups repeat headers; lists split at items; prose splits at sentence boundaries
-   and, when necessary, explicit tokenizer windows with overlap.
+   and, when necessary, explicit tokenizer windows with overlap. PyMuPDF's
+   chunk boundaries are retained as child units unless further splitting is
+   needed for the complete contextual E5 input.
 5. Retain original `text`/display evidence separately from contextual
    `embedding_text`. The latter includes `passage:`, book title, world context,
    heading path, entry, and content type. Count the complete input with the real
@@ -87,7 +91,7 @@ The active generation is independent of the latest job state. A failed reindex
 sets `index_status=failed` and its error, but leaves `embedding_status=ready` when
 an earlier structured generation exists. The failed job is explicit; the earlier
 source evidence remains available. The document must contain at least one valid
-retrievable child, and incomplete Docling conversions/page-count mismatches fail
+retrievable child, and incomplete conversions/page-count mismatches fail
 rather than activating a partial generation. Empty/image-only pages are counted
 and warned about; no OCR coverage is claimed. Explicit Docling/TableFormer
 warning logs, including dropped native table-cell reports, are retained in job
@@ -118,9 +122,9 @@ SQLite remains canonical, including a mirror of semantic vectors:
 
 Original files and private covers remain under
 `media/shreckworlds/{world_id}/{item_id}/`. Each attempt stores
-`parsed/{job_id}/docling_document.json`, `document.md`,
-`normalized_document.json`, and `ingestion_manifest.json`; plain text stores
-`source_document.json` instead of Docling artifacts. Writes use atomic rename.
+`parsed/{job_id}/docling_document.json` or `pymupdf_document.json`,
+`normalized_document.json`, and `ingestion_manifest.json`. Docling Markdown is
+optional; plain text stores `source_document.json`. Writes use atomic rename.
 Failed/retired attempt artifacts and historical structured records remain for
 diagnosis, while active chunks/FTS rows are replaced. Monitor disk use across
 repeated reindexing; no automatic historical-artifact retention limit is applied.

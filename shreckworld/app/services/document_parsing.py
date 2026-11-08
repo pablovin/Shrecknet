@@ -18,6 +18,7 @@ from shreckdoc.pipeline import (
 
 from app.core.config import PARSER_TABLE_MODE, get_settings
 from app.services.parser_cache import ParserPayload, cache_identity, read_cache, write_cache
+from app.services.pymupdf_parsing import parse_pdf
 
 T = TypeVar("T")
 
@@ -106,6 +107,24 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
         diagnostics = []
         parser_name, parser_version = "plain_text", "1"
         _atomic_json(output_dir / "source_document.json", {"pages": canonical["pages"], "items": items})
+    elif path.suffix.lower() == ".pdf" and settings.pdf_parser == "pymupdf":
+        parser_name, parser_version = "pymupdf", version("PyMuPDF")
+        if settings.parser_cache_enabled:
+            started = monotonic()
+            key = with_heartbeat(lambda: cache_identity(path, settings, parser_version, parser_name=parser_name),
+                                 lambda: heartbeat(native_count))
+            cache_path = path.parent / "parser-cache" / f"{key}.json"
+            cached = with_heartbeat(lambda: read_cache(cache_path, key), lambda: heartbeat(native_count))
+            timings["cache_lookup"] = monotonic() - started
+        if cached is not None:
+            canonical, items, diagnostics = cached.canonical, cached.items, cached.diagnostics
+        else:
+            started = monotonic()
+            canonical, items, diagnostics = with_heartbeat(lambda: parse_pdf(path), parser_heartbeat)
+            timings["conversion"] = monotonic() - started
+        with_heartbeat(lambda: _atomic_json(output_dir / "pymupdf_document.json",
+                                           {"pages": canonical["pages"], "items": items}, indent=None),
+                       lambda: heartbeat(native_count))
     else:
         parser_name, parser_version = "docling", version("docling")
         if settings.parser_cache_enabled:
@@ -157,10 +176,16 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
         page_labeler=None if path.suffix.lower() == ".pdf" else lambda _, count: {number: str(number) for number in range(1, count + 1)},
     )
     if native_count is not None and len(document.pages) != native_count:
-        raise ValueError("Docling page count does not match the source PDF; refusing a partial activation")
+        raise ValueError(f"{parser_name} page count does not match the source PDF; refusing a partial activation")
     if not document.pages:
         raise ValueError("The parser returned no document pages")
     quality = _parse_quality_summary(native_page_count=native_count, canonical=canonical, items=items, diagnostics=diagnostics)
+    if parser_name == "pymupdf":
+        quality["pymupdf_pages"] = quality.pop("docling_pages")
+        chunk_metadata = {item["reference"]: item["chunk_metadata"] for item in items if "chunk_metadata" in item}
+        for block in document.blocks:
+            if block.docling_reference in chunk_metadata:
+                block.metadata["pymupdf_chunk"] = chunk_metadata[block.docling_reference]
     if cached is not None:
         quality = cached.quality
     else:

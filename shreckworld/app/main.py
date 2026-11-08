@@ -13,6 +13,7 @@ from app.api.routers.ontology_migration import router as ontology_migration_rout
 from app.core.config import get_settings
 from app.db.session import create_schema
 from app.services.embedding import EmbeddingUnavailable, get_embedder
+from app.services.pymupdf_parsing import validate_parser
 
 settings = get_settings()
 settings.media_root.mkdir(parents=True, exist_ok=True)
@@ -46,7 +47,13 @@ def readiness() -> dict:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if not settings.docling_artifacts_path.is_dir():
         raise HTTPException(status_code=503, detail="Docling artifacts are missing")
-    return {"status": "ready", "embedding": embedding, "parser": "docling", "parser_artifacts_present": True}
+    if settings.pdf_parser == "pymupdf":
+        try:
+            validate_parser()
+        except (ImportError, RuntimeError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"status": "ready", "embedding": embedding, "parser": "docling",
+            "pdf_parser": settings.pdf_parser, "parser_artifacts_present": True}
 
 
 app.include_router(router)

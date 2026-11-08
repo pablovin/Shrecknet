@@ -13,9 +13,11 @@ uses `/ontologies/{id}/items`; old collection routes remain for compatibility.
 Deploy the service before the UI and preview/migrate existing items using the
 [reader contract](../Documentation/API/SHRECKWORLD_READER_API.md#legacy-item-migration).
 
-Sources support PDF, DOCX, Markdown, and text. PDF indexing uses Docling layout,
-headings, tables, and bounding boxes; contextual, tokenizer-bounded E5 children
-retain separate display text and complete semantic parents. OCR is disabled.
+Sources support PDF, DOCX, Markdown, and text. Compose enables experimental
+PyMuPDF layout-aware PDF chunking; standalone defaults to Docling.
+`SHRECKWORLD_PDF_PARSER=docling` restores Docling for comparison. Contextual,
+tokenizer-bounded E5 children retain separate display text and semantic parents.
+OCR is disabled and extraction quality varies by document.
 Hash embeddings are no longer a fallback. Existing hash indexes require
 reindexing before semantic retrieval; original source reading remains available.
 

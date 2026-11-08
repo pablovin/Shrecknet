@@ -25,11 +25,13 @@ roles `403`. Job status is separate from the last successful active generation.
 
 ## Structured indexing contract
 
-The worker uses the same Docling normalization and structural parent/child
-algorithms as Librarian through `shreckdoc`, without its Neo4j persistence.
-PDF/DOCX/Markdown preserve headings, tables, lists, reading order, and available
-provenance. Plain text uses paragraph blocks. PDF table structure uses TableFormer
-fast mode when enabled (the default),
+The worker uses shared normalization and structural parent/child algorithms from
+`shreckdoc`, without Librarian's Neo4j persistence. PDF parsing is selectable:
+Compose defaults to experimental PyMuPDF `to_chunks()`; standalone defaults to
+Docling. DOCX/Markdown use Docling, and plain text uses paragraph blocks.
+Parsers attempt to preserve headings, tables, lists, reading order, and available
+provenance; extraction is heuristic and cannot guarantee complete recognition.
+Docling PDF table structure uses TableFormer fast mode when enabled (the default),
 heading inference is enabled where supported, and OCR is disabled. DOCX/Markdown/
 text have logical page 1; no PDF coordinates are invented for them.
 
@@ -132,14 +134,15 @@ with a final flush when conversion returns or fails. Parsing progress moves from
 5% through at most 34%; chunk construction starts at 35%. Finishing all pages
 does not finish parsing: document assembly, canonical export, normalization, and
 cache publication may remain. Older Docling versions without the public callback
-retain indeterminate parsing and report page counts after normalization. A
+retain indeterminate parsing and report page counts after normalization. PyMuPDF
+does not report per-page progress: parsing remains indeterminate until it finishes. A
 heartbeat continues during canonical exports. Child counts become known after
-chunk construction. OCR remains disabled (`do_ocr=False`); CPU PDF rendering,
-layout detection, and accurate table reconstruction still run.
+chunk construction. OCR remains disabled. Docling uses CPU PDF rendering,
+layout detection, and fast table reconstruction when enabled.
 
 `text_pages` counts pages with retrievable text, excluding headers/footers and
 heading-only pages; `empty_pages` is the remaining page count. `parse_quality`
-reports observed native/Docling page counts, pages without structured blocks,
+reports observed native/parser page counts (`docling_pages` or `pymupdf_pages`), pages without structured blocks,
 detected/empty tables and lists, pictures, and explicit diagnostic count, without
 guessing unrecognized structures. `sections`, `blocks`, and `parent_chunks` count
 normalized/stored structures. `processed_chunks`/`total_chunks` count embedded
@@ -168,7 +171,7 @@ or a guarantee of worker liveness.
 ## Readiness and configuration
 
 `GET /ready` returns `status=ready`, `parser=docling`,
-`parser_artifacts_present=true`, and `embedding` containing `ready`, `backend`,
+`pdf_parser` (`docling` or `pymupdf`), `parser_artifacts_present=true`, and `embedding` containing `ready`, `backend`,
 `model`, actual `fingerprint`, resolved snapshot `revision`, `dimension`, and
 `device`. A local model directory uses its directory name as revision label and
 still receives a content fingerprint. Readiness requires real inference with
@@ -176,7 +179,9 @@ finite unit vectors and a relevant-query/passage probe, not merely a successful
 import. The default E5 snapshot is pinned; API and worker must share the same
 actual weight/tokenizer fingerprint. Runtime inference errors invalidate cached
 readiness until a new probe passes. A missing encoder/artifact directory yields
-`503`. `GET /health` remains liveness only; Compose uses `/ready` for health.
+`503`. PyMuPDF selection also requires the installed `to_chunks` API.
+Docling artifacts remain required for DOCX/Markdown and rollback. `GET /health`
+remains liveness only; Compose uses `/ready` for health.
 
 | `SHRECKWORLD_` setting | Default / operation |
 | --- | --- |
@@ -191,6 +196,7 @@ readiness until a new probe passes. A missing encoder/artifact directory yields
 | `EMBEDDING_BATCH_SIZE` | `16`, range 1–128 |
 | `EMBEDDING_THREADS` | `4`, range 1–32 |
 | `DOCLING_ARTIFACTS_PATH` | `./models/docling`; Compose `/hf-cache/docling` |
+| `PDF_PARSER` | `docling` standalone; Compose `pymupdf`. Set to `docling` to restore the prior PDF parser; restart API and worker. `pymupdf` requires Python 3.11+ and PyMuPDF 2.1 |
 | `PARSER_HEARTBEAT_SECONDS` | `5`, range 0.1–60 |
 | `PARSER_TABLE_STRUCTURE_ENABLED` | `true` enables Docling `do_table_structure=True` with TableFormer fast mode; `false` skips reconstruction while retaining layout analysis and keeping OCR disabled. Restart API/worker after changing |
 | `RERANKER_MODEL_ID` | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
@@ -206,6 +212,34 @@ The existing GPU overlay also configures ShreckWorld; CUDA does not silently
 fall back to CPU. Semantic readiness does not guarantee perfect document
 recognition or factual correctness, and future hardware/model errors can still
 occur; such errors must be visible instead of generating hash vectors.
+
+### Comparing PDF parsers
+
+Compose selects `SHRECKWORLD_PDF_PARSER=pymupdf` unless the root `.env`
+overrides it. Rebuild and recreate the API and worker after updating:
+
+```bash
+docker compose build shreckworld_api shreckworld_worker
+docker compose up -d shreckworld_api shreckworld_worker
+```
+
+Drain indexing jobs before switching configuration. Upload the same PDF as two
+separately titled items, index one with `pymupdf`, switch the setting to
+`docling` and recreate both services, then index the other. Compare representative
+queries, citations and source regions as well as `parser_name`, `parser_version`,
+`parser_seconds`, `phase_seconds`, chunk counts, warnings and `parser_cache_hit`
+in the job responses or `[SHRECKWORLD_INDEXING_SUMMARY]` logs. Use cache misses
+for comparable cold parsing times. The parser cache is isolated by parser and
+version. Both paths use the same encoder and hard tokenizer/provenance validation;
+PyMuPDF layout chunks serve as child units and may be split further. Figure IDs
+and bounding boxes are retained, but image-only content is not OCRed or embedded
+as images. Tables, layout, and hierarchy can differ or be missed.
+
+Reindexing the *same* item replaces its active generation only on success; it
+does not retain two simultaneously searchable versions. Separate items allow
+side-by-side queries. No database migration is needed. To roll back, set
+`SHRECKWORLD_PDF_PARSER=docling`, recreate API/worker, and reindex the affected
+PDFs; a failed reindex leaves the prior active generation searchable.
 
 ### Comparing table reconstruction costs
 

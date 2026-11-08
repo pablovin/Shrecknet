@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     embedding_batch_size: int = Field(default=16, ge=1, le=128)
     embedding_threads: int = Field(default=4, ge=1, le=32)
     docling_artifacts_path: Path = Path("./models/docling")
+    pdf_parser: Literal["docling", "pymupdf"] = "docling"
     parser_heartbeat_seconds: float = Field(default=5, ge=0.1, le=60)
     parser_cache_enabled: bool = True
     parser_export_markdown: bool = False

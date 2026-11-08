@@ -26,7 +26,7 @@ class Answer(BaseModel):
             raise ValueError("Duplicate segment IDs")
         return self
 
-    def final(self, evidence, tool_results):
+    def final(self, evidence, tool_results, *, query=None):
         by_id = {item["evidence_id"]: item for item in evidence}
         citations = []
         for segment in self.segments:
@@ -41,10 +41,22 @@ class Answer(BaseModel):
                 if segment.kind == "fact" and item["source_type"] == "character_memory":
                     raise ValueError("Subjective memory cannot establish objective fact")
                 citations.append({"citation_id": f"c{len(citations)+1}", "segment_ids": [segment.id], **item})
+        # Persist only the bounded evidence actually supplied to synthesis. Tool
+        # payloads excluded by the budget remain counts, never hidden raw data.
+        supplied = set(by_id)
+        tool_calls = []
+        for row in tool_results:
+            returned = row.get("evidence", [])
+            tool_calls.append({
+                "tool": row["tool"], "status": row["status"], "query": query,
+                "cache_hit": row.get("cache_hit", False), "elapsed_ms": row.get("elapsed_ms"),
+                "returned_count": len(returned),
+                "evidence_ids": [item["evidence_id"] for item in returned if item["evidence_id"] in supplied],
+            })
         snapshot_partial = any(row["source_type"] == "foundry" and row["coverage"]["status"] != "complete" for row in evidence)
         partial = snapshot_partial or any(row["status"] not in {"ok", "empty"} for row in tool_results)
         return {"text": "\n\n".join(row.text for row in self.segments), "segments": [row.model_dump() for row in self.segments],
-                "citations": citations, "evidence": evidence, "coverage": "partial" if partial else self.coverage,
+                "citations": citations, "evidence": evidence, "tool_calls": tool_calls, "coverage": "partial" if partial else self.coverage,
                 "warnings": self.warnings + (["Foundry snapshot coverage is partial; missing game state remains unknown."] if snapshot_partial else []) + [f"{row['tool']}: {row['status']}" for row in tool_results if row["status"] != "ok"]}
 
 

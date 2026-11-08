@@ -1,6 +1,7 @@
 {
   "app_name": "shrecknet",
   "debug": false,
+  "shreckworld_embedding_backend": "onnx",
   "media_root": "/app/media",
   "media_base_url": "/media",
   "media_public_url": "http://localhost:8100/media",

@@ -242,3 +242,37 @@ def test_viewer_coordinate_origins_and_unknown_rejection(origin, top, bottom, ex
     else:
         assert areas[0].top == expected
         assert areas[0].height == 12.5
+
+
+
+def test_direct_ontology_retrieval_preserves_old_vectors_and_isolates_items(api, runtime, monkeypatch):
+    from app.integrations.ontologies import authorized_ontology
+    from app.main import app
+    from app.repositories.source_scope import OntologyScope
+    from app.services.retrieval_index import upsert_item_chunks
+    qdrant = QdrantClient(":memory:")
+    monkeypatch.setattr("app.services.retrieval_index.get_client", lambda: qdrant)
+    monkeypatch.setattr("app.services.ingestion.upsert_item_chunks", upsert_item_chunks)
+    client, headers, _ = api
+    _, one_id, one_job = queued_job(api, monkeypatch, title="Ontology Seven", content=b"Combat uses percentile dice.")
+    run(one_id, one_job)
+    _, two_id, two_job = queued_job(api, monkeypatch, title="Ontology Eight", content=b"Combat uses different rules.")
+    run(two_id, two_job)
+    with session_factory()() as session:
+        session.get(ShreckWorldLibraryItem, one_id).ontology_id = 7
+        session.get(ShreckWorldLibraryItem, two_id).ontology_id = 8
+        session.commit()
+    def scope(ontology_id: int):
+        return OntologyScope(ontology_id, f"Ontology {ontology_id}")
+    app.dependency_overrides[authorized_ontology] = scope
+    try:
+        # Existing Qdrant payloads still hold old collection IDs. SQL-approved
+        # active document IDs are sufficient to search them without reindexing.
+        result = client.post('/ontologies/7/query', headers=headers, json={"query":"Combat","include_trace":True}).json()
+        assert result['ontology_id'] == 7 and result['shreckworld_id'] is None
+        assert {row['library_item_id'] for row in result['citations']} == {one_id}
+        assert not result['trace']['qdrant_fallback']
+        assert result['citations'][0]['content_url'].startswith('/ontologies/7/items/')
+        assert client.post('/ontologies/7/query', headers=headers, json={"query":"Combat","library_item_id":two_id}).status_code == 404
+    finally:
+        app.dependency_overrides.pop(authorized_ontology)

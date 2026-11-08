@@ -81,7 +81,8 @@ class ShreckWorldLibraryItemUpdate(BaseModel):
 class ShreckWorldLibraryItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
-    shreckworld_id: str
+    shreckworld_id: str | None
+    ontology_id: int | None = None
     title: str
     authors: str | None
     description: str | None
@@ -104,6 +105,8 @@ class ShreckWorldLibraryItemRead(BaseModel):
     @property
     def cover_url(self) -> str | None:
         """Authenticated relative URL for the frontend; never a public media URL."""
+        if self.cover_path and self.ontology_id is not None:
+            return f"/ontologies/{self.ontology_id}/items/{self.id}/cover"
         if self.cover_path:
             return f"/shreckworlds/{self.shreckworld_id}/library-items/{self.id}/cover"
         return None
@@ -128,7 +131,7 @@ class IndexingJobMetrics(BaseModel):
     extracted_characters: int = 0
     processed_chunks: int = 0
     total_chunks: int | None = None
-    embedding_backend: Literal["sentence_transformers", "hash"] | None = None
+    embedding_backend: Literal["sentence_transformers", "onnx", "openvino", "hash"] | None = None
     embedding_model: str | None = None
     warnings: list[str] = Field(default_factory=list)
     phase_seconds: dict[str, float] = Field(default_factory=dict)
@@ -349,7 +352,8 @@ class QuerySourceCoverage(BaseModel):
 
 
 class ShreckWorldQueryResponse(BaseModel):
-    shreckworld_id: str
+    shreckworld_id: str | None
+    ontology_id: int | None = None
     query: str
     answer: str
     citations: list[ShreckWorldCitation]
@@ -373,7 +377,8 @@ class ShreckWorldQueryResponse(BaseModel):
 
 class ShreckWorldAgentJobRead(BaseModel):
     id: str
-    shreckworld_id: str
+    shreckworld_id: str | None
+    ontology_id: int | None = None
     status: Literal["queued", "running", "completed", "failed"]
     stage: str
     created_at: datetime

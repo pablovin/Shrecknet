@@ -1,7 +1,7 @@
 [project]
 name = "shreckconfig"
 version = "0.1.0"
-description = "Shared file-only browser security configuration"
+description = "Shared validated browser security and service configuration"
 requires-python = ">=3.10"
 dependencies = ["pydantic>=2,<3", "python-dotenv>=1,<2"]
 

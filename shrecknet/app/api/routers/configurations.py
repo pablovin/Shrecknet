@@ -100,6 +100,7 @@ def _reconcile_llm_targets(
     return reconciled
 
 SETTINGS_GROUPS: list[dict[str, Any]] = [
+    {"id": "shreckworld", "label": "Shreckworld", "fields": ["shreckworld_embedding_backend"]},
     {
         "id": "runtime",
         "label": "Runtime",
@@ -246,6 +247,11 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
 ]
 
 FIELD_UI_META: dict[str, dict[str, Any]] = {
+    "shreckworld_embedding_backend": {
+        "type": "enum", "label": "Embedding backend", "options": ["onnx", "torch", "openvino"],
+        "requires_restart": True,
+        "help": "ONNX is the default CPU backend. After changing, drain indexing, run Shreckworld model prefetch, restart its API/worker, then reindex sources. ONNX/OpenVINO require CPU. An explicit SHRECKWORLD_EMBEDDING_BACKEND deployment override takes precedence.",
+    },
     "app_name": {"type": "string", "help": "Application name shown in logs and diagnostics."},
     "debug": {"type": "boolean", "help": "Enable debug behavior and verbose internals."},
     "enable_ai_agents": {"type": "boolean", "label": "Enable Agents", "help": "Global toggle for agent jobs. Can only be turned on when shreckLLM is operational."},
@@ -438,6 +444,11 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail=f"Invalid model target: {field}") from exc
     merged = get_settings().model_dump()
     merged.update(payload)
+    if "shreckworld_embedding_backend" in payload:
+        try:
+            Settings(**merged)
+        except ValidationError as exc:
+            raise HTTPException(400, detail="shreckworld_embedding_backend must be onnx, torch, or openvino") from exc
     if VALIDATION_RETRIES in payload:
         try:
             Settings(**merged)
@@ -609,6 +620,7 @@ def get_config_schema() -> dict[str, Any]:
     restart_required_fields = sorted(editable_fields & RESTART_REQUIRED_FIELDS)
 
     group_definitions: list[dict[str, Any]] = [
+        {"id": "shreckworld", "label": "Shreckworld", "fields": ["shreckworld_embedding_backend"]},
         {"id": "app_runtime", "label": "App Runtime", "fields": ["app_name", "debug", "event_publisher_mode", "event_webhook_url"]},
         {"id": "user_access", "label": "User Access", "fields": ["user_creation_mode", "email_verification_enabled", "email_service_configured", "smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_tls_mode", "smtp_sender_email", "smtp_sender_name", "email_verification_frontend_url", "email_verification_subject", "email_verification_text_template", "email_verification_html_template"]},
         {"id": "media_uploads", "label": "Media & Uploads", "fields": ["media_root", "media_base_url", "media_public_url", "max_image_upload_bytes", "image_max_width", "image_max_height", "max_pdf_upload_bytes", "library_max_pdf_bytes"]},

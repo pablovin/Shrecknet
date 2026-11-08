@@ -6,6 +6,13 @@ Shrecknet identity and shares document algorithms with Librarian through
 private source files/covers, and indexing jobs. It imports no Librarian graph
 storage or Neo4j runtime.
 
+Each source item references a Shrecknet ontology directly through `ontology_id`.
+Atlas uses that ontology for graph content; ShreckWorld uses it for source items.
+There is no separate world/library creation or provisioning step. The direct API
+uses `/ontologies/{id}/items`; old collection routes remain for compatibility.
+Deploy the service before the UI and preview/migrate existing items using the
+[reader contract](../Documentation/API/SHRECKWORLD_READER_API.md#legacy-item-migration).
+
 Sources support PDF, DOCX, Markdown, and text. PDF indexing uses Docling layout,
 headings, tables, and bounding boxes; contextual, tokenizer-bounded E5 children
 retain separate display text and complete semantic parents. OCR is disabled.
@@ -19,10 +26,21 @@ overlay also supports ShreckWorld. See the
 [indexing API](../Documentation/API/SHRECKWORLD_INDEXING_API.md) for rollout,
 configuration, failure states, progress/timing fields, and rollback.
 
+CPU embedding uses ONNX Runtime by default. In Shrecknet's configuration frontend,
+select `Shreckworld → Embedding backend` to choose `onnx`, `torch`, or `openvino`.
+Compose images include all three; after changing, drain indexing, run prefetch,
+restart API/worker, and reindex sources. An explicit
+`SHRECKWORLD_EMBEDDING_BACKEND` environment value overrides the frontend setting.
+Local OpenVINO installs use `./shreckworld[openvino]`.
+Prefetch exports portable models; each host optimizes at load
+time. See [CPU backend setup](../Documentation/API/SHRECKWORLD_INDEXING_API.md#portable-cpu-backends)
+for compatibility and rollout details. Terminal attempts emit a
+`[SHRECKWORLD_INDEXING_SUMMARY]` JSON console log with phase and parser timings.
+
 For a local installation from the repository root:
 
 ```bash
-python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.6,<2.9' torchvision
 python -m pip install -e ./shreckconfig -e ./shreckdoc -e './shreckworld[test]'
 export HF_HOME="$PWD/shreckworld/models/hf"
 export HF_HUB_CACHE="$HF_HOME"

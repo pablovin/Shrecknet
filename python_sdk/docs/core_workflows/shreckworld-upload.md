@@ -6,13 +6,19 @@ reading, semantic questions, model readiness, and indexing-job access. Upload
 examples use `httpx`, an SDK dependency, for multipart source submission.
 Shrecknet's ontology/world resources do not target this service.
 
+Source items belong directly to an existing ontology, without a collection creation
+step. Integer IDs in `sdk.shreckworld.sources(7)` and `query(7, question)` use the
+direct ontology routes. Source/answer models expose `ontology_id`; new sources
+have null `shreckworld_id`. The upload example accepts `--ontology-id` for this
+workflow and retains `--world-id` only for old collections.
+
 The [runnable upload example](../../examples/11_shreckworld/upload_document.py)
 sends multipart `auto_extract_metadata=true` and a source under the legacy `pdf`
 field. It prints the saved item and downloads its cover when available:
 
 ```bash
 export SHRECKNET_TOKEN='your-existing-access-token'
-python python_sdk/examples/11_shreckworld/upload_document.py book.pdf --world-id WORLD_ID
+python python_sdk/examples/11_shreckworld/upload_document.py book.pdf --ontology-id 7
 ```
 
 Use `--title 'Reviewed title'` to override extracted title metadata. Upload requires
@@ -43,10 +49,26 @@ python python_sdk/examples/11_shreckworld/poll_indexing_job.py --world-id WORLD_
 
 Historical jobs may have `null` processing times and metrics, or retain a
 historical `hash` backend. New indexing uses verified `sentence_transformers`
-only and fails explicitly when the model is unavailable. Old hash/wrong-model
+(PyTorch), `onnx`, or `openvino` and fails explicitly when the selected backend
+is unavailable. Switching backend requires reindexing. Old hash/wrong-model
 sources require reindexing for semantic retrieval. See the canonical
 [indexing API](../../../Documentation/API/SHRECKWORLD_INDEXING_API.md) for strict
 readiness, structural parsing, timing semantics, and deployment/rollback.
+
+The polling example prints a terminal timing summary to stderr for both completed
+and failed jobs, including `elapsed_seconds`, `queue_wait_seconds`,
+`processing_seconds`, and `metrics.phase_seconds`/`metrics.parser_seconds`, sorted
+by duration within each group. Parser substeps are already included in parsing.
+Stdout remains JSON; `--result-file result.json` saves the terminal response for
+comparisons. Check `parser_cache_hit` when comparing runs.
+
+ONNX is the default CPU backend. Administrators can change
+`shreckworld_embedding_backend` in Shrecknet's `Shreckworld` configuration tab;
+the same field is available through its existing `/config/` API. Prefetch and
+restart Shreckworld API/worker before reindexing with a new backend. Workers emit
+`[SHRECKWORLD_INDEXING_SUMMARY]` JSON logs with the terminal timing fields for
+both successful and failed attempts. See the
+[configuration contract](../../../Documentation/API/SHRECKWORLD_INDEXING_API.md#portable-cpu-backends).
 
 ## Typed readiness and job access
 

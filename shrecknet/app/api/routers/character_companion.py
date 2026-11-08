@@ -148,7 +148,7 @@ async def messages(chat_id: UUID, before: str | None = None, limit: int = Query(
     offset = decode_cursor(before, actor.id)
     rows = list((await svc.session.execute(select(CompanionMessage).where(CompanionMessage.chat_id == str(chat_id)).order_by(
         CompanionMessage.created_at.desc(), CompanionMessage.id.desc()).offset(offset).limit(limit + 1))).scalars())
-    return {"items": [record(row) for row in reversed(rows[:limit])], "next_cursor": cursor(actor.id, offset + limit) if len(rows) > limit else None}
+    return {"items": await svc.repo.message_records(list(reversed(rows[:limit])), actor.id), "next_cursor": cursor(actor.id, offset + limit) if len(rows) > limit else None}
 
 
 @router.post("/chats/{chat_id}/turns", status_code=202, response_model=TurnQueued)

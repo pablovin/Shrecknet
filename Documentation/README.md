@@ -95,7 +95,7 @@ Detailed API documentation for specific features
 - [Forum API Documentation](./API/FORUM_API_DOCUMENTATION.md)
 - [Library API](./API/LIBRARY_API.md)
 - [Image uploads and processing](./API/MEDIA_UPLOADS.md) - shared resizing behavior, affected upload flows, and configuration
-- [ShreckWorld indexing API](./API/SHRECKWORLD_INDEXING_API.md) - Structured indexing, strict semantic readiness, job polling, extraction coverage, deployment, and migration
+- [ShreckWorld indexing API](./API/SHRECKWORLD_INDEXING_API.md) - Structured indexing, frontend CPU backend configuration, readiness, job polling, console timing summaries, extraction coverage, deployment, and migration
 - [ShreckWorld upload API](./API/SHRECKWORLD_UPLOAD_API.md) - Metadata autofill, frontend multipart fields, and authenticated covers
 - [Backup API](./API/BACKUP_API.md)
 - [Admin Clear Endpoints](./API/ADMIN_CLEAR_ENDPOINTS.md)

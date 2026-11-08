@@ -75,6 +75,7 @@ def test_query_isolated_to_its_shreckworld(monkeypatch, tmp_path):
         session.close()
 
     class Embedder:
+        backend = "sentence_transformers"
         settings = SimpleNamespace(embedding_model_id="test-e5")
         def ensure_ready(self):
             return {"fingerprint": "a" * 64}

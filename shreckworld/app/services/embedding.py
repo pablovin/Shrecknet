@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import tempfile
 import threading
 from functools import lru_cache
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any
 
 from shreckdoc.pipeline import _model_token_limit, _token_count
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 
 
 class EmbeddingUnavailable(RuntimeError):
@@ -51,13 +52,71 @@ def snapshot_fingerprint(path: Path) -> str:
     return digest.hexdigest()
 
 
+def backend_fingerprint(path: Path, backend: str, source_fingerprint: str) -> str:
+    """Keep converted weights/configuration distinct from every other encoder."""
+    required = [path / "onnx/model.onnx"] if backend == "onnx" else [
+        path / "openvino/openvino_model.xml", path / "openvino/openvino_model.bin",
+    ]
+    if not all(file.is_file() for file in required):
+        raise EmbeddingUnavailable(f"Missing {backend} artifacts; run python -m app.prefetch first")
+    digest = hashlib.sha256(f"{backend}:{source_fingerprint}".encode())
+    for file in sorted(file for file in path.rglob("*") if file.is_file()):
+        digest.update(str(file.relative_to(path)).encode())
+        with file.open("rb") as handle:
+            for part in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(part)
+    return digest.hexdigest()
+
+
+def backend_model_kwargs(settings: Settings, *, export: bool) -> dict[str, Any]:
+    """Optimize on this host at load time; never persist CPU-specific binaries."""
+    options: dict[str, Any] = {"export": export, "local_files_only": True}
+    if settings.embedding_backend == "onnx":
+        import onnxruntime as ort
+        session = ort.SessionOptions()
+        session.intra_op_num_threads = settings.embedding_threads
+        session.inter_op_num_threads = 1
+        session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        options.update(provider="CPUExecutionProvider", session_options=session)
+    else:
+        options["ov_config"] = {"INFERENCE_NUM_THREADS": settings.embedding_threads,
+                                "INFERENCE_PRECISION_HINT": "f32", "PERFORMANCE_HINT": "LATENCY"}
+        if export:
+            # Optimum otherwise may compress exported weights to fp16.
+            options["load_in_8bit"] = False
+    return options
+
+
+def prepare_embedding_backend(settings: Settings) -> None:
+    """Export once in prefetch; serving processes only load read-only artifacts."""
+    if settings.embedding_backend == "torch":
+        return
+    from sentence_transformers import SentenceTransformer
+    source = model_snapshot(settings.embedding_model_id, revision=settings.embedding_revision,
+                            local_files_only=True)
+    fingerprint = snapshot_fingerprint(source)
+    destination = settings.embedding_artifacts_path / fingerprint / settings.embedding_backend
+    if destination.exists():
+        backend_fingerprint(destination, settings.embedding_backend, fingerprint)
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
+        staged = Path(temporary) / "model"
+        model = SentenceTransformer(str(source), device="cpu", backend=settings.embedding_backend,
+                                    trust_remote_code=False, local_files_only=True,
+                                    model_kwargs=backend_model_kwargs(settings, export=True))
+        model.save_pretrained(str(staged))
+        backend_fingerprint(staged, settings.embedding_backend, fingerprint)
+        staged.rename(destination)
+
+
 class ShreckWorldEmbedder:
     def __init__(self) -> None:
         self.settings = get_settings()
         self._model: Any = None
         self._ready = False
         self._lock = threading.RLock()
-        self.backend = "sentence_transformers"
+        self.backend = "sentence_transformers" if self.settings.embedding_backend == "torch" else self.settings.embedding_backend
         self.fingerprint: str | None = None
         self.revision: str | None = None
 
@@ -72,9 +131,19 @@ class ShreckWorldEmbedder:
                 self.settings.embedding_model_id, revision=self.settings.embedding_revision,
                 local_files_only=self.settings.embedding_local_files_only,
             )
-            self._model = SentenceTransformer(str(path), device=self.settings.embedding_device, trust_remote_code=False)
-            self.fingerprint = snapshot_fingerprint(path)
+            fingerprint = snapshot_fingerprint(path)
+            options: dict[str, Any] = {}
+            load_path = path
+            if self.settings.embedding_backend != "torch":
+                load_path = self.settings.embedding_artifacts_path / fingerprint / self.settings.embedding_backend
+                fingerprint = backend_fingerprint(load_path, self.settings.embedding_backend, fingerprint)
+                options = {"backend": self.settings.embedding_backend,
+                           "model_kwargs": backend_model_kwargs(self.settings, export=False)}
+            model = SentenceTransformer(str(load_path), device=self.settings.embedding_device,
+                                        trust_remote_code=False, local_files_only=True, **options)
+            self.fingerprint = fingerprint
             self.revision = path.name
+            self._model = model
         return self._model
 
     def _validate_vector(self, row: Any) -> list[float]:

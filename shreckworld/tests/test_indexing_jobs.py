@@ -193,6 +193,44 @@ def test_parsing_is_indeterminate_and_heartbeat_is_visible(api, runtime, monkeyp
     run(item_id, job_id)
 
 
+@pytest.mark.parametrize("backend", ["onnx", "openvino"])
+def test_accelerated_backend_is_preserved_in_final_metrics(api, runtime, monkeypatch, backend):
+    runtime.backend = backend
+    prefix, item_id, job_id = queued_job(api, monkeypatch)
+    run(item_id, job_id)
+    client, headers, _ = api
+    final = client.get(f"{prefix}/index-jobs/{job_id}", headers=headers).json()
+    assert final["status"] == "completed", final
+    assert final["metrics"]["embedding_backend"] == backend
+    assert final["processing_seconds"] == pytest.approx(sum(final["metrics"]["phase_seconds"].values()))
+    from app.services.query import resolve_retrieval_scope
+    with session_factory()() as session:
+        scope = resolve_retrieval_scope(session, shreckworld_id=api[2])
+        assert scope.trace["embedding_backend"] == backend
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_terminal_console_summary_matches_persisted_metrics(api, runtime, monkeypatch, caplog, failed):
+    import json
+    import logging
+    prefix, item_id, job_id = queued_job(api, monkeypatch)
+    if failed:
+        monkeypatch.setattr("app.services.ingestion.parse_source", lambda *a, **kw: (_ for _ in ()).throw(ValueError("private source detail")))
+    with caplog.at_level(logging.INFO, logger="app.services.ingestion"):
+        run(item_id, job_id)
+    records = [record for record in caplog.records if "[SHRECKWORLD_INDEXING_SUMMARY]" in record.message]
+    assert len(records) == 1
+    summary = json.loads(records[0].message.split("] ", 1)[1])
+    client, headers, _ = api
+    final = client.get(f"{prefix}/index-jobs/{job_id}", headers=headers).json()
+    assert summary["job_id"] == job_id and summary["library_item_id"] == item_id
+    assert summary["status"] == ("failed" if failed else "completed")
+    assert summary["phase_seconds"] == final["metrics"]["phase_seconds"]
+    assert summary["parser_seconds"] == final["metrics"]["parser_seconds"]
+    assert summary["processing_seconds"] == final["processing_seconds"]
+    assert "private source detail" not in records[0].message
+
+
 def test_duration_uses_utc_and_legacy_jobs_have_unknown_processing_time():
     start = datetime(2026, 10, 15, 12, 0)
     job = EmbeddingJobRead(id="job", library_item_id="item", status="completed", progress=100, detail=None,

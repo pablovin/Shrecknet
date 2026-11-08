@@ -1,6 +1,8 @@
 """ShreckWorld-owned planned retrieval and evidence-coverage orchestration."""
 from __future__ import annotations
 
+from app.repositories.source_scope import OntologyScope, source_scope, item_scope_clause, item_in_scope
+
 import json
 import logging
 import re
@@ -68,22 +70,22 @@ class _CoverageReview(BaseModel):
 
 
 def validate_query_scope(session: Session, *, shreckworld_id: str,
-                         payload: ShreckWorldQueryRequest) -> ShreckWorld:
-    world = session.get(ShreckWorld, shreckworld_id)
+                         payload: ShreckWorldQueryRequest) -> ShreckWorld | OntologyScope:
+    world = source_scope(session, shreckworld_id)
     if world is None:
         raise QueryScopeError(404, "ShreckWorld not found")
     if payload.library_item_id is not None:
         item = session.get(ShreckWorldLibraryItem, payload.library_item_id)
-        if item is None or item.shreckworld_id != shreckworld_id:
+        if item is None or not item_in_scope(item, shreckworld_id):
             raise QueryScopeError(404, "ShreckWorld library item not found")
     if payload.library_item_ids is not None:
         for item_id in payload.library_item_ids:
             item = session.get(ShreckWorldLibraryItem, item_id)
-            if item is None or item.shreckworld_id != shreckworld_id:
+            if item is None or not item_in_scope(item, shreckworld_id):
                 raise QueryScopeError(404, "ShreckWorld library item not found")
     if payload.selection is not None:
         selected = session.get(ShreckWorldLibraryItem, payload.selection.library_item_id)
-        if selected is None or selected.shreckworld_id != shreckworld_id:
+        if selected is None or not item_in_scope(selected, shreckworld_id):
             raise QueryScopeError(404, "Selected ShreckWorld source not found")
         if selected.source_sha256 != payload.selection.source_sha256:
             raise QueryScopeError(409, "The selected document has changed. Reopen it before asking.")
@@ -145,7 +147,7 @@ def _requires_planning(query: str) -> bool:
 
 def _source_metadata(session: Session, *, shreckworld_id: str,
                      request: ShreckWorldQueryRequest) -> list[dict[str, str]]:
-    statement = select(ShreckWorldLibraryItem).where(ShreckWorldLibraryItem.shreckworld_id == shreckworld_id)
+    statement = select(ShreckWorldLibraryItem).where(item_scope_clause(shreckworld_id))
     if request.library_item_id is not None:
         statement = statement.where(ShreckWorldLibraryItem.id == request.library_item_id)
     elif request.library_item_ids is not None:
@@ -154,7 +156,7 @@ def _source_metadata(session: Session, *, shreckworld_id: str,
     return [{"title": item.title, "authors": item.authors or ""} for item in items]
 
 
-def _plan_query(session: Session, *, world: ShreckWorld, request: ShreckWorldQueryRequest,
+def _plan_query(session: Session, *, world: ShreckWorld | OntologyScope, request: ShreckWorldQueryRequest,
                 trace: QueryV3Trace, model_target: ShreckWorldModelTarget) -> tuple[QueryPlan, bool]:
     fallback = _deterministic_plan(request.query)
     if not _requires_planning(request.query) or not get_settings().query_v3_planning_enabled:
@@ -647,7 +649,8 @@ def run_shreckworld_agent(
     source_trace["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
     stage("completed")
     return ShreckWorldQueryResponse(
-        shreckworld_id=shreckworld_id, query=request.query, answer=answer, citations=citations,
+        shreckworld_id=None if isinstance(shreckworld_id, OntologyScope) else shreckworld_id,
+        ontology_id=shreckworld_id.ontology_id if isinstance(shreckworld_id, OntologyScope) else None, query=request.query, answer=answer, citations=citations,
         trace=source_trace if request.include_trace else None, mode=request.mode,
         answer_status=answer_status, answer_content=answer_content, claims=claims,
         evidence=evidence, missing_information=missing_information, conflicts=conflicts,

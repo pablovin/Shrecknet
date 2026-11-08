@@ -198,3 +198,23 @@ def test_rule_review_retains_ambiguity_and_missing_facts():
             assert review.status == 'ambiguous'
             assert review.missing_facts == ['Edition']
     asyncio.run(scenario())
+
+
+def test_integer_ontology_scopes_read_and_query_without_a_collection():
+    async def scenario():
+        async with Shrecknet(token='ontology-token') as sdk:
+            paths = []
+            async def handler(request):
+                paths.append(request.url.path)
+                assert request.headers['Authorization'] == 'Bearer ontology-token'
+                if request.url.path.endswith('/items'):
+                    return httpx.Response(200, json=[{'id':'source','ontology_id':7,'shreckworld_id':None,'title':'Notes','source_sha256':'a'*64,'index_status':'unindexed'}])
+                return httpx.Response(200, json={'ontology_id':7,'shreckworld_id':None,'query':'Explain','answer':'Evidence','citations':[]})
+            await sdk.shreckworld._transport._client.aclose()
+            sdk.shreckworld._transport._client = httpx.AsyncClient(base_url='http://world.test', transport=httpx.MockTransport(handler))
+            assert (await sdk.shreckworld.sources(7))[0].ontology_id == 7
+            assert (await sdk.shreckworld.query(7, 'Explain')).ontology_id == 7
+            assert paths == ['/ontologies/7/items','/ontologies/7/query']
+            with pytest.raises(ValueError):
+                await sdk.shreckworld.sources(0)
+    asyncio.run(scenario())

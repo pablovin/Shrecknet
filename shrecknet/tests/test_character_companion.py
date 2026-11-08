@@ -183,7 +183,8 @@ def test_reference_validation_and_partial_json_projection():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('invalid_answer',[False,True])
-async def test_durable_worker_completion_and_duplicate_rapport_delivery(session_maker, monkeypatch,invalid_answer):
+@pytest.mark.parametrize('retrieved',[False,True])
+async def test_durable_worker_completion_and_duplicate_rapport_delivery(session_maker, monkeypatch,invalid_answer,retrieved):
     from contextlib import asynccontextmanager
     from app.jobs.companion import runner
     from app.core.config_store import Settings, LLMModelTarget
@@ -201,13 +202,28 @@ async def test_durable_worker_completion_and_duplicate_rapport_delivery(session_
     async def identity(turn):
         return SimpleNamespace(id=turn.user_id,role='player'), {'character_agent':{'identity_description':{'identity_summary':'Fiona','psychological_summary':'Duty','personality_traits':[]}},'personality_context':{}}
     monkeypatch.setattr(runner,'load_identity',identity)
+    validated = []
+    if retrieved:
+        from app.integrations.companion.retrieval import evidence
+        rows = [evidence('atlas', identifier, 'Forest evidence') for identifier in ('cited', 'uncited')]
+        async def route(*args):
+            return ['atlas']
+        class Retrieval:
+            def __init__(self, *args): pass
+            async def cached(self, *args): return None
+            async def retrieve(self, tool, query):
+                return {'tool':tool,'status':'ok','evidence':rows,'elapsed_ms':1}
+            async def validate_sources(self, sources):
+                validated.extend(sources)
+        monkeypatch.setattr(runner, 'route', route)
+        monkeypatch.setattr(runner, 'CompanionRetrieval', Retrieval)
     class LLM:
         calls=0
         def __init__(self,**kwargs):pass
         async def aclose(self):pass
         async def stream_chat(self,**kwargs):
             LLM.calls+=1
-            raw=json.dumps({'segments':[{'id':'s1','kind':'fact' if invalid_answer else 'conversation','text':'Hello, friend.','evidence_ids':[]}],'coverage':'complete','warnings':[]})
+            raw=json.dumps({'segments':[{'id':'s1','kind':'fact' if invalid_answer else 'conversation','text':'Hello, friend.','evidence_ids':[rows[0]['evidence_id']] if retrieved and not invalid_answer else []}],'coverage':'complete','warnings':[]})
             for part in (raw[:45],raw[45:60],raw[60:]):yield part
         async def chat(self,**kwargs):return '{"changes":[]}'
     monkeypatch.setattr(runner,'ShreckLLMClient',LLM)
@@ -233,6 +249,12 @@ async def test_durable_worker_completion_and_duplicate_rapport_delivery(session_
             return
         assert turn.status=='completed' and turn.result['text']=='Hello, friend.'
         assert turn.draft=='Hello, friend.'
+        if retrieved:
+            assert validated == rows  # Uncited supplied sources are revalidated too.
+            assert turn.result['tool_calls'][0]['evidence_ids'] == [row['evidence_id'] for row in rows]
+            assert len(turn.result['citations']) == 1
+        else:
+            assert turn.result['tool_calls'] == []
         names=[row.type for row in (await session.execute(select(CompanionEvent).order_by(CompanionEvent.id))).scalars()]
         assert names.index('response.final') < names.index('turn.completed')
         rapport_outbox=(await session.execute(select(CompanionOutbox).where(CompanionOutbox.kind=='rapport'))).scalars().one().id
@@ -517,3 +539,13 @@ async def test_provider_failure_emits_safe_actionable_error(session_maker, monke
         assert event.payload['code']=='llm_provider_unavailable'
         assert 'sensitive' not in json.dumps(event.payload)
         assert turn.result is None
+
+
+def test_shreckworld_page_context_accepts_direct_ontology_items():
+    from app.schemas.character_companion import PageContext
+    from pydantic import ValidationError
+    context = PageContext(surface='shreckworld', ontology_id=7, library_item_ids=['book'])
+    assert context.ontology_id == 7 and context.shreckworld_id is None
+    with pytest.raises(ValidationError):
+        PageContext(surface='shreckworld', library_item_ids=['book'])
+    assert PageContext(surface='shreckworld', ontology_id=7, shreckworld_id='legacy').shreckworld_id == 'legacy'

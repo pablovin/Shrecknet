@@ -221,3 +221,21 @@ text chat with contextual controls unavailable. Keep additive evidence decoding
 when rolling a module back. See the [Foundry guide](../../Deployment/FOUNDRY_MODULE.md#contextual-chat-and-compact-sidecar)
 and [snapshot API](Frontend%20API.md#foundry-context-snapshots) for the current
 contract, bounds, trust limits and remaining live Foundry acceptance checks.
+
+## Inspecting answer origins
+
+ShreckOS provides an expandable **Answer breakdown** on new committed replies.
+It lists retrieval tools and their outcomes (including empty, timed-out and
+unavailable tools), cache reuse, requested queries, and returned versus supplied
+record counts. Tool evidence includes excerpts and inspectable source references
+and structured data. Answer passages show their declared evidence links; passages
+without links are explicit. Attached context is listed separately from tool calls.
+All supplied sources are validated before commit, including uncited evidence.
+The transcript reconstructs this view from existing turn JSON; older replies have
+no fabricated tool trace and retain their existing Sources view. No database
+migration is required. See the [HTTP contract](Frontend%20API.md#answer-tool-and-evidence-breakdown)
+for privacy, source-access limits and rollout order.
+
+### Ontology-owned ShreckWorld items
+
+A ShreckWorld page context can carry `surface: "shreckworld"`, `ontology_id`, and optional `library_item_ids` directly. It does not require a separately created knowledge world. New clients submit direct ontology scope. Legacy contexts can retain `shreckworld_id` alongside their Atlas ontology; the explicit legacy ID keeps its original source scope. The server may enrich an admitted turn with its character ontology. Direct evidence and citation validation use `/ontologies/{id}/companion-evidence` and `/companion-validate` with the existing turn-bound retrieval grant, pinned to the admitted ontology and optional source subset. Legacy scopes retain their original routes. Evidence cards carry `scope.ontology_id` for direct sources; Nexus opens that ontology/item/page without guessing an association. Model answers and rapport rules are unchanged.

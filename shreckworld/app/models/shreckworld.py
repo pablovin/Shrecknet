@@ -34,7 +34,8 @@ class ShreckWorldLibraryItem(Base):
     __tablename__ = "shreckworld_library_items"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    shreckworld_id: Mapped[str] = mapped_column(ForeignKey("shreckworlds.id", ondelete="CASCADE"), index=True)
+    shreckworld_id: Mapped[str | None] = mapped_column(ForeignKey("shreckworlds.id", ondelete="CASCADE"), nullable=True, index=True)
+    ontology_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     authors: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -57,7 +58,7 @@ class ShreckWorldLibraryItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    shreckworld: Mapped[ShreckWorld] = relationship(back_populates="library_items")
+    shreckworld: Mapped[ShreckWorld | None] = relationship(back_populates="library_items")
     chunks: Mapped[list["ShreckWorldDocumentChunk"]] = relationship(
         back_populates="library_item", cascade="all, delete-orphan"
     )
@@ -110,9 +111,10 @@ class ShreckWorldAgentJob(Base):
     __tablename__ = "shreckworld_agent_jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    shreckworld_id: Mapped[str] = mapped_column(
-        ForeignKey("shreckworlds.id", ondelete="CASCADE"), index=True
+    shreckworld_id: Mapped[str | None] = mapped_column(
+        ForeignKey("shreckworlds.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    ontology_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     owner_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
     stage: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)

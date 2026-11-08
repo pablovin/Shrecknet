@@ -8,6 +8,7 @@ from app.celery_app import celery_app
 from app.db.session import session_factory
 from app.jobs.shreckworld_agent.agent import run_shreckworld_agent
 from app.models import ShreckWorldAgentJob
+from app.repositories.source_scope import OntologyScope
 from app.schemas.shreckworld import ShreckWorldQueryRequest
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ def run_shreckworld_agent_job(job_id: str) -> None:
             session.commit()
 
         result = run_shreckworld_agent(
-            session, shreckworld_id=job.shreckworld_id, request=request, on_stage=update_stage,
+            session, shreckworld_id=OntologyScope(job.ontology_id, f"Ontology {job.ontology_id}") if job.ontology_id is not None else job.shreckworld_id, request=request, on_stage=update_stage,
         )
         job.status, job.stage = "completed", "completed"
         job.result_json = result.model_dump_json()

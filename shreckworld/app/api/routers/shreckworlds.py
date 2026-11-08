@@ -32,6 +32,7 @@ from app.schemas.shreckworld import (
     QuerySourceCoverage,
     ShreckWorldModelSettings,
 )
+from app.repositories.source_scope import OntologyScope, source_scope, item_scope_clause, item_in_scope
 from app.services.query import query_shreckworld
 from app.services.rule_resolution import resolve_action
 from app.services.embedding import EmbeddingInputError, EmbeddingUnavailable, get_embedder
@@ -43,7 +44,7 @@ from app.services.grounded_answer import (
     evidence_item,
     synthesize_grounded_answer,
 )
-from app.services.source_lifecycle import delete_source, delete_world
+from app.services.source_lifecycle import delete_source, delete_world, OntologyOwnedSourcesError
 from app.services.model_settings import (
     get_model_shreckworld_synthesizer,
     save_model_shreckworld_synthesizer,
@@ -67,8 +68,8 @@ def _semantic_errors():
     except EmbeddingInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-def _world_or_404(session: Session, shreckworld_id: str) -> ShreckWorld:
-    world = session.get(ShreckWorld, shreckworld_id)
+def _world_or_404(session: Session, shreckworld_id: str) -> ShreckWorld | OntologyScope:
+    world = source_scope(session, shreckworld_id)
     if world is None:
         raise HTTPException(status_code=404, detail="ShreckWorld not found")
     return world
@@ -76,7 +77,7 @@ def _world_or_404(session: Session, shreckworld_id: str) -> ShreckWorld:
 
 def _item_or_404(session: Session, shreckworld_id: str, item_id: str) -> ShreckWorldLibraryItem:
     item = session.get(ShreckWorldLibraryItem, item_id)
-    if item is None or item.shreckworld_id != shreckworld_id:
+    if item is None or not item_in_scope(item, shreckworld_id):
         raise HTTPException(status_code=404, detail="ShreckWorld library item not found")
     return item
 
@@ -175,7 +176,10 @@ def update_shreckworld(shreckworld_id: str, payload: ShreckWorldUpdate, session:
 @admin_router.delete("/{shreckworld_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, dependencies=[Depends(require_world_manager)])
 def delete_shreckworld(shreckworld_id: str, session: Session = Depends(get_db)) -> None:
     world = _world_or_404(session, shreckworld_id)
-    delete_world(session, world)
+    try:
+        delete_world(session, world)
+    except OntologyOwnedSourcesError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @admin_router.post("/{shreckworld_id}/library-items", response_model=ShreckWorldLibraryItemRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_world_manager)])
@@ -207,7 +211,8 @@ def upload_library_item(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     source_hash = hashlib.sha256(raw).hexdigest()
     item = ShreckWorldLibraryItem(
-        shreckworld_id=shreckworld_id, title=metadata.title, authors=metadata.authors, description=metadata.description,
+        shreckworld_id=None if isinstance(shreckworld_id, OntologyScope) else shreckworld_id,
+        ontology_id=shreckworld_id.ontology_id if isinstance(shreckworld_id, OntologyScope) else None, title=metadata.title, authors=metadata.authors, description=metadata.description,
         authority_tier=authority_tier, authority_priority=authority_priority,
         pdf_path="pending", storage_path="pending", original_filename=pdf.filename,
         mime_type=pdf.content_type or mimetypes.guess_type(pdf.filename or "")[0] or "application/octet-stream",
@@ -219,7 +224,7 @@ def upload_library_item(
     except Exception as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail="A source with that title already exists in this ShreckWorld") from exc
-    target = get_settings().media_root / "shreckworlds" / shreckworld_id / item.id / f"source{extension}"
+    target = get_settings().media_root / ("ontologies" if isinstance(shreckworld_id, OntologyScope) else "shreckworlds") / (str(shreckworld_id.ontology_id) if isinstance(shreckworld_id, OntologyScope) else shreckworld_id) / item.id / f"source{extension}"
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(raw)
@@ -245,7 +250,7 @@ def upload_library_item(
 @admin_router.get("/{shreckworld_id}/library-items", response_model=list[ShreckWorldLibraryItemRead], dependencies=[Depends(require_world_manager)])
 def list_library_items(shreckworld_id: str, session: Session = Depends(get_db)) -> list[ShreckWorldLibraryItem]:
     _world_or_404(session, shreckworld_id)
-    return list(session.scalars(select(ShreckWorldLibraryItem).where(ShreckWorldLibraryItem.shreckworld_id == shreckworld_id).order_by(ShreckWorldLibraryItem.authority_priority, ShreckWorldLibraryItem.title)))
+    return list(session.scalars(select(ShreckWorldLibraryItem).where(item_scope_clause(shreckworld_id)).order_by(ShreckWorldLibraryItem.authority_priority, ShreckWorldLibraryItem.title)))
 
 
 @admin_router.patch("/{shreckworld_id}/library-items/{item_id}", response_model=ShreckWorldLibraryItemRead, dependencies=[Depends(require_world_manager)])
@@ -446,7 +451,8 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
                 )
     trace["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
     return ShreckWorldQueryResponse(
-        shreckworld_id=shreckworld_id, query=payload.query, answer=answer, citations=citations,
+        shreckworld_id=None if isinstance(shreckworld_id, OntologyScope) else shreckworld_id,
+        ontology_id=shreckworld_id.ontology_id if isinstance(shreckworld_id, OntologyScope) else None, query=payload.query, answer=answer, citations=citations,
         trace=trace if payload.include_trace else None, mode=payload.mode, answer_status=answer_status,
         claims=claims, missing_information=missing_information, conflicts=conflicts,
         answer_content=answer_content, evidence=evidence, source_warnings=source_warnings,
@@ -461,7 +467,7 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
 
 def _agent_job_read(job: ShreckWorldAgentJob) -> ShreckWorldAgentJobRead:
     return ShreckWorldAgentJobRead(
-        id=job.id, shreckworld_id=job.shreckworld_id, status=job.status, stage=job.stage,
+        id=job.id, shreckworld_id=job.shreckworld_id, ontology_id=job.ontology_id, status=job.status, stage=job.stage,
         created_at=job.created_at, started_at=job.started_at, updated_at=job.updated_at,
         completed_at=job.completed_at,
         result=ShreckWorldQueryResponse.model_validate_json(job.result_json) if job.result_json else None,
@@ -485,7 +491,8 @@ def create_agent_job(
     except QueryScopeError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     job = ShreckWorldAgentJob(
-        shreckworld_id=shreckworld_id, owner_id=principal.user_id,
+        shreckworld_id=None if isinstance(shreckworld_id, OntologyScope) else shreckworld_id,
+        ontology_id=shreckworld_id.ontology_id if isinstance(shreckworld_id, OntologyScope) else None, owner_id=principal.user_id,
         request_json=request.model_dump_json(), created_at=datetime.now(timezone.utc),
     )
     session.add(job)
@@ -511,7 +518,7 @@ def get_agent_job(
     session: Session = Depends(get_db),
 ) -> ShreckWorldAgentJobRead:
     job = session.get(ShreckWorldAgentJob, job_id)
-    if job is None or job.shreckworld_id != shreckworld_id:
+    if job is None or (job.ontology_id != shreckworld_id.ontology_id if isinstance(shreckworld_id, OntologyScope) else job.shreckworld_id != shreckworld_id):
         raise HTTPException(status_code=404, detail="ShreckWorld agent job not found")
     if job.owner_id != principal.user_id and principal.role != "admin":
         raise HTTPException(status_code=404, detail="ShreckWorld agent job not found")

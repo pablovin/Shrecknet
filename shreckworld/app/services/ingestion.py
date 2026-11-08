@@ -13,12 +13,28 @@ from shreckdoc.pipeline import EMBEDDING_VERSION, TokenCountingTokenizer, _atomi
 
 from app.models import ShreckWorld, ShreckWorldDocument, ShreckWorldDocumentChunk, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem
 from app.repositories.documents import activate_document
-from app.schemas.shreckworld import IndexingJobMetrics
+from app.schemas.shreckworld import EmbeddingJobRead, IndexingJobMetrics
 from app.services.document_parsing import parse_source, with_heartbeat
 from app.services.embedding import get_embedder
 from app.services.retrieval_index import upsert_item_chunks, delete_document_chunks
 
 logger = logging.getLogger(__name__)
+
+
+def _log_indexing_summary(job: ShreckWorldEmbeddingJob, metrics: IndexingJobMetrics) -> None:
+    """Log persisted terminal timings without source text, vectors, or secrets."""
+    result = EmbeddingJobRead.model_validate(job)
+    summary = {
+        "job_id": job.id, "library_item_id": job.library_item_id, "status": job.status,
+        "embedding_backend": metrics.embedding_backend,
+        "elapsed_seconds": result.elapsed_seconds, "queue_wait_seconds": result.queue_wait_seconds,
+        "processing_seconds": result.processing_seconds,
+        "phase_seconds": metrics.phase_seconds, "parser_seconds": metrics.parser_seconds,
+        "parser_cache_hit": metrics.parser_cache_hit,
+        "processed_chunks": metrics.processed_chunks, "total_chunks": metrics.total_chunks,
+    }
+    logger.log(logging.INFO if job.status == "completed" else logging.WARNING,
+               "[SHRECKWORLD_INDEXING_SUMMARY] %s", json.dumps(summary, sort_keys=True))
 
 
 def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -> None:
@@ -59,7 +75,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
     try:
         embedder = get_embedder()
         health = embedder.ensure_ready()
-        metrics.embedding_backend = "sentence_transformers"
+        metrics.embedding_backend = embedder.backend
         metrics.embedding_model = embedder.settings.embedding_model_id
         metrics.embedding_fingerprint = str(health["fingerprint"])
         metrics.embedding_revision = str(health["revision"])
@@ -67,7 +83,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         path = Path(item.storage_path or item.pdf_path)
         if _sha256(path) != item.source_sha256:
             raise ValueError("Source hash changed after upload; refusing to index a different document")
-        world = session.get(ShreckWorld, item.shreckworld_id)
+        world = session.get(ShreckWorld, item.shreckworld_id) if item.shreckworld_id else None
         phase("parsing", 5, "Parsing structure with Docling; page progress is indeterminate", indeterminate=True)
 
         def parsing_heartbeat(total: int | None) -> None:
@@ -88,7 +104,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         metrics.sections, metrics.blocks = len(normalized.sections), len(normalized.blocks)
         if metrics.empty_pages:
             metrics.warnings.append(f"{metrics.empty_pages} pages yielded no retrievable text; OCR is not performed.")
-        scope_id, book_title, system_name = item.shreckworld_id, item.title, world.name if world else ""
+        scope_id, book_title, system_name = str(item.ontology_id) if item.ontology_id is not None else item.shreckworld_id, item.title, world.name if world and item.ontology_id is None else ""
         ingestion_id, source_item_id = job.id, item.id
         phase("chunking", 35, "Building structural parents and tokenizer-bounded E5 children", indeterminate=True)
         tokenizer = TokenCountingTokenizer(embedder.tokenizer)
@@ -163,6 +179,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         job.detail = f"Embedded {len(children)} semantic children with {len(parents)} parents"
         job.metrics_json = metrics.model_dump_json()
         session.commit()
+        _log_indexing_summary(job, metrics)
     except Exception as exc:
         session.rollback()
         metrics.phase_seconds[metrics.phase] = round(monotonic() - phase_started, 3)
@@ -178,6 +195,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         job.status, job.detail, job.completed_at, job.updated_at = "failed", item.embedding_error, now, now
         job.metrics_json = metrics.model_dump_json()
         session.commit()
+        _log_indexing_summary(job, metrics)
         if attempted_projection:
             try:
                 delete_document_chunks(job_id)

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from shreckconfig.shreckworld import DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, read_runtime_config, runtime_config_file
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SHRECKWORLD_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="SHRECKWORLD_", extra="ignore", env_ignore_empty=True)
 
     app_name: str = "ShreckWorld"
     database_url: str = "sqlite:///./databases/shreckworld.db"
@@ -26,6 +28,8 @@ class Settings(BaseSettings):
     embedding_model_id: str = "intfloat/multilingual-e5-small"
     embedding_dimension: int = 384
     embedding_device: str = "cpu"
+    embedding_backend: EmbeddingBackend = DEFAULT_EMBEDDING_BACKEND
+    embedding_artifacts_path: Path = Path("./models/embedding")
     embedding_revision: str | None = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
     embedding_local_files_only: bool = True
     embedding_batch_size: int = Field(default=16, ge=1, le=128)
@@ -52,6 +56,16 @@ class Settings(BaseSettings):
     query_v3_coverage_review_enabled: bool = True
     query_v3_evidence_token_budget: int = Field(default=8000, ge=1000, le=32000)
 
+    @model_validator(mode="after")
+    def validate_embedding_device(self) -> "Settings":
+        if self.embedding_backend != "torch" and self.embedding_device != "cpu":
+            raise ValueError("ONNX and OpenVINO embedding backends require EMBEDDING_DEVICE=cpu")
+        return self
+
 
 def get_settings() -> Settings:
+    if not os.environ.get("SHRECKWORLD_EMBEDDING_BACKEND"):
+        shared = read_runtime_config(runtime_config_file())
+        if shared is not None:
+            return Settings(embedding_backend=shared.embedding_backend)
     return Settings()

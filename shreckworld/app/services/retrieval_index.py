@@ -32,7 +32,7 @@ def upsert_item_chunks(item: ShreckWorldLibraryItem, chunks: list[ShreckWorldDoc
         if chunk.chunk_role != "child" or len(vector) != document.embedding_dimension or not all(math.isfinite(value) for value in vector):
             raise ValueError("Only validated semantic child vectors can be projected")
         points.append(PointStruct(id=chunk.id, vector=vector, payload={
-            "shreckworld_id": item.shreckworld_id, "library_item_id": item.id,
+            "ontology_id": item.ontology_id, "shreckworld_id": item.shreckworld_id, "library_item_id": item.id,
             "document_id": document.id, "embedding_fingerprint": document.embedding_fingerprint,
             "page_number": chunk.page_number, "ordinal": chunk.ordinal,
             "authority_tier": item.authority_tier, "authority_priority": item.authority_priority,
@@ -55,7 +55,8 @@ def search_chunks(*, world_id: str, document_ids: list[str], fingerprint: str, v
     rows = get_client().search(
         collection_name=get_settings().qdrant_collection, query_vector=vector, limit=limit,
         query_filter=Filter(must=[
-            FieldCondition(key="shreckworld_id", match=MatchValue(value=world_id)),
+            # SQL-authorized document IDs are the scope boundary. This also
+            # preserves old vectors after items gain direct ontology ownership.
             FieldCondition(key="document_id", match=MatchAny(any=document_ids)),
             FieldCondition(key="embedding_fingerprint", match=MatchValue(value=fingerprint)),
         ]), with_payload=False,

@@ -1,5 +1,7 @@
 # ShreckWorld structured indexing and job polling
 
+New items are directly owned by ontologies. Use `/ontologies/{ontology_id}/items` and its item/index subroutes; no ShreckWorld creation is required. The `/admin/shreckworlds/.../library-items` routes below remain compatibility contracts. See [direct routes and migration](SHRECKWORLD_READER_API.md#direct-ontology-item-routes) for authorization, item ownership, deployment and rollback.
+
 ## Routes and access
 
 All indexing routes require a Shrecknet bearer token with role `admin` or
@@ -137,7 +139,8 @@ Up to 32 distinct warning/error messages of at most 1,000 source characters are
 retained. Such warnings identify potential parsing loss for reader review;
 successful E5 inference does not certify perfect table recognition.
 
-New jobs use `sentence_transformers` only. Historical metrics may contain `hash`;
+New jobs report `sentence_transformers` (PyTorch), `onnx`, or `openvino` according
+to the configured embedding backend. Historical metrics may contain `hash`;
 this is preserved as historical evidence, never used as a semantic fallback.
 Model/fingerprint/revision/tokenizer fields remain `null` until verified. Phase
 seconds use a monotonic clock. Progress is an approximate stage indicator:
@@ -166,6 +169,9 @@ readiness until a new probe passes. A missing encoder/artifact directory yields
 | `EMBEDDING_REVISION` | `614241f622f53c4eeff9890bdc4f31cfecc418b3`; change deliberately with model ID |
 | `EMBEDDING_DIMENSION` | `384`; must match actual model and Qdrant collection |
 | `EMBEDDING_DEVICE` | `cpu`; unavailable requested CUDA fails explicitly |
+| `EMBEDDING_BACKEND` | `onnx`; accepts `onnx`, `torch`, `openvino`. An explicit nonempty environment value overrides the shared frontend setting. ONNX/OpenVINO require `EMBEDDING_DEVICE=cpu` |
+| `RUNTIME_CONFIG_FILE` | Shared non-secret Shrecknet projection; Compose `/service-config/shreckworld.json`, local repository `shrecknet/databases/service-config/shreckworld.json` |
+| `EMBEDDING_ARTIFACTS_PATH` | `./models/embedding`; Compose `/hf-cache/shreckworld-embedding`; converted model cache, writable only during prefetch |
 | `EMBEDDING_LOCAL_FILES_ONLY` | `true`; runtime uses prefetched local snapshots |
 | `EMBEDDING_BATCH_SIZE` | `16`, range 1–128 |
 | `EMBEDDING_THREADS` | `4`, range 1–32 |
@@ -184,6 +190,109 @@ The existing GPU overlay also configures ShreckWorld; CUDA does not silently
 fall back to CPU. Semantic readiness does not guarantee perfect document
 recognition or factual correctness, and future hardware/model errors can still
 occur; such errors must be visible instead of generating hash vectors.
+
+### Portable CPU backends
+
+ONNX Runtime is the default E5 embedding backend. PyTorch and OpenVINO are
+selectable alternatives, applied consistently to indexing and query encoding. They do not change
+Docling parsing or the optional cross-encoder reranker. ONNX is the first choice
+for hosts with different CPU vendors. OpenVINO is primarily optimized for Intel
+hardware; verify its supported CPU/OS requirements on each host. Neither backend
+guarantees a speedup for a particular document or machine.
+
+The Shrecknet administrator configuration frontend renders the `Shreckworld` tab
+from `GET /config/schema`, with an editable `Embedding backend` enum. Save through
+the existing administrator-only `PUT /config/` route:
+
+```json
+{"shreckworld_embedding_backend": "onnx"}
+```
+
+The default is `onnx`; allowed alternatives are `torch` and `openvino`. Invalid
+values return `400`; reads, schema, and saves retain the existing administrator
+authorization. This field has `change_impact=service_restart`, not hot reload.
+Shrecknet's configuration database remains authoritative. Loading/reloading or
+saving settings atomically publishes only `embedding_backend` into
+`shrecknet/databases/service-config/shreckworld.json`. Shreckworld reads this
+projection without accessing Shrecknet's databases. Do not edit the generated
+file; use the frontend/API or the initial seed `configs/shrecknet.initial.json`.
+A missing projection uses ONNX; an invalid projection fails configuration
+explicitly. A publication error fails the configuration operation. The database
+may already contain the saved value; reload repairs the projection before restarting services.
+
+Precedence is a nonempty `SHRECKWORLD_EMBEDDING_BACKEND` environment override,
+then the shared file, then ONNX. Compose leaves that override empty by default
+so frontend changes take effect. Clear a previous explicit `.env` backend value
+when moving control to the frontend. The GPU overlay explicitly selects `torch`
+with `cuda` and overrides the frontend CPU selection.
+
+On first deployment, rebuild Shrecknet and all Shreckworld images to install the
+shared configuration module and runtime dependencies. Compose's Shreckworld
+image includes all three backends; later selections need no rebuild. Drain/stop
+indexing before changing the selection, run
+`docker compose run --rm shreckworld_model_prefetch`, then restart/recreate
+Shreckworld API and worker together and reindex sources. The cached encoder stays
+active until its process restarts; the saved selection is not an indication that
+an existing process has switched. Verify `/ready` after restart. The projection
+directory is mounted read-only into API, worker, and prefetch. Initial directory
+ownership is prepared by `shrecknet_permissions` before prefetch runs.
+
+Local installations include ONNX in the base package. Install
+`python -m pip install -e './shreckworld[openvino]'` to enable OpenVINO locally,
+and run `python -m app.prefetch` from `shreckworld/` after changing the selection.
+Dependency ranges retain the Optimum 1.x interface used
+by Sentence Transformers 3.x, with PyTorch 2.6–2.8 for exporter compatibility.
+Use a dedicated local environment for these extras; choose matching CPU
+PyTorch/torchvision wheels before installation, as the Compose image does.
+
+Prefetch exports the pinned local source snapshot into a separate directory
+keyed by source fingerprint and backend, publishing it only after export succeeds.
+Runtime loads these artifacts with export/downloads disabled, allowing the cache
+to remain read-only. Missing artifacts fail readiness with `503`; there is no
+automatic backend fallback. Failed export leaves no published backend directory.
+To replace a damaged export, stop API/worker, remove only that backend's directory
+under `EMBEDDING_ARTIFACTS_PATH`, and rerun prefetch.
+
+ONNX uses `CPUExecutionProvider`, runtime graph optimization, and the configured
+thread count. OpenVINO uses CPU compilation with FP32 precision and the configured
+thread count. Exports are unquantized: no AVX512/VNNI-specific quantization or
+host-compiled executable is shipped between machines. Each runtime optimizes for
+the CPU on which it loads. Install runtime wheels supported by each host's OS and
+architecture; portability of model files does not make a runtime wheel universal.
+
+Converted encoder identity includes the backend, source fingerprint, and all
+exported artifact bytes, including pooling/tokenizer configuration and external
+weights. API and worker must load the same export. Switching backend or changing
+exported artifacts requires reindexing: old generations remain stored but are
+excluded from retrieval until compatible generations are activated. Copy the
+same portable export when sharing an index between hosts; independent exports
+may have different fingerprints. This change needs no database migration.
+Rollback selects `torch`, restarts the services, and uses the original
+source snapshot. Sources last indexed with the converted backend need reindexing
+for PyTorch retrieval. Keep original sources and caches until rollout is accepted.
+
+Benchmark representative books on each machine using `metrics.phase_seconds`.
+`metrics.parser_seconds` breaks parsing into available substeps such as
+`conversion`, `canonical_export`, `primitive_extraction`, and `cache_lookup`.
+These substeps are included in `parsing`, so do not add them to the phase total.
+Compare parser cache hits and misses separately using `metrics.parser_cache_hit`.
+The terminal polling example prints total/queue/processing time and both timing
+groups to stderr, sorting each group by duration; stdout retains job JSON.
+Failed jobs show the measured work up to failure; historical jobs may lack timings.
+
+The worker also emits one `[SHRECKWORLD_INDEXING_SUMMARY]` JSON console log per
+terminal attempt: `job_id`, `library_item_id`, `status`, `embedding_backend`,
+`elapsed_seconds`, `queue_wait_seconds`, `processing_seconds`, `phase_seconds`,
+`parser_seconds`, `parser_cache_hit`, `processed_chunks`, and `total_chunks`.
+Successful attempts log at INFO (enabled by the default worker); failures log at
+WARNING and retain partial timings. These are the persisted job measurements;
+parser substeps overlap parsing. Post-activation artifact/retired-vector cleanup
+is outside the recorded indexing phases. Summary logs omit document contents,
+vectors, credentials, and error text. Capture worker stdout/stderr with the normal
+container logging driver to retain these summaries beyond container lifetime.
+
+See [Sentence Transformers backend guidance](https://www.sbert.net/docs/sentence_transformer/usage/efficiency.html)
+and [OpenVINO supported devices](https://docs.openvino.ai/nightly/documentation/compatibility-and-support/supported-devices.html).
 
 ## Frontend and SDK polling
 

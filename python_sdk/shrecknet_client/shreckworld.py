@@ -17,7 +17,8 @@ class KnowledgeWorld(BaseModel):
 
 class KnowledgeSource(BaseModel):
     id: str
-    shreckworld_id: str
+    shreckworld_id: str | None = None
+    ontology_id: int | None = None
     title: str
     authors: str | None = None
     description: str | None = None
@@ -220,7 +221,8 @@ class KnowledgeQueryV3Trace(BaseModel):
 
 
 class KnowledgeAnswer(BaseModel):
-    shreckworld_id: str
+    shreckworld_id: str | None = None
+    ontology_id: int | None = None
     query: str
     answer: str
     citations: list[KnowledgeCitation]
@@ -244,7 +246,8 @@ class KnowledgeAnswer(BaseModel):
 
 class KnowledgeAgentJob(BaseModel):
     id: str
-    shreckworld_id: str
+    shreckworld_id: str | None = None
+    ontology_id: int | None = None
     status: Literal["queued", "running", "completed", "failed"]
     stage: str
     created_at: datetime
@@ -285,7 +288,7 @@ class KnowledgeJobMetrics(BaseModel):
     extracted_characters: int = 0
     processed_chunks: int = 0
     total_chunks: int | None = None
-    embedding_backend: Literal["sentence_transformers", "hash"] | None = None
+    embedding_backend: Literal["sentence_transformers", "onnx", "openvino", "hash"] | None = None
     embedding_model: str | None = None
     warnings: list[str] = Field(default_factory=list)
     phase_seconds: dict[str, float] = Field(default_factory=dict)
@@ -353,21 +356,30 @@ class ShreckWorldAPI:
         self._transport.token = self._identity.token
         return await self._transport.raw_request(method, path, **kwargs)
 
+    @staticmethod
+    def _scope_path(scope: int | str, *, items: bool = False, admin: bool = False) -> str:
+        if isinstance(scope, int):
+            if isinstance(scope, bool) or scope <= 0:
+                raise ValueError("Ontology ID must be a positive integer")
+            return f"/ontologies/{scope}" + ("/items" if items else "")
+        return ("/admin" if admin else "") + f"/shreckworlds/{quote(scope, safe='')}" + ("/library-items" if items else "")
+
     async def worlds(self) -> list[KnowledgeWorld]:
         return [KnowledgeWorld.model_validate(value) for value in await self._request('GET', '/shreckworlds')]
 
-    async def sources(self, world_id: str) -> list[KnowledgeSource]:
-        values = await self._request('GET', f'/shreckworlds/{quote(world_id, safe="")}/library-items')
+    async def sources(self, world_id: int | str) -> list[KnowledgeSource]:
+        """List items directly by integer ontology ID; string IDs use legacy collections."""
+        values = await self._request('GET', self._scope_path(world_id, items=True))
         return [KnowledgeSource.model_validate(value) for value in values]
 
-    async def query(self, world_id: str, question: str, *, library_item_id: str | None = None,
+    async def query(self, world_id: int | str, question: str, *, library_item_id: str | None = None,
                     library_item_ids: list[str] | None = None,
                     selection: SelectedPassage | None = None, top_k: int = 6,
                     include_trace: bool = False,
                     mode: Literal["evidence", "answer"] = "evidence",
                     retrieval_strategy: Literal["single", "planned"] = "single",
                     response_detail: Literal["concise", "standard", "detailed"] | None = None) -> KnowledgeAnswer:
-        """Ask for single retrieval or opt-in planned evidence/grounded-answer output."""
+        """Query an integer ontology ID directly, or a legacy string collection ID."""
         if library_item_id is not None and library_item_ids is not None:
             raise ValueError("Specify either library_item_id or library_item_ids, not both")
         payload = {'query': question, 'top_k': top_k, 'include_trace': include_trace}
@@ -383,11 +395,11 @@ class ShreckWorldAPI:
             payload["response_detail"] = response_detail
         if selection is not None:
             payload['selection'] = selection.model_dump()
-        value = await self._request('POST', f'/shreckworlds/{quote(world_id, safe="")}/query', json=payload)
+        value = await self._request('POST', f'{self._scope_path(world_id)}/query', json=payload)
         return KnowledgeAnswer.model_validate(value)
 
     async def start_agent_query(
-        self, world_id: str, question: str, *, library_item_id: str | None = None,
+        self, world_id: int | str, question: str, *, library_item_id: str | None = None,
         library_item_ids: list[str] | None = None, selection: SelectedPassage | None = None,
         top_k: int = 6, include_trace: bool = True,
         mode: Literal["evidence", "answer"] = "evidence",
@@ -408,14 +420,14 @@ class ShreckWorldAPI:
         if selection is not None:
             payload["selection"] = selection.model_dump()
         value = await self._request(
-            "POST", f"/shreckworlds/{quote(world_id, safe='')}/agent-jobs", json=payload,
+            "POST", f"{self._scope_path(world_id)}/agent-jobs", json=payload,
         )
         return KnowledgeAgentJob.model_validate(value)
 
-    async def agent_job(self, world_id: str, job_id: str) -> KnowledgeAgentJob:
+    async def agent_job(self, world_id: int | str, job_id: str) -> KnowledgeAgentJob:
         """Read a ShreckWorld agent job; only its owner or an admin can poll it."""
         value = await self._request(
-            "GET", f"/shreckworlds/{quote(world_id, safe='')}/agent-jobs/{quote(job_id, safe='')}",
+            "GET", f"{self._scope_path(world_id)}/agent-jobs/{quote(job_id, safe='')}",
         )
         return KnowledgeAgentJob.model_validate(value)
 
@@ -437,25 +449,25 @@ class ShreckWorldAPI:
         )
         return KnowledgeModelSettings.model_validate(value)
 
-    async def resolve_action(self, world_id: str, action: str, *, facts: list[str] | None = None,
+    async def resolve_action(self, world_id: int | str, action: str, *, facts: list[str] | None = None,
                              library_item_id: str | None = None) -> RuleReview:
         payload = {'action': action, 'facts': facts or []}
         if library_item_id is not None:
             payload['library_item_id'] = library_item_id
-        value = await self._request('POST', f'/shreckworlds/{quote(world_id, safe="")}/resolve-action', json=payload)
+        value = await self._request('POST', f'{self._scope_path(world_id)}/resolve-action', json=payload)
         return RuleReview.model_validate(value)
 
     async def readiness(self) -> KnowledgeReadiness:
         """Check the actual local semantic encoder; unavailable models raise 503."""
         return KnowledgeReadiness.model_validate(await self._request("GET", "/ready"))
 
-    async def start_indexing(self, world_id: str, item_id: str) -> KnowledgeIndexingJob:
+    async def start_indexing(self, world_id: int | str, item_id: str) -> KnowledgeIndexingJob:
         """Start a structured semantic generation (admin/world_builder token)."""
-        path = f'/admin/shreckworlds/{quote(world_id, safe="")}/library-items/{quote(item_id, safe="")}/index'
+        path = f'{self._scope_path(world_id, items=True, admin=True)}/{quote(item_id, safe="")}/index'
         return KnowledgeIndexingJob.model_validate(await self._request("POST", path))
 
-    async def indexing_job(self, world_id: str, item_id: str, *, job_id: str | None = None) -> KnowledgeIndexingJob:
+    async def indexing_job(self, world_id: int | str, item_id: str, *, job_id: str | None = None) -> KnowledgeIndexingJob:
         """Poll a specific attempt, or the latest attempt when job_id is omitted."""
         suffix = f'index-jobs/{quote(job_id, safe="")}' if job_id is not None else 'index-status'
-        path = f'/admin/shreckworlds/{quote(world_id, safe="")}/library-items/{quote(item_id, safe="")}/{suffix}'
+        path = f'{self._scope_path(world_id, items=True, admin=True)}/{quote(item_id, safe="")}/{suffix}'
         return KnowledgeIndexingJob.model_validate(await self._request("GET", path))

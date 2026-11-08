@@ -50,6 +50,23 @@ class CompanionRepository:
     def __init__(self, session):
         self.session = session
 
+    async def message_records(self, rows, user_id):
+        """Project owner-only answer details from existing turn JSON, without N+1 reads."""
+        ids = {row.turn_id for row in rows if row.role == "assistant"}
+        turns = (await self.session.execute(select(CompanionTurn).where(
+            CompanionTurn.id.in_(ids), CompanionTurn.user_id == user_id,
+        ))).scalars() if ids else []
+        results = {turn.id: turn.result for turn in turns if turn.status == "completed" and turn.result}
+        records = []
+        for row in rows:
+            data = record(row)
+            result = results.get(row.turn_id) if row.role == "assistant" else None
+            data["answer_details"] = ({key: result[key] for key in
+                ("tool_calls", "evidence", "segments", "coverage", "warnings")}
+                if result and "tool_calls" in result else None)
+            records.append(data)
+        return records
+
     async def conversation_context(self, chat_id, user_id, *, max_exchanges=6, max_characters=48000):
         """Bounded recent complete exchanges; never slice an individual message."""
         turns = list((await self.session.execute(select(CompanionTurn.id).join(

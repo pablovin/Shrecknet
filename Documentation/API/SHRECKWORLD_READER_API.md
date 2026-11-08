@@ -1,6 +1,40 @@
 # ShreckWorld reader and rule-review API
 
-## Purpose and access
+## Direct ontology item routes
+
+The authoritative world is a Shrecknet ontology. Discover it through Shrecknet `/ontologies/`; ShreckWorld stores items directly under its integer `ontology_id`. No create-world call or library provisioning is needed, including for the first source. The direct API validates the caller's Shrecknet token and checks `/ontologies/{ontology_id}` on its trusted owner before source operations. Missing/denied ontologies retain 404/403; identity or ontology-service outages return 503, not an empty library. Management also requires `admin` or `world_builder`.
+
+| Method and route | Behavior |
+| --- | --- |
+| `GET /ontologies/{ontology_id}/items` | Directly owned items ordered by priority/title; an accessible empty ontology returns `[]` |
+| `POST /ontologies/{ontology_id}/items` | Manager upload using the existing multipart `pdf` field, metadata query/form fields and optional autofill |
+| `GET`, `PATCH`, `DELETE /ontologies/{ontology_id}/items/{item_id}` | Read or manager edit/delete, checking ontology/item membership |
+| `GET`/`HEAD .../items/{item_id}/content`, `GET .../items/{item_id}/cover` | Authenticated original assets with existing range/file behavior |
+| `POST .../items/{item_id}/index` | Manager indexing, with no collection dependency |
+| `GET .../items/{item_id}/index-status`, `GET .../items/{item_id}/index-jobs/{job_id}` | Manager latest/specific indexing attempt |
+| `POST /ontologies/{ontology_id}/query` | Single or planned synchronous evidence/answer retrieval, scoped directly to items |
+| `POST /ontologies/{ontology_id}/resolve-action` | Existing read-only review in direct ontology scope |
+| `POST /ontologies/{ontology_id}/companion-evidence`, `/companion-validate` | Owner-validated retrieval-only Companion grant pinned to this ontology and any requested item subset |
+
+Direct item responses contain `ontology_id`; `shreckworld_id` is null for new sources and can retain a legacy alias after migration. Query responses contain `ontology_id` and null `shreckworld_id` for direct requests. Item IDs/revisions are unchanged. Citations and cover URLs use direct ontology routes. Mismatched item/ontology pairs return 404 for assets, mutations and query selections. Ordinary user tokens cannot substitute for delegated Companion grants, and grants do not authorize uploads or file downloads. The SDK accepts integer ontology IDs for `sources`, `query`, `resolve_action`, `start_indexing` and `indexing_job`; strings retain the legacy collection contract.
+
+## Legacy item migration
+
+Deploy the upgraded service before the frontend. Startup adds `ontology_id` and makes the item parent optional without assigning existing items or moving files. Back up SQLite/other owner databases, files and relevant Shrecknet identity data before upgrading. Stop concurrent old deployments during the SQLite schema rebuild.
+
+`POST /admin/ontology-migration` accepts a manager's bearer token and:
+
+```json
+{"mappings": {"legacy-collection-id": 7}, "apply": false}
+```
+
+Preview returns `collections` with `collection_id`, `name`, proposed `ontology_id`, `item_count`, `pending_items` and `status` (`ready` or `needs_mapping`), plus `changed_items: 0`. An existing World association can propose a target only when Shrecknet reports exactly one ontology; names and numeric coincidences are never used. All proposed/explicit targets are verified against the owner. Unknown collections, invalid IDs and attempts to reassign already migrated items return 422. A World with several ontologies or a restored unlinked collection requires an explicit mapping. Independently restored installations must verify identity outside the preview before accepting numeric targets.
+
+With `apply: true`, the same validation precedes a transaction assigning direct item ownership. Unresolved collections stay untouched; repeating the same mapping changes zero already migrated items. Multiple legacy collections may contribute distinct sources to one ontology without deduplicating books. File paths, item IDs, hashes, parsed generations and vectors are preserved. Legacy settings and parent records remain for recovery; the new studio does not expose separate world names, association or web-search settings. No web-search execution is added. Existing source links continue to work through their old IDs. Deleting a legacy world containing migrated items returns 409. Rollback requires coordinated snapshots to reverse data changes; a frontend rollback alone cannot expose newly created direct sources to an older collection-only reader.
+
+The ShreckOS studio provides preview/target selection under **Move existing sources to ontologies**. Migration is a data transition, not a prerequisite or creation step for newly created ontologies. The legacy routes below remain for existing callers and links; ontology-owned asynchronous jobs use `/ontologies/{ontology_id}/agent-jobs` and its `/{job_id}` polling route.
+
+## Legacy collection access
 
 Every authenticated Shrecknet principal can discover ShreckWorlds and read their sources. The current policy exposes all knowledge worlds to authenticated users; this is not anonymous publication and there is no per-world membership ACL. Management still requires `admin` or `world_builder`. The identity bridge and data ownership remain defined in [ShreckWorld architecture](../Architecture/SHRECKWORLD.md).
 
@@ -250,7 +284,8 @@ unified Character Companion. `POST /shreckworlds/{id}/companion-validate` rechec
 book/source references before final publication. Both require a short-lived,
 turn-bound bearer retrieval grant authorized against Shrecknet; normal browser
 access tokens are not interchangeable with these grants. Scope limits the
-ShreckWorld and optional library IDs. Configure the trusted Shrecknet origin and
+ontology (or legacy ShreckWorld) and optional item IDs. Direct delegated routes
+are described above. Configure the trusted Shrecknet origin and
 keep these server-to-server requests on the internal network. Existing reader and
 query routes remain unchanged. See [Character Companion](../Agents/Companion/Companion.md).
 

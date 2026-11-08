@@ -147,3 +147,8 @@ unchanged; this does not introduce retroactive redaction of historical text.
 Deploy the backend before the updated frontend. No database migration is required.
 Rolling the frontend back retains chats and backend quota enforcement; removing
 quota enforcement requires a backend rollback. Never delete excess legacy chats.
+
+Answer origins: `turn()` preserves `result.tool_calls`; `messages()` preserves
+nullable `answer_details` with tool calls, supplied evidence and answer segments.
+See [the workflow guide](../character_companion.md#inspect-answer-origins) for
+matching evidence IDs, cache semantics and compatibility.

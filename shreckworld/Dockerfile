@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2
     && rm -rf /var/lib/apt/lists/*
 
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
-RUN pip install --prefer-binary --index-url "$TORCH_INDEX_URL" "torch>=2,<3" "torchvision>=0.17,<1"
+RUN pip install --prefer-binary --index-url "$TORCH_INDEX_URL" 'torch>=2.6,<2.9' 'torchvision>=0.17,<1'
 COPY --from=shreckconfig / /tmp/shreckconfig
 RUN pip install --no-deps /tmp/shreckconfig
 
@@ -14,7 +14,7 @@ COPY --from=shreckdoc / /tmp/shreckdoc
 RUN pip install --no-deps /tmp/shreckdoc
 COPY pyproject.toml ./
 # Keep dependency layers cached when application code changes.
-RUN python -c 'import subprocess, tomllib; subprocess.run(["pip", "install", "--prefer-binary", *tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]], check=True)'
+RUN python -c 'import subprocess, tomllib; project = tomllib.load(open("pyproject.toml", "rb"))["project"]; subprocess.run(["pip", "install", "--prefer-binary", *project["dependencies"], *project["optional-dependencies"]["openvino"]], check=True)'
 COPY app ./app
 RUN pip install --no-deps .
 

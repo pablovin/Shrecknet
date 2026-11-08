@@ -1,6 +1,8 @@
 """Persist and activate structured document generations within caller transactions."""
 from __future__ import annotations
 
+from app.repositories.source_scope import source_scope, item_scope_clause, item_in_scope
+
 import json
 import re
 from typing import Any
@@ -20,7 +22,7 @@ def active_documents(
     library_item_ids: list[str] | None = None,
 ) -> list[ShreckWorldDocument]:
     statement = select(ShreckWorldDocument).join(ShreckWorldLibraryItem).where(
-        ShreckWorldLibraryItem.shreckworld_id == world_id, ShreckWorldDocument.is_active.is_(True),
+        item_scope_clause(world_id), ShreckWorldDocument.is_active.is_(True),
         ShreckWorldDocument.embedding_fingerprint == fingerprint)
     if library_item_id is not None:
         statement = statement.where(ShreckWorldLibraryItem.id == library_item_id)

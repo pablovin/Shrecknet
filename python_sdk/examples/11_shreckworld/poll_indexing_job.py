@@ -7,10 +7,29 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
 import httpx
+
+
+def print_timing_summary(job: dict) -> None:
+    """Show terminal measurements separately from the machine-readable JSON."""
+    print(f"Indexing {job['status']} — timings in seconds", file=sys.stderr)
+    for key in ("elapsed_seconds", "queue_wait_seconds", "processing_seconds"):
+        value = job.get(key)
+        if value is not None:
+            print(f"  {key}: {value:.3f}", file=sys.stderr)
+    metrics = job.get("metrics") or {}
+    for group in ("phase_seconds", "parser_seconds"):
+        values = metrics.get(group) or {}
+        if values:
+            print(f"  {group}:", file=sys.stderr)
+            for name, seconds in sorted(values.items(), key=lambda item: item[1], reverse=True):
+                print(f"    {name}: {seconds:.3f}", file=sys.stderr)
+    if metrics.get("parser_seconds"):
+        print("  Parser substeps are included in parsing; do not add them to the phase total.", file=sys.stderr)
 
 
 def main() -> None:
@@ -32,6 +51,8 @@ def main() -> None:
             response.raise_for_status()
             job = response.json()
             print(json.dumps(job), flush=True)
+            if job["status"] in {"failed", "completed"}:
+                print_timing_summary(job)
             if job["status"] in {"failed", "completed"} and args.result_file:
                 args.result_file.write_text(json.dumps(job, indent=2) + "\n", encoding="utf-8")
             if job["status"] == "failed":

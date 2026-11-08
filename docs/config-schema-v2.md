@@ -12,6 +12,16 @@
 
 ## Groups Returned by `GET /config/schema`
 
+### Shreckworld
+- `id`: `shreckworld`
+- `property`: `restart_required`
+- `fields`: `shreckworld_embedding_backend`
+- `Embedding backend` is an editable enum: `onnx` (default), `torch`, `openvino`.
+- Save with `PUT /config/`; Shrecknet publishes the shared non-secret runtime file.
+  Drain indexing, run prefetch, restart Shreckworld API/worker, and reindex after
+  changing it. Explicit deployment overrides take precedence. See the canonical
+  [configuration and rollout contract](../Documentation/API/SHRECKWORLD_INDEXING_API.md#portable-cpu-backends).
+
 ### App Runtime
 - `id`: `app_runtime`
 - `property`: `runtime`

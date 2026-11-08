@@ -75,6 +75,9 @@ def create_schema() -> None:
             connection.execute(text("UPDATE shreckworld_library_items SET storage_path = pdf_path WHERE storage_path IS NULL"))
             connection.execute(text("UPDATE shreckworld_library_items SET index_status = CASE WHEN embedding_status = 'ready' THEN 'ready' WHEN embedding_status = 'failed' THEN 'failed' ELSE 'unindexed' END WHERE index_status IS NULL OR index_status = 'unindexed'"))
 
+    from app.db.ontology_items import migrate_ontology_items
+    migrate_ontology_items(engine)
+
 
 def session_factory() -> sessionmaker[Session]:
     return sessionmaker(_engine(), autocommit=False, autoflush=False)

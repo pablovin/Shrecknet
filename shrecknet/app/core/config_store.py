@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from shreckconfig import CORS_FIELDS
+from shreckconfig.shreckworld import DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, ShreckWorldRuntimeConfig, publish_runtime_config
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -194,6 +195,7 @@ def normalize_validation_retry_settings(values: dict[str, Any]) -> dict[str, Any
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SHRECKNET_", extra="ignore", env_ignore_empty=True)
+    shreckworld_embedding_backend: EmbeddingBackend = DEFAULT_EMBEDDING_BACKEND
 
     @model_validator(mode="before")
     @classmethod
@@ -739,7 +741,16 @@ def load_settings() -> Settings:
     finally:
         conn.close()
     merged.update(_explicit_env_overrides())
-    return Settings(**merged)
+    settings = Settings(**merged)
+    _publish_shreckworld_config(settings)
+    return settings
+
+
+def _publish_shreckworld_config(settings: Settings) -> None:
+    publish_runtime_config(
+        _default_data_dir() / "service-config" / "shreckworld.json",
+        ShreckWorldRuntimeConfig(embedding_backend=settings.shreckworld_embedding_backend),
+    )
 
 
 def get_settings() -> Settings:
@@ -822,6 +833,7 @@ def update_settings(updates: dict[str, Any]) -> Settings:
             conn.close()
         effective = {**updated, **_explicit_env_overrides()}
         _settings_cache = Settings(**effective)
+        _publish_shreckworld_config(_settings_cache)
         return _settings_cache
 
 

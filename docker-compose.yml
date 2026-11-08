@@ -30,6 +30,9 @@ x-shreckworld-env: &shreckworld-env
   SHRECKWORLD_EMBEDDING_MODEL_ID: ${SHRECKWORLD_EMBEDDING_MODEL_ID:-intfloat/multilingual-e5-small}
   SHRECKWORLD_EMBEDDING_REVISION: ${SHRECKWORLD_EMBEDDING_REVISION:-614241f622f53c4eeff9890bdc4f31cfecc418b3}
   SHRECKWORLD_EMBEDDING_DEVICE: ${SHRECKWORLD_EMBEDDING_DEVICE:-cpu}
+  SHRECKWORLD_EMBEDDING_BACKEND: ${SHRECKWORLD_EMBEDDING_BACKEND:-}
+  SHRECKWORLD_RUNTIME_CONFIG_FILE: /service-config/shreckworld.json
+  SHRECKWORLD_EMBEDDING_ARTIFACTS_PATH: /hf-cache/shreckworld-embedding
   SHRECKWORLD_EMBEDDING_LOCAL_FILES_ONLY: "true"
   SHRECKWORLD_EMBEDDING_BATCH_SIZE: ${SHRECKWORLD_EMBEDDING_BATCH_SIZE:-16}
   SHRECKWORLD_EMBEDDING_THREADS: ${SHRECKWORLD_EMBEDDING_THREADS:-4}
@@ -284,7 +287,7 @@ services:
       - |
         TARGET_UID="${SHRECKNET_CONTAINER_UID:-1000}"
         TARGET_GID="${SHRECKNET_CONTAINER_GID:-1000}"
-        mkdir -p /data /media
+        mkdir -p /data/service-config /media
         chown -R "$$TARGET_UID:$$TARGET_GID" /data /media
         find /data /media -type d -exec chmod 2775 {} +
         find /data /media -type f -exec chmod 664 {} +
@@ -548,6 +551,9 @@ services:
     init: true
     user: "0:0"
     command: python -m app.prefetch
+    depends_on:
+      shrecknet_permissions:
+        condition: service_completed_successfully
     environment:
       <<: *shreckworld-env
       HF_HUB_OFFLINE: "0"
@@ -556,6 +562,7 @@ services:
       SHRECKNET_CONTAINER_GID: ${SHRECKNET_CONTAINER_GID:-1000}
     volumes:
       - hf-model-cache:/hf-cache
+      - ./shrecknet/databases/service-config:/service-config:ro
 
   shreckworld_api:
     build:
@@ -594,6 +601,7 @@ services:
         bind:
           create_host_path: false
       - ./shreckworld/databases:/data
+      - ./shrecknet/databases/service-config:/service-config:ro
       - ./shreckworld/media:/app/media
       - hf-model-cache:/hf-cache:ro
     depends_on:
@@ -632,6 +640,7 @@ services:
       SHRECKWORLD_QDRANT_URL: http://qdrant:6333
     volumes:
       - ./shreckworld/databases:/data
+      - ./shrecknet/databases/service-config:/service-config:ro
       - ./shreckworld/media:/app/media
       - hf-model-cache:/hf-cache:ro
     depends_on:

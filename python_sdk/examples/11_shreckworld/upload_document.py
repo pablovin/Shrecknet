@@ -1,6 +1,6 @@
 """Upload with autofill using the independent ShreckWorld HTTP API.
 
-Run: python upload_document.py SOURCE --world-id WORLD_ID
+Run: python upload_document.py SOURCE --ontology-id ONTOLOGY_ID
 Set SHRECKNET_TOKEN and optionally SHRECKWORLD_API_URL (default localhost:8121).
 Requires httpx, already a Shrecknet SDK dependency.
 """
@@ -16,9 +16,13 @@ import httpx
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
-    parser.add_argument("--world-id", required=True)
+    scope = parser.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--ontology-id", type=int)
+    scope.add_argument("--world-id", help="Legacy collection ID")
     parser.add_argument("--title", help="Optional manual title overriding document metadata")
     args = parser.parse_args()
+    if args.ontology_id is not None and args.ontology_id <= 0:
+        parser.error("--ontology-id must be positive")
     fields = {"auto_extract_metadata": "true"}
     if args.title:
         fields["title"] = args.title
@@ -28,7 +32,7 @@ def main() -> None:
         timeout=120,
     ) as client, args.source.open("rb") as source:
         response = client.post(
-            f"/admin/shreckworlds/{args.world_id}/library-items",
+            f"/ontologies/{args.ontology_id}/items" if args.ontology_id is not None else f"/admin/shreckworlds/{args.world_id}/library-items",
             data=fields, files={"pdf": (args.source.name, source)},
         )
         response.raise_for_status()

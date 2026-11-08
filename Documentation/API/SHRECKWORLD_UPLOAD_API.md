@@ -1,5 +1,7 @@
 # ShreckWorld source upload and metadata autofill
 
+New items are directly owned by ontologies. Use `/ontologies/{ontology_id}/items` and its item/index subroutes; no ShreckWorld creation is required. The `/admin/shreckworlds/.../library-items` routes below remain compatibility contracts. See [direct routes and migration](SHRECKWORLD_READER_API.md#direct-ontology-item-routes) for authorization, item ownership, deployment and rollback.
+
 ## Upload contract
 
 `POST /admin/shreckworlds/{shreckworld_id}/library-items` requires a Shrecknet

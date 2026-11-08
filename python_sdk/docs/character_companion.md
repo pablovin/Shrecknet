@@ -100,3 +100,16 @@ gets a fresh snapshot and key. Table/World scope is separate from the speaking
 CharacterAgent. See the [complete typed contract](../../Documentation/Agents/Companion/Frontend%20API.md#foundry-context-snapshots)
 for limits, errors and source manifests, and the
 [runnable table-context example](../examples/12_character_companion/foundry_context.py).
+
+### Inspect answer origins
+
+Completed `turn()` results preserve `result.tool_calls`, `result.evidence` and
+`result.segments` without transformation. `messages()` includes nullable
+`answer_details` for each assistant reply, with `tool_calls`, `evidence`, `segments`,
+`coverage` and `warnings`; old replies and user messages return null. Match each
+segment's `evidence_ids` to evidence records to inspect excerpts, references and
+structured data, then match tool call `evidence_ids` to see which retrieval supplied
+them. `returned_count` may exceed the supplied IDs when the evidence budget excludes
+results. `cache_hit` indicates reuse; a query on such a call is the current request,
+not a fresh search. These are owner-only historical snapshots, not proof of semantic
+grounding or continued source access. See the canonical [API contract](../../Documentation/Agents/Companion/Frontend%20API.md#answer-tool-and-evidence-breakdown).

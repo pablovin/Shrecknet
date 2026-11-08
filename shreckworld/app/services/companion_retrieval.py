@@ -2,6 +2,7 @@
 import httpx
 from fastapi import HTTPException
 from app.core.config import get_settings
+from app.repositories.source_scope import OntologyScope
 
 
 async def authorize(token, world_id, payload):
@@ -16,7 +17,8 @@ async def authorize(token, world_id, payload):
         except httpx.HTTPError as exc:
             raise HTTPException(503, 'Retrieval authorization unavailable') from exc
     scope = principal['scope']
-    if scope.get('shreckworld_id') != world_id or payload.mode != 'evidence' or payload.retrieval_strategy != 'single':
+    matches = (scope.get('ontology_id') == world_id.ontology_id and not scope.get('shreckworld_id')) if isinstance(world_id, OntologyScope) else scope.get('shreckworld_id') == world_id
+    if not matches or payload.mode != 'evidence' or payload.retrieval_strategy != 'single':
         raise HTTPException(403, 'Retrieval scope mismatch')
     books = scope.get('library_item_ids') or []
     requested = payload.library_item_ids or ([payload.library_item_id] if payload.library_item_id else [])

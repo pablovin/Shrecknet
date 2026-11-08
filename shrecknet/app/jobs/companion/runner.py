@@ -100,7 +100,7 @@ async def route(turn, llm, recent):
         return []
     if any(word in query for word in ("remember", "your memory", "you feel", "you recall")):
         tools.add("character_memory")
-    if context.get("shreckworld_id") or any(word in query for word in ("rule", "book", "mechanic", "dice")):
+    if context.get("shreckworld_id") or context.get("surface") == "shreckworld" or any(word in query for word in ("rule", "book", "mechanic", "dice")):
         tools.add("shreckworld")
     if context.get("chronicle_id") or any(word in query for word in ("chronicle", "session notes")):
         tools.add("chronicle")
@@ -254,13 +254,13 @@ async def execute_turn(turn, lease):
         if pending:
             await mutate(turn.id, lease, delta=pending, event="response.delta", payload={"segment_id": "draft", "delta": pending, "provisional": True})
         await mutate(turn.id, lease, stage="validating")
-        result = Answer.model_validate_json(raw).final(evidence, results)
+        result = Answer.model_validate_json(raw).final(evidence, results, query=retrieval_query)
         result["model_targets"]={field:getattr(settings,field).model_dump() for field in COMPANION_MODEL_FIELDS}
         result["usage"]=getattr(llm,"last_response_metadata",{}).get("usage")
         result["cost"]=None
         # Identity and originating browser access can be revoked while retrieval runs.
         await load_identity(turn)
-        await retrieval.validate_sources(result['citations'])
+        await retrieval.validate_sources(result['evidence'])
         async with database() as session:
             repo = CompanionRepository(session)
             current = await session.get(CompanionTurn, turn.id)

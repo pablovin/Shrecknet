@@ -49,6 +49,7 @@ services:
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
     environment:
       SHRECKWORLD_EMBEDDING_DEVICE: cuda
+      SHRECKWORLD_EMBEDDING_BACKEND: torch
     deploy:
       resources:
         reservations:
@@ -63,6 +64,7 @@ services:
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
     environment:
       SHRECKWORLD_EMBEDDING_DEVICE: cuda
+      SHRECKWORLD_EMBEDDING_BACKEND: torch
     deploy:
       resources:
         reservations:
@@ -77,6 +79,7 @@ services:
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
     environment:
       SHRECKWORLD_EMBEDDING_DEVICE: cuda
+      SHRECKWORLD_EMBEDDING_BACKEND: torch
     deploy:
       resources:
         reservations:

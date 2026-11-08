@@ -6,6 +6,8 @@ generations are searched; SQL activation and scope remain authoritative.
 """
 from __future__ import annotations
 
+from app.repositories.source_scope import source_scope, item_scope_clause, item_in_scope
+
 import json
 import time
 from dataclasses import dataclass
@@ -48,7 +50,7 @@ def resolve_retrieval_scope(session: Session, *, shreckworld_id: str,
     rows = child_rows(session, document_ids)
     by_id = {chunk.id: (chunk, item) for chunk, item in rows}
     eligible_items = {document.library_item_id for document in documents}
-    statement = select(ShreckWorldLibraryItem.id).where(ShreckWorldLibraryItem.shreckworld_id == shreckworld_id)
+    statement = select(ShreckWorldLibraryItem.id).where(item_scope_clause(shreckworld_id))
     if library_item_id is not None:
         statement = statement.where(ShreckWorldLibraryItem.id == library_item_id)
     elif library_item_ids is not None:
@@ -64,7 +66,7 @@ def resolve_retrieval_scope(session: Session, *, shreckworld_id: str,
     trace: dict[str, int | str | bool | float] = {
         "embedded_chunks_considered": len(rows), "returned_citations": 0, "web_search": "not_implemented",
         "pipeline": "e5_qdrant_contextual_fts_exact_rrf_cross_encoder_parent_v2",
-        "embedding_backend": "sentence_transformers", "embedding_model": embedder.settings.embedding_model_id,
+        "embedding_backend": embedder.backend, "embedding_model": embedder.settings.embedding_model_id,
         "embedding_fingerprint": fingerprint, "sources_requiring_reindex": len(ready_items - eligible_items),
         "sources_without_ready_index": len(scoped_items - ready_items), "requested_sources": len(scoped_items),
         "sources_searched": len(searched_items), "qdrant_fallback": False, "reranker_fallback": False,
@@ -156,7 +158,7 @@ def hydrate_candidate(scope: RetrievalScope, candidate: dict[str, Any], *, numbe
         evidence_text=evidence, parent_excerpt=evidence[:2400] if parent_is_valid else None,
         source_sha256=item.source_sha256,
         page_label=next((span["page_label"] for span in spans if span["page_number"] == chunk.page_number), None),
-        content_url=f"/shreckworlds/{scope.shreckworld_id}/library-items/{item.id}/content#page={chunk.page_number}",
+        content_url=(f"/ontologies/{item.ontology_id}/items/{item.id}/content#page={chunk.page_number}" if item.ontology_id is not None else f"/shreckworlds/{scope.shreckworld_id}/library-items/{item.id}/content#page={chunk.page_number}"),
         provenance=spans, rectangles=_rectangles(spans),
     )
 

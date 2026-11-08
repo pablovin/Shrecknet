@@ -70,3 +70,20 @@ async def test_foundry_snapshot_forwarded_without_changing_table_identifiers():
         assert 'foundry_context' not in calls[-1]
     finally:
         await client.aclose()
+
+@pytest.mark.asyncio
+async def test_answer_breakdown_survives_turn_and_message_reads():
+    details = {'tool_calls': [{'tool':'atlas','status':'ok','query':'forest','cache_hit':False,'elapsed_ms':4,'returned_count':1,'evidence_ids':['e1']}], 'evidence':[{'evidence_id':'e1','excerpt':'Old trees'}], 'segments':[{'id':'s1','text':'Forest','kind':'fact','evidence_ids':['e1']}], 'coverage':'complete','warnings':[]}
+    def handler(request):
+        if request.url.path.endswith('/messages'):
+            return httpx.Response(200,json={'items':[{'id':'message','answer_details':details}], 'next_cursor':None})
+        return httpx.Response(200,json={'id':'turn','chat_id':'chat','status':'completed','result':{'text':'Forest',**details}})
+    client=AsyncShrecknetClient('http://test',token='private-token')
+    await client._client.aclose()
+    client._client=httpx.AsyncClient(base_url='http://test',transport=httpx.MockTransport(handler))
+    try:
+        api=CharacterCompanionAPI(client)
+        assert (await api.turn('turn')).result['tool_calls']==details['tool_calls']
+        assert (await api.messages('chat'))['items'][0]['answer_details']==details
+    finally:
+        await client.aclose()

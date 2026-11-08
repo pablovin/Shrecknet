@@ -42,10 +42,10 @@ class PageContext(StrictModel):
     def validate_scope(self):
         if len(set(self.library_item_ids)) != len(self.library_item_ids):
             raise ValueError("Duplicate library IDs")
-        if self.library_item_ids and not self.shreckworld_id:
-            raise ValueError("Books require a ShreckWorld")
-        if self.surface == "shreckworld" and not self.shreckworld_id:
-            raise ValueError("ShreckWorld surface requires its world ID")
+        if self.library_item_ids and not (self.shreckworld_id or self.ontology_id):
+            raise ValueError("Books require an ontology or legacy ShreckWorld")
+        if self.surface == "shreckworld" and not (self.shreckworld_id or self.ontology_id):
+            raise ValueError("ShreckWorld surface requires an ontology or legacy world ID")
         if self.surface == "chronicle" and not self.chronicle_id:
             raise ValueError("Chronicle surface requires a Chronicle ID")
         return self
@@ -253,6 +253,31 @@ class ChatPage(Page[ChatRead]):
     usage: ChatUsage
 
 
+class ToolCallRead(BaseModel):
+    tool: Literal["atlas", "shreckworld", "chronicle", "web", "character_memory"]
+    status: Literal["ok", "empty", "timed_out", "unavailable"]
+    query: str | None = None
+    cache_hit: bool = False
+    elapsed_ms: float | None = None
+    returned_count: int
+    evidence_ids: list[str]
+
+
+class AnswerSegmentRead(BaseModel):
+    id: str
+    kind: str
+    text: str
+    evidence_ids: list[str]
+
+
+class AnswerDetailsRead(BaseModel):
+    tool_calls: list[ToolCallRead]
+    evidence: list[Evidence]
+    segments: list[AnswerSegmentRead]
+    coverage: str
+    warnings: list[str]
+
+
 class MessageRead(BaseModel):
     id: str
     turn_id: str
@@ -260,6 +285,7 @@ class MessageRead(BaseModel):
     role: str
     content: str
     manifest: list[dict]
+    answer_details: AnswerDetailsRead | None = None
     committed: bool
     created_at: datetime
 

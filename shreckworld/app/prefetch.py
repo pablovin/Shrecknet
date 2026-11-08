@@ -8,7 +8,7 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 
 from app.core.config import get_settings
-from app.services.embedding import get_embedder
+from app.services.embedding import get_embedder, prepare_embedding_backend
 
 
 def main() -> None:
@@ -22,12 +22,13 @@ def main() -> None:
                 allow_patterns=["*.json", "*.txt", "*.model", "*.safetensors", "*.bin"],
                 ignore_patterns=["onnx/*", "openvino/*"])
     # The runtime deliberately resolves local snapshots only after prefetch.
+    prepare_embedding_backend(settings)
     print(get_embedder().ensure_ready(), flush=True)
     subprocess.run(["docling-tools", "models", "download", "layout", "tableformer", "-o", str(settings.docling_artifacts_path)], check=True)
     if os.geteuid() == 0:
         uid = int(os.environ.get("SHRECKNET_CONTAINER_UID", "1000"))
         gid = int(os.environ.get("SHRECKNET_CONTAINER_GID", "1000"))
-        for root in {cache, settings.docling_artifacts_path}:
+        for root in {cache, settings.docling_artifacts_path, settings.embedding_artifacts_path}:
             for path in [root, *root.rglob("*")]:
                 if path.exists():
                     os.chown(path, uid, gid)

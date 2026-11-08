@@ -33,6 +33,16 @@ writes from compact arc assignments and precise source passages.
 the selected models' capacities. See the [Novelist contract](../Documentation/Agents/Novelist/Novelist.md)
 for context preflight, PDF provenance, debug files, and worker rollout.
 
+## Shreckworld indexing
+
+Shreckworld embedding is configured through the administrator configuration
+frontend's `Shreckworld` tab (`shreckworld_embedding_backend`, default `onnx`).
+Shrecknet publishes the non-secret selection under
+`databases/service-config/shreckworld.json`; the standalone Shreckworld services
+read it through a read-only mount. Changes require prefetch, restarting its
+API/worker, and reindexing. See the
+[configuration contract](../Documentation/API/SHRECKWORLD_INDEXING_API.md#portable-cpu-backends).
+
 ## Browser CORS
 
 Configure CORS only in the repository-root `.env`; the API reads its read-only

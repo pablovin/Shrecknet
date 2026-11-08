@@ -3,9 +3,11 @@
 ## Purpose and ownership
 
 ShreckWorld is a separately deployed world-knowledge service inside the Shrecknet
-frontend. It owns its worlds, original sources, structured document generations,
-embeddings, retrieval jobs, and citations. The existing Shrecknet `World` remains
-an ontology-grouping concept; a `ShreckWorld` has a separate persistence boundary.
+frontend. It owns ontology-associated source items, original files, structured document generations,
+embeddings, retrieval jobs and citations. Shrecknet ontologies provide the authoritative
+world identity for both Atlas graph content and ShreckWorld source items. The existing
+Shrecknet `World` remains an ontology-grouping concept. Separate `ShreckWorld` rows
+are retained only for legacy compatibility; new items need no such parent.
 It also owns a persisted `model_shreckworld_synthesizer` provider/model target,
 administered through its settings API and shared by ShreckWorld LLM stages.
 
@@ -210,6 +212,21 @@ E5 snapshot is prefetched alongside the optional cross-encoder and Docling
 layout/table artifacts. Runtime uses local caches with remote downloads disabled.
 The cache can be shared with Shrecknet without sharing its runtime/storage.
 
+`app.services.embedding` owns ONNX Runtime (default), PyTorch, and OpenVINO loading
+and prefetch export. The Shrecknet `/config/schema` group `shreckworld` exposes
+`shreckworld_embedding_backend` as a restart-required enum. Shrecknet publishes a
+non-secret JSON projection through `shreckconfig.shreckworld`; Shreckworld mounts
+it read-only and uses it at encoder initialization. Its configuration database
+remains independent. An explicit `SHRECKWORLD_EMBEDDING_BACKEND` deployment value
+overrides that selection; otherwise ONNX is the fallback. Converted artifacts are separate from the source snapshot.
+Prefetch publishes portable unquantized artifacts, while read-only serving
+processes apply CPU optimizations locally. Converted artifact bytes and backend
+participate in encoder identity; switching backend requires reindexing and matching
+API/worker exports. Existing PyTorch fingerprints remain unchanged. Terminal jobs
+log `[SHRECKWORLD_INDEXING_SUMMARY]` with persisted timings and counts. See the
+[CPU backend contract](../API/SHRECKWORLD_INDEXING_API.md#portable-cpu-backends)
+for installation, portability limits, measurements, and rollback.
+
 Readiness checks actual inference: correct model dimension, finite unit vectors,
 query/passage prefix behavior, and a relevant-passage ranking probe. Identity is
 computed from actual model weights, tokenizer, and configuration bytes; both API
@@ -241,3 +258,15 @@ See [indexing API](../API/SHRECKWORLD_INDEXING_API.md) for progress/timing field
 configuration, model prefetch, migration, and rollback. See
 [Librarian embedding](../Agents/Librarian/Embedding/Embedding.md) for the shared
 algorithm's original graph consumer.
+
+## Direct ontology ownership and legacy transition
+
+`ShreckWorldLibraryItem.ontology_id` directly references the authoritative Shrecknet ontology. New items have `shreckworld_id = NULL`. A library is only the item view for an ontology; ontology creation and item listing never provision an intermediary container. The direct API verifies the ontology with Shrecknet using the caller's bearer credential. It uses the trusted origin/prefix already configured by `SHRECKWORLD_SHRECKNET_JWKS_URL`. Unavailable owner access fails closed; an empty item array is returned only after successful authorization.
+
+`app.repositories.source_scope` centralizes direct and legacy item predicates. `OntologyScope` is transient, authorized request metadata consumed by the existing source/retrieval pipeline, not a stored entity or an ontology-to-collection resolver. Its internal string representation does not identify a ShreckWorld record. Source transport is shared with compatibility routes. Original assets, source mutation, indexing and query selection check item/scope membership. Planned synchronous retrieval and delegated Companion evidence support direct ontology scope. Persisted asynchronous agent jobs also store `ontology_id` directly; their worker reconstructs the transient scope without a collection.
+
+SQL resolves active, encoder-compatible documents from directly owned items. Qdrant searches the SQL-authorized document IDs and fingerprint; citation hydration also checks the scoped SQL rows. This preserves existing vectors when source ownership changes without relaxing ontology isolation. New vector payloads carry `ontology_id`. Ingestion reads direct ownership without requiring a collection row; source IDs, revisions and file paths remain canonical.
+
+Startup adds the nullable ownership column/index and relaxes the legacy item-parent constraint. Existing SQLite tables are rebuilt transactionally with foreign keys temporarily disabled on that connection, copying all source columns and preserving indexes, triggers and child references; foreign-key verification precedes commit. PostgreSQL-style installations use `ALTER COLUMN ... DROP NOT NULL`. Startup does not guess ownership for old sources. The manager-only preview/apply contract in the [reader API](../API/SHRECKWORLD_READER_API.md#legacy-item-migration) performs verified migration separately.
+
+Legacy parent references remain aliases for existing links, local reading-progress namespaces and recovery. Legacy world deletion refuses migrated items, preventing cascading data loss. No automatic ontology-deletion purge is introduced: direct operations reject missing/inaccessible ontologies and retained sources require administrative recovery. Snapshot owner data and files together before rollout. Cross-installation restores require verifying ontology identity before applying numeric mappings; an ID match alone cannot prove identity. Full rollback uses coordinated snapshots; older frontends do not discover newly uploaded direct items.

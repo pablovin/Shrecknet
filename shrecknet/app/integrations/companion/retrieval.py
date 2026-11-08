@@ -110,18 +110,20 @@ class CompanionRetrieval:
                 for row in rows.get("companion", [])]
 
     async def shreckworld(self, query):
-        identifier = self.scope.get("shreckworld_id")
+        identifier = self.scope.get("shreckworld_id") or self.scope.get("ontology_id")
+        direct = not self.scope.get("shreckworld_id")
+        path = f"/ontologies/{identifier}" if direct else f"/shreckworlds/{identifier}"
         if not identifier or not self.settings.companion_shreckworld_url:
             return []
         payload = {"query": query[:4000], "mode": "evidence", "retrieval_strategy": "single", "top_k": 6}
         if self.scope.get("library_item_ids"):
             payload["library_item_ids"] = self.scope["library_item_ids"]
         async with httpx.AsyncClient(base_url=self.settings.companion_shreckworld_url, follow_redirects=False) as client:
-            response = await client.post(f"/shreckworlds/{identifier}/companion-evidence", json=payload, headers={"Authorization": f"Bearer {grant(self.turn, 'shreckworld')}"})
+            response = await client.post(f"{path}/companion-evidence", json=payload, headers={"Authorization": f"Bearer {grant(self.turn, 'shreckworld')}"})
             response.raise_for_status()
             data = response.json()
         return [evidence("shreckworld", str(row.get("library_item_id", identifier)) + ":" + str(row.get("chunk_id") or row.get("id") or i), row.get("excerpt") or row.get("text") or "", title=row.get("title") or "Book passage",
-                         reference=row, scope={"shreckworld_id": identifier}, rank=i) for i, row in enumerate(data.get("citations") or data.get("evidence") or [], 1)]
+                         reference=row, scope={"ontology_id" if direct else "shreckworld_id": identifier}, rank=i) for i, row in enumerate(data.get("citations") or data.get("evidence") or [], 1)]
 
     async def chronicle(self, query):
         if not self.settings.companion_chronicles_url:
@@ -181,7 +183,7 @@ class CompanionRetrieval:
                             raise ValueError('source_changed')
             elif tool in {'chronicle','shreckworld'}:
                 base=self.settings.companion_chronicles_url if tool=='chronicle' else self.settings.companion_shreckworld_url
-                path='/chronicles/companion-validate' if tool=='chronicle' else f"/shreckworlds/{self.scope['shreckworld_id']}/companion-validate"
+                path='/chronicles/companion-validate' if tool=='chronicle' else (f"/shreckworlds/{self.scope['shreckworld_id']}/companion-validate" if self.scope.get("shreckworld_id") else f"/ontologies/{self.scope['ontology_id']}/companion-validate")
                 async with httpx.AsyncClient(base_url=base,timeout=self.settings.companion_tool_timeout_s,follow_redirects=False) as client:
                     response=await client.post(path,json={'references':refs},headers={'Authorization':f'Bearer {grant(self.turn,tool)}'})
                     response.raise_for_status()

@@ -1,11 +1,13 @@
 import asyncio
 
 import httpx
+import pytest
 
 from shrecknet_client import KnowledgeAnswer, Shrecknet
 
 
-def test_indexing_polling_and_readiness_preserve_model_diagnostics_and_auth():
+@pytest.mark.parametrize("backend", ["sentence_transformers", "onnx", "openvino"])
+def test_indexing_polling_and_readiness_preserve_model_diagnostics_and_auth(backend):
     async def scenario():
         async with Shrecknet(token="manager-token") as sdk:
             calls = []
@@ -14,13 +16,13 @@ def test_indexing_polling_and_readiness_preserve_model_diagnostics_and_auth():
                 calls.append(str(request.url))
                 if request.url.path == "/ready":
                     return httpx.Response(200, json={"status": "ready", "embedding": {
-                        "ready": True, "backend": "sentence_transformers", "model": "intfloat/multilingual-e5-small",
+                        "ready": True, "backend": backend, "model": "intfloat/multilingual-e5-small",
                         "fingerprint": "a" * 64, "revision": "revision", "dimension": 384, "device": "cpu"},
                         "parser": "docling", "parser_artifacts_present": True})
                 return httpx.Response(202 if request.method == "POST" else 200, json={
                     "id": "job/a", "library_item_id": "book/a", "status": "completed", "progress": 100,
                     "created_at": "2026-10-15T12:00:00Z", "processing_seconds": 12.5,
-                    "metrics": {"phase": "completed", "embedding_backend": "sentence_transformers",
+                    "metrics": {"phase": "completed", "embedding_backend": backend,
                                 "embedding_fingerprint": "a" * 64, "parent_chunks": 4, "total_chunks": 10,
                                 "parser_cache_hit": True, "parser_seconds": {"cache_lookup": 0.1},
                                 "embedding_batch_size": 32, "phase_seconds": {"parsing": 10.0, "embedding": 2.5}}})
@@ -30,6 +32,7 @@ def test_indexing_polling_and_readiness_preserve_model_diagnostics_and_auth():
             job = await sdk.shreckworld.start_indexing("world/a", "book/a")
             result = await sdk.shreckworld.indexing_job("world/a", "book/a", job_id=job.id)
             assert result.metrics.embedding_fingerprint == "a" * 64
+            assert result.metrics.embedding_backend == backend
             assert result.processing_seconds == 12.5 and result.metrics.parent_chunks == 4
             assert result.metrics.parser_cache_hit is True
             assert result.metrics.parser_seconds == {"cache_lookup": 0.1}
@@ -53,3 +56,22 @@ def test_structured_citation_geometry_and_parent_evidence_are_typed():
     assert answer.citations[0].provenance[0].charspan == (0, 4)
     assert answer.citations[0].rectangles[0].height == 4
     assert answer.citations[0].evidence_text == "Full rule"
+
+
+def test_polling_example_prints_failed_and_historical_timing_summaries(capsys):
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[1] / "examples/11_shreckworld/poll_indexing_job.py"
+    spec = importlib.util.spec_from_file_location("poll_indexing_job", path)
+    example = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(example)
+    example.print_timing_summary({"status": "failed", "processing_seconds": 12.5,
+        "metrics": {"phase_seconds": {"embedding": 2.5, "parsing": 10.0},
+                    "parser_seconds": {"conversion": 9.0}}})
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "failed" in output.err and "processing_seconds: 12.500" in output.err
+    assert output.err.index("parsing: 10.000") < output.err.index("embedding: 2.500")
+    assert "conversion: 9.000" in output.err and "do not add" in output.err
+    example.print_timing_summary({"status": "completed", "metrics": None})
+    assert "completed" in capsys.readouterr().err

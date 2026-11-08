@@ -33,7 +33,13 @@ def delete_source(session: Session, item: ShreckWorldLibraryItem) -> None:
         _remove_vectors([item_id])
 
 
+class OntologyOwnedSourcesError(ValueError):
+    """A compatibility collection must not cascade-delete ontology-owned items."""
+
+
 def delete_world(session: Session, world: ShreckWorld) -> None:
+    if session.scalar(select(ShreckWorldLibraryItem.id).where(ShreckWorldLibraryItem.shreckworld_id == world.id, ShreckWorldLibraryItem.ontology_id.is_not(None)).limit(1)):
+        raise OntologyOwnedSourcesError("This legacy world contains ontology-owned items and cannot be deleted")
     projected = list(session.scalars(select(ShreckWorldDocument.library_item_id).join(ShreckWorldLibraryItem)
         .where(ShreckWorldLibraryItem.shreckworld_id == world.id).distinct()))
     root = get_settings().media_root / "shreckworlds" / world.id

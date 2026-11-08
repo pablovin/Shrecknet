@@ -264,3 +264,36 @@ retrieval evidence cached for a different game situation. Snapshots are stored
 in existing turn request JSON and message manifests, removed by normal chat purge;
 no schema migration or writes to Foundry documents occur. Removing a context chip
 affects future turns, not historical conversation content.
+
+## Answer tool and evidence breakdown
+
+Completed turn snapshots (`GET /users/me/character-companion/turns/{turn_id}`)
+and `response.final` retain the existing result fields and add `result.tool_calls`.
+Each entry contains `tool` (`atlas`, `character_memory`, `shreckworld`, `chronicle`,
+`web`), `status` (`ok`, `empty`, `timed_out`, `unavailable`), `query` (the retrieval
+query requested this turn), `cache_hit`, nullable `elapsed_ms`, `returned_count`,
+and `evidence_ids`. Cached retrieval uses the current request query; it does not
+claim to have run another search. Missing timing is null, never an invented zero.
+`returned_count` counts the bounded adapter results, not the provider's total hits.
+`evidence_ids` includes only results admitted to the synthesis evidence budget;
+excluded payloads are not published. Empty/failed tools remain visible.
+
+`result.evidence` contains all supplied evidence, including uncited records.
+`result.segments[].evidence_ids` maps answer passages to that evidence; the existing
+`citations` field remains unchanged. Evidence includes excerpts, structured evidence,
+source references/revisions and navigation. Attached images and Foundry context
+are supplied context, not retrieval tool executions. Source access/revisions for
+all supplied evidence are checked before final commit. Citation links describe
+model-declared support and do not independently prove semantic grounding.
+
+`GET /users/me/character-companion/chats/{chat_id}/messages` adds nullable
+`answer_details` to each message: `{tool_calls, evidence, segments, coverage,
+warnings}` from the completed turn. It is null for user messages and replies
+created before tool tracing was available. This is owner-only historical content,
+subject to the existing chat authorization and deletion rules. It is a snapshot,
+not a guarantee that the original source remains accessible. Raw provider payloads,
+credentials, internal exceptions and model reasoning are not included.
+
+The contract is additive and uses existing turn JSON storage. Deploy API and turn
+workers before the frontend. No schema migration or historical backfill is needed;
+older clients keep using `manifest` and older replies keep their source cards.

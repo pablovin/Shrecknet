@@ -317,3 +317,147 @@ credentials, internal exceptions and model reasoning are not included.
 The contract is additive and uses existing turn JSON storage. Deploy API and turn
 workers before the frontend. No schema migration or historical backfill is needed;
 older clients keep using `manifest` and older replies keep their source cards.
+
+
+## Evidence v2
+
+Existing endpoints and coarse `TurnRead.status` values are preserved. V2 is the
+default for new/missing pipeline settings; explicit saved selections are retained
+and remain editable through the administrator configuration API; user capabilities add
+`query_pipeline_version` and `general_knowledge_opt_in` (whether per-turn fallback
+can be requested). New independently configurable roles appear in `model_roles`.
+
+`POST /users/me/character-companion/chats/{chat_id}/turns` accepts additive fields:
+
+```json
+{
+  "text": "Use the other world and explain the rule",
+  "selection_version": 1,
+  "context": {"surface": "global"},
+  "tools": {"web": "allow"},
+  "general_knowledge_opt_in": false,
+  "use_page_scope": false,
+  "clarification_id": null
+}
+```
+
+`clarification_id`, when supplied, must match the chat's pending UUID or admission
+returns `409 stale_clarification`. `use_page_scope=true` releases a conversational
+scope override and uses validated submitted/default page scope. Optional fields
+at their defaults do not change pre-upgrade idempotency hashes. V2 stores the
+original request separately from server-owned `execution_context`; clients cannot
+submit that validated execution field or choose retrieval grants.
+
+Chat responses add `resolved_ontology` (ID, name, description, RPG system, resolution source and revision),
+`scope_override`, and nullable `pending_clarification` with ID, original query,
+questions, kind and target ID. Clarification finishes a turn with result
+`outcome="needs_clarification"` and frees the chat lock. A relevant next message
+resumes its pending question; a new topic abandons it.
+
+Message responses add `kind` (`user`, `commentary`, `final`) and `sequence`.
+Assistant sequence zero is the final; positive values are durable commentary.
+Use creation time/ID transcript order, not sequence alone. Existing message IDs,
+roles, content, manifests and owner-only pagination remain. Commentary has no
+answer breakdown and is excluded from rapport and completed-exchange context.
+
+Turn snapshots add `stage`, validated `execution_context` and `commentary` records.
+SSE keeps version 1 envelopes and adds:
+
+- `pipeline.status`: `stage` plus optional `tool`/`status`, for resolution,
+  planning, update/replanning, retrieval, assessment, recovery, synthesis and
+  verification. These are short progress labels, never model reasoning.
+- `message.committed`: a persisted commentary record including stable message ID.
+  Refresh owner-scoped message queries; deduplicate repeated events by message ID.
+- `ontology.updated`: `previous` and `ontology` metadata after a validated switch.
+  Refresh chat scope and display its active name.
+
+Commentary survives event retention and failed/cancelled turns. V2 buffers factual
+drafts until verification; it does not emit unverified `response.delta` content.
+`response.final` remains the authoritative final reply. Results add `outcome`,
+assessment, structured segments, rejected-claim reasons and safe diagnostics;
+per-call details add ID, need IDs, recovery flag and optional `source_trace`
+retaining ShreckWorld coverage, need groups and child recovery diagnostics. Segments carry evidence links;
+coverage is partial unless all needs and sources support completion. General
+knowledge segments require both policy and turn permission and have an explicit
+unverified label. Empty searches never prove a rule absent.
+
+Back up SQL and run startup migration before new workers; deploy compatible
+clients together: v2 activates automatically when the pipeline setting is absent.
+Roll back using a compatibility release that filters
+commentary, retaining additive schema and history. See [pipeline operations](Companion.md#evidence-first-query-pipeline).
+
+## Rich response v1
+
+`GET /users/me/character-companion/capabilities` adds
+`rich_response: {versions:[1], block_types:["narrative","image","gallery",
+"entity_card","table","book_excerpt"], enabled:boolean}`. `enabled` requires both
+`companion_rich_response_enabled` and `evidence_v2`. Capability absence means
+ordinary text support. Existing admission payloads and idempotency keys remain
+unchanged; presentation is server configuration, not a client access grant.
+
+Completed turn `result`, `response.final` and final-message `answer_details` add
+nullable `rich_response`. The version-one envelope contains `version`, ordered
+`blocks`, `assets` and typed `targets`. User/commentary messages have no envelope.
+The existing `text`, `content`, `segments`, `evidence`, `citations`, coverage and
+warnings remain valid. Saved text includes unique table/excerpt facts, making
+unknown versions and malformed optional presentation safe to render as text.
+SSE/public output remains buffered until narrative and block verification pass.
+`pipeline.status` adds `resolving_media` and `composing_response`; coarse turn
+statuses and version-one SSE envelopes do not change.
+
+Every block has `id`, `type`, `evidence_ids`, nullable `target_id`. Narrative uses
+ordered `segment_ids`, referencing accepted segments exactly once. Other blocks
+have `fallback_text` and type-specific fields:
+
+| Type | Fields |
+| --- | --- |
+| `entity_card` | `entity_ref:{ontology_id,node_id,node_label}`, `name`, nullable `description`, nullable `asset_id` |
+| `image` | `asset_id`, neutral `alt`, nullable `caption` |
+| `gallery` | `items:[{asset_id,alt,caption,evidence_ids,target_id}]` |
+| `table` | `title`, `columns:[{id,label}]`, `rows:[{id,cells:[{value,evidence_ids}],evidence_ids,target_id}]`; scalar/null values, rectangular rows |
+| `book_excerpt` | exact `quote`, `title`, `document_ref`, nullable `asset_id` |
+
+A book reference includes exactly one of `ontology_id`/`shreckworld_id`, plus
+`library_item_id`, `document_id`, `source_sha256`, physical one-based `page_number`
+and nullable printed `page_label`. Existing evidence retains citation rectangles
+and full page provenance; merge typed target locations with that evidence when
+opening the reader rather than discarding it. Entity cards use actual scoped
+Atlas node IDs/labels. Foundry targets use `foundry_world_id`, `uuid` and nullable
+`source_revision`; Chronicle targets use `chronicle_id`, `revision` and nullable
+`section_id`; web targets use `url`. Each target has an envelope-local `id` and
+`kind` (`atlas`, `shreckworld`, `chronicle`, `foundry`, `web`).
+
+Assets contain `id`, `source_type`, `evidence_ids`, nullable `source_revision`,
+`provenance_kind`, nullable `mime_type`/`width`/`height`, `attribution`, `target_id`
+and `delivery_ref`. The referenced target supplies the source identity. Delivery
+is `{kind:"service",service:"shrecknet"|"shreckworld",path}`, a Foundry-local
+`{kind:"foundry_local",reference}`, or an explicitly loaded external
+`{kind:"external",url}`. Service paths are bound to the owning trusted service;
+never send bearer tokens to an arbitrary URL. IDs are references, not access grants.
+At most eight blocks/four assets/twenty targets and 64 KiB of envelope JSON are
+accepted; tables have at most eight columns/twenty rows and one table per answer.
+
+`GET /users/me/character-companion/turns/{turn_id}/assets/{asset_id}` serves only
+saved Atlas raster assets for the current owner and a non-deleted chat. It
+rechecks character availability, ontology existence, graph source, image revision,
+file hash and storage confinement. Returns 404 for unavailable/private assets,
+409 `asset_changed` for replaced artwork, and private/no-store responses with
+`X-Content-Type-Options:nosniff`. It never fetches an arbitrary remote image URL.
+ShreckWorld assets use that service's current source authorization and revision
+checks; see the [reader media API](../../API/SHRECKWORLD_READER_API.md#document-media).
+No signed URLs, tokens, file paths or blob URLs are persisted in the envelope.
+
+Clients render narrative from referenced segments and optional blocks once;
+retain source details and per-cell citations. A failed image leaves its card or
+excerpt readable. Preserve row/cell IDs when sorting. Unknown/malformed envelopes
+fall back to the complete text; do not discard the reply. Rich response history
+and final events must agree and survive event expiry, polling/reload and pagination.
+Expand reveals admitted content only; obtaining new facts requires another
+normal authorized request. No HTML/component code/macros are accepted as blocks.
+
+Foundry context capabilities now advertise versions `[1,2]`. Version 2 adds
+`documents[].image_available` (boolean, default false); it carries no image URL or
+server-certified permission. Version 1 rejects a true image flag and its
+normalized request omits the new false default, preserving old idempotency hashes.
+Negotiate version 2 before sending image availability. Other limits, document
+kinds, scope rules and immutable-retry guarantees remain unchanged.

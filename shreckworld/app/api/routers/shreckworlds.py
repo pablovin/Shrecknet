@@ -33,6 +33,7 @@ from app.schemas.shreckworld import (
     ShreckWorldModelSettings,
 )
 from app.repositories.source_scope import OntologyScope, source_scope, item_scope_clause, item_in_scope
+from app.schemas.document_media import MediaRequest, MediaList
 from app.services.query import query_shreckworld
 from app.services.rule_resolution import resolve_action
 from app.services.embedding import EmbeddingInputError, EmbeddingUnavailable, get_embedder
@@ -558,6 +559,20 @@ async def validate_companion_sources(shreckworld_id: str, payload: dict, token: 
         if reference.get('source_sha256') and reference['source_sha256']!=item.source_sha256:
             raise HTTPException(409,'Source changed')
     return {'valid':True}
+
+
+@query_router.get('/{shreckworld_id}/library-items/{item_id}/documents/{document_id}/media/{media_id}')
+def document_media(shreckworld_id: str, item_id: str, document_id: str, media_id: str, revision: str,
+                   session: Session = Depends(get_db), principal: ShrecknetPrincipal = Depends(get_current_user)):
+    from app.services.document_media import asset_for_scope
+    path = asset_for_scope(session, shreckworld_id, item_id, document_id, media_id, revision)
+    return FileResponse(path, media_type='image/png', headers={'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff'})
+
+
+@query_router.post('/{shreckworld_id}/companion-media', response_model=MediaList)
+async def companion_media(shreckworld_id: str, payload: MediaRequest, token: str = Depends(oauth2_scheme), session: Session = Depends(get_db)):
+    from app.services.document_media import companion_catalog
+    return await companion_catalog(session, shreckworld_id, payload, token)
 
 
 router.include_router(admin_router)

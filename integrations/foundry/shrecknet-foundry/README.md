@@ -194,3 +194,14 @@ Scene" always means a Shrecknet narrative resource, not a Foundry Canvas Scene.
 From this directory, run `node --test tests/*.test.mjs` to exercise the
 service URL, authorization, Character Companion admission/recovery and chat management, Elder pagination, ShreckWorld query, and Chronicle
 revision/asset request contracts, Foundry snapshot isolation/retry/navigation, plus manifest download and packaged-file checks.
+
+## Rich Companion replies
+
+With the matching evidence-v2 backend and `companion_rich_response_enabled`,
+workspace and compact chat support verified source cards, images/galleries,
+property tables and book excerpts. Sorting preserves citations; expansion opens
+an image dialog. Protected media uses the player's service session, Foundry-local
+artwork rechecks table/document permission and revision, and external web images
+load only on click. Older/unknown envelopes fall back to the saved text.
+See the [deployment contract](https://github.com/pablovin/Shrecknet/blob/main/Documentation/Deployment/FOUNDRY_MODULE.md#companion-rich-replies)
+for rollout and remaining real-table acceptance.

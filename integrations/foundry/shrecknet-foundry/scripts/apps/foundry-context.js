@@ -89,7 +89,7 @@ export async function tableSnapshot(connection) {
     shrecknet_world_id: connection.worldId || null, shrecknet_world_name: connection.worldName || null };
 }
 
-export async function documentSnapshot(reference) {
+export async function documentSnapshot(reference, version = 1) {
   if (!uuidPattern.test(reference.uuid || "") || reference.uuid.length > 512) throw new Error("Attach a valid Foundry document UUID.");
   let doc = await foundry.utils.fromUuid(reference.uuid);
   if (doc?.documentName === "JournalEntry") {
@@ -119,14 +119,14 @@ export async function documentSnapshot(reference) {
   return { foundry_world_id: game.world.id, uuid: doc.uuid, kind: doc.documentName, name: doc.name,
     captured_at: new Date().toISOString(), source_revision: doc._stats?.modifiedTime == null ? null : String(doc._stats.modifiedTime),
     parent_uuid: doc.parent?.uuid || null, coverage: "partial", text: content.text,
-    fields: content.fields, links };
+    fields: content.fields, links, ...(version === 2 ? { image_available: Boolean(doc.documentName === 'JournalEntryPage' ? doc.type === 'image' && doc.src : doc.img) } : {}) };
 }
 
-export async function buildSnapshot(connection, state) {
+export async function buildSnapshot(connection, state, version = 1) {
   if (state.references.length > contextLimits.documents) throw new Error("Attach at most six documents.");
-  const snapshot = { version: 1, captured_at: new Date().toISOString(),
+  const snapshot = { version, captured_at: new Date().toISOString(),
     table: state.includeTable ? await tableSnapshot(connection) : null,
-    documents: await Promise.all(state.references.map(documentSnapshot)) };
+    documents: await Promise.all(state.references.map(reference=>documentSnapshot(reference, version))) };
   if (new TextEncoder().encode(JSON.stringify(snapshot)).length > contextLimits.bytes) throw new Error("Attached context exceeds 64 KiB. Remove an attachment before sending.");
   return snapshot;
 }

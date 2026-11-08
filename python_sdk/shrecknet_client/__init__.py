@@ -1,5 +1,6 @@
 from .installation import InstallationAPI, InstallationState, InstallationModels, InstallationPublicStatus
-from .character_companion import CharacterCompanionAPI, CompanionModelConfig, CompanionModelConfigUpdate, CompanionSelection, CompanionRapport, CompanionTurn, CompanionEvent
+from .character_companion import CharacterCompanionAPI, CompanionModelConfig, CompanionModelConfigUpdate, CompanionSelection, CompanionRapport, CompanionTurn, CompanionEvent, CompanionPresentationConfig
+from .companion_rich_response import RichResponse as CompanionRichResponse
 from .browser_auth import BrowserAuthAPI, BrowserSession, BrowserRegistration
 from .shreckworld import (
     ShreckWorldAPI, SelectedPassage, KnowledgeWorld, KnowledgeSource, KnowledgeCitation, KnowledgeAnswer,

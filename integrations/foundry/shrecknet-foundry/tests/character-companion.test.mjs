@@ -227,3 +227,14 @@ test("refresh honors a Companion changed on another device instead of reopening 
   assert.equal(w.chat.id, "new-chat");
   assert.equal(calls.some(([, options]) => options?.method === "PUT"), false);
 });
+
+test('polling retains delivered commentary and exposes detailed verification status', async () => {
+  const { w } = fixture(async path => {
+    if (path === '/turns/turn') return {chat_id:'chat',status:'validating',stage:'verifying_claims',commentary:[{id:'skit',role:'assistant',kind:'commentary',sequence:1,content:'Looking…',manifest:[]}]};
+    throw new Error(path);
+  });
+  w.chat={id:'chat'};w.turnId='turn';
+  await w.checkTurn();await w.checkTurn();
+  assert.equal(w.status,'Checking factual claims');
+  assert.equal(w.messages.filter(m=>m.id==='skit').length,1);
+});

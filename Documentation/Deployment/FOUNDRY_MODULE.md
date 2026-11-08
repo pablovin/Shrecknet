@@ -506,3 +506,53 @@ Before tagging, test against a clean Foundry V14 installation:
 
 The module's manifest enforces Foundry VTT 14 as its minimum version. Update
 the `verified` version only after smoke testing the applicable Foundry release.
+
+
+### Evidence-first Companion queries
+
+With backend `companion_query_pipeline_version="evidence_v2"`, an explicit table
+ontology skips model inference and a saved chat ontology persists across turns.
+A conflicting conversational switch asks before overriding the table scope; the
+active ontology is shown and **Use page/Foundry context for the next message**
+releases that override. A World containing multiple ontologies still needs a
+selection. The table binding itself is never edited by conversation.
+
+Polling reads detailed stages and durable commentary from turn snapshots, merges
+messages by ID, and refreshes changed chat scope. Commentary remains in history
+after completion or failure. General-knowledge fallback is a separate, one-message
+opt-in exposed only when permitted by the backend; ordinary web permission is
+unchanged. Factual drafts remain private during evidence verification.
+Deploy the SQL migration and matching backend/workers with the clients; v2
+defaults on for new/missing configuration, while explicit saved selections persist. Old
+servers retain text/context chat without the additive behavior. See the
+[canonical pipeline](../Agents/Companion/Companion.md#evidence-first-query-pipeline)
+and [HTTP/SSE contract](../Agents/Companion/Frontend%20API.md#evidence-v2).
+
+## Companion rich replies
+
+The Companion workspace and compact sidecar render the same optional v1 rich
+response as ShreckOS: narrative, entity cards, images/galleries, structured tables
+and book excerpts. Text remains readable on older servers or unknown versions.
+Source controls use admitted message evidence/targets; table sorting keeps cells
+and citations together. Expansion opens an inert image dialog, never a macro or
+new generation request. Content remains in the current user's private Companion
+history and is not shared into Foundry chat.
+
+Protected Atlas/ShreckWorld artwork loads with the signed-in player's service
+session through approved asset paths and temporary object URLs. Foundry context
+v2 supplies only `image_available`; the module resolves the admitted document UUID
+in its original table and checks current OBSERVER visibility and document revision
+before reading its own portrait/image. External Foundry artwork is not auto-loaded.
+Unchanged version-one extraction/retry behavior remains available to old servers.
+A source from another Foundry table is unavailable locally. Atlas/book/Chronicle
+source actions open the corresponding authenticated website reader; web targets
+open the original source page. External web pictures require an explicit load
+click and never receive the player's Shrecknet bearer token.
+
+Deploy the updated ShreckWorld, API/workers and module before enabling
+`companion_rich_response_enabled` on evidence v2. Output media support is separate
+from user image uploads, which this Foundry view still does not implement. No
+additional Companion database migration is introduced; v2's durable-commentary
+migration remains required. Disabling rich composition preserves saved text and
+rich history. Recheck real v14 GM/player sheets, source CORS and source-file access
+in the deployment; fixture tests are not live Foundry acceptance.

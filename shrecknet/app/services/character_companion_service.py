@@ -1,7 +1,9 @@
 """Companion selection, private chat lifecycle and durable admission rules."""
 from __future__ import annotations
 from app.integrations.companion.retrieval import web_available
+from app.schemas.character_companion import COMPANION_ACKNOWLEDGEMENT, normalized_turn_request
 import time
+import copy
 from uuid import uuid4
 from sqlalchemy import select, update
 from app.core.config_store import get_settings, COMPANION_MODEL_FIELDS
@@ -145,11 +147,8 @@ class CharacterCompanionService:
 
     async def admit(self, actor, chat_id, payload, key, principal):
         settings = get_settings()
-        body = payload.model_dump(mode="json")
-        # Preserve hashes for ordinary turns admitted before this additive field
-        # existed; a rolling upgrade must still replay those exact actions.
-        if body.get("foundry_context") is None:
-            body.pop("foundry_context", None)
+        body = normalized_turn_request(payload.model_dump(mode="json"))
+        submitted_body = copy.deepcopy(body)
         previous, digest = await self.repo.replay(actor.id, f"turn:{chat_id}", key, body)
         if previous:
             return previous
@@ -163,6 +162,8 @@ class CharacterCompanionService:
         if payload.tools.web != "disabled" and not await AuthSessionRepository(self.session).rate_limit(f"companion-web:{actor.id}", int(time.time()), 60, 8, commit=False):
             fail(429, "web_rate_limited")
         chat = await self.chat(actor, chat_id)
+        if payload.clarification_id and (not chat.pending_clarification or chat.pending_clarification.get("id") != str(payload.clarification_id)):
+            fail(409, "stale_clarification")
         agent = await self.require_selection(actor, chat.character_agent_id, payload.selection_version)
         if not agent.identity_description:
             fail(409, "identity_unavailable")
@@ -175,7 +176,7 @@ class CharacterCompanionService:
             ontology = await self.session.get(Ontology, explicit_ontology)
             if not ontology or (context.get("world_id") and ontology.world_id != context["world_id"]):
                 fail(422, "context_scope_mismatch")
-        context = {**context, "ontology_id": explicit_ontology if body.get("foundry_context") is not None else (explicit_ontology or agent.ontology_id),
+        context = {**context, "ontology_id": explicit_ontology if body.get("foundry_context") is not None or getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else (explicit_ontology or agent.ontology_id),
                    "chronicle_ontology_id": explicit_ontology, "character_ontology_id": agent.ontology_id}
         foundry_sources = []
         if body.get("foundry_context") is not None:
@@ -191,7 +192,9 @@ class CharacterCompanionService:
                 fail(409, "invalid_retry")
         pair = await self.repo.pair(actor.id, agent.id, create=True)
         turn = CompanionTurn(id=str(uuid4()), chat_id=chat.id, user_id=actor.id, character_agent_id=agent.id,
-                             request=body, principal=principal, generation=pair.generation)
+                             request=submitted_body if getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else body,
+                             execution_context=context if getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else None,
+                             principal=principal, generation=pair.generation)
         total_size = 0
         image_sources = []
         if payload.attachment_ids and f"{settings.model_companion_synthesis.provider}/{settings.model_companion_synthesis.name}" not in settings.companion_image_models:
@@ -210,9 +213,15 @@ class CharacterCompanionService:
         if total_size > 20 * 1024 * 1024:
             fail(413, "turn_attachment_budget_exceeded")
         await self.repo.reserve(chat, turn)
-        user_message = CompanionMessage(turn_id=turn.id, chat_id=chat.id, role="user", content=payload.text, committed=False, manifest=image_sources + foundry_sources)
+        user_message = CompanionMessage(turn_id=turn.id, chat_id=chat.id, role="user", kind="user", content=payload.text, committed=False, manifest=image_sources + foundry_sources)
         self.session.add(user_message)
         await self.session.flush()
+        if getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" and settings.companion_interim_max_messages:
+            acknowledgement = CompanionMessage(turn_id=turn.id, chat_id=chat.id, role="assistant", kind="commentary", sequence=1,
+                                               content=COMPANION_ACKNOWLEDGEMENT, manifest=[])
+            self.session.add(acknowledgement)
+            await self.session.flush()
+            await self.repo.event(actor.id, "message.committed", record(acknowledgement), chat_id=chat.id, turn_id=turn.id)
         result = {"turn_id": turn.id, "chat_id": chat.id, "status": "queued", "user_message_id": user_message.id,
                   "events_url": f"/users/me/character-companion/turns/{turn.id}/events", "result_url": f"/users/me/character-companion/turns/{turn.id}"}
         self.repo.remember(actor.id, f"turn:{chat_id}", key, digest, result)
@@ -240,4 +249,7 @@ class CharacterCompanionService:
             CompanionTurn.id == turn.id, CompanionTurn.user_id == actor.id
         ).execution_options(populate_existing=True))).one()
         turn, sequence = row
-        return {**record(turn, "principal", "identity", "lease"), "turn_id": turn.id, "last_event_id": cursor(actor.id, sequence or 0)}
+        commentary = list((await self.session.execute(select(CompanionMessage).where(
+            CompanionMessage.turn_id == turn.id, CompanionMessage.kind == "commentary"
+        ).order_by(CompanionMessage.sequence))).scalars())
+        return {**record(turn, "principal", "identity", "lease"), "commentary": [record(m) for m in commentary], "turn_id": turn.id, "last_event_id": cursor(actor.id, sequence or 0)}

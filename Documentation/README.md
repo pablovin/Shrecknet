@@ -39,11 +39,13 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [Foundry contextual Companion chat plan](./Deployment/FOUNDRY_CONTEXTUAL_COMPANION_PLAN.md) — implementation/design record for system-independent chat, table/World grounding, document attachments and remaining acceptance gates
 
 - [Character Companion](./Agents/Companion/Companion.md) — implemented behavior, ownership, deployment, privacy, recovery and remaining acceptance gates
+- [Companion query pipeline redesign plan](./Agents/Companion/Query%20Pipeline%20Plan.md) — design and rollout acceptance for ontology resolution, LLM source planning, dedicated web model, evidence verification, permanent commentary and frontend settings
+- [Companion rich response plan](./Agents/Companion/Rich%20Response%20Plan.md) — delivered verified narrative, media, entity cards, tables and book excerpts shared by ShreckOS and Foundry, plus rollout acceptance gates
 
 - [Unified Character Companion backend plan](./Agents/Companion/Companion%20Backend%20Plan.md) — proposed cross-repository reuse audit, architecture, rapport/evidence contracts, migration, and testable delivery milestones; design baseline and acceptance checklist
 - [Character Companion validation](./Agents/Companion/Validation.md) — repeatable checks, verified coverage and deployment acceptance gates
 - [Character Companion frontend API](./Agents/Companion/Frontend%20API.md) — selection, chat, private image, rapport, recovery/cancellation, and SSE contracts
-- [Companion Agent model configuration](./Agents/Companion/Model%20Configuration.md) — four independent model roles, frontend configuration/status integration, SDK scope, and rollout
+- [Companion Agent model configuration](./Agents/Companion/Model%20Configuration.md) — six independent model roles, frontend configuration/status integration, SDK scope, and rollout
 
 ## Elder
 

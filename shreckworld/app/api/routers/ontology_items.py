@@ -13,6 +13,7 @@ from app.schemas.shreckworld import (
     ShreckWorldLibraryItemUpdate, ShreckWorldQueryRequest, ShreckWorldQueryResponse,
     ActionResolutionRequest, ActionResolutionResponse, ShreckWorldAgentJobRead,
 )
+from app.schemas.document_media import MediaRequest, MediaList
 from app.repositories.source_scope import OntologyScope
 
 router = APIRouter(prefix="/ontologies/{ontology_id}", tags=["Ontology sources"])
@@ -112,3 +113,14 @@ def create_agent_job(payload: ShreckWorldQueryRequest, scope: OntologyScope = De
 def agent_job(job_id: str, scope: OntologyScope = Depends(authorized_ontology),
               principal: ShrecknetPrincipal = Depends(get_current_user), session: Session = Depends(get_db)):
     return sources.get_agent_job(scope, job_id, principal, session)
+
+
+@router.get('/items/{item_id}/documents/{document_id}/media/{media_id}')
+def document_media(item_id: str, document_id: str, media_id: str, revision: str,
+                   scope: OntologyScope = Depends(authorized_ontology), session: Session = Depends(get_db)):
+    return sources.document_media(scope, item_id, document_id, media_id, revision, session)
+
+
+@router.post('/companion-media', response_model=MediaList)
+async def companion_media(payload: MediaRequest, ontology_id: int = Path(gt=0), token: str = Depends(oauth2_scheme), session: Session = Depends(get_db)):
+    return await sources.companion_media(OntologyScope(ontology_id, f'Ontology {ontology_id}'), payload, token, session)

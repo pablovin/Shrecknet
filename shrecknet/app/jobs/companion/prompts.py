@@ -1,4 +1,4 @@
-"""Companion pipeline: backend identity and bounded Foundry snapshot evidence -> optional Stage 1 router -> optional image interpretation ->
+"""Legacy Companion pipeline (v2 ordered contracts live in query_prompts.py): backend identity and bounded Foundry snapshot evidence -> optional Stage 1 router -> optional image interpretation ->
 parallel retrieval (WEB_RETRIEVAL for provider web search, with optional concurrent interim reaction) -> Stage 2 embodied synthesis -> backend reference validation
 and commit -> asynchronous Stage 3 rapport. Only synthesis produces public final
 output. Router/rapport return strict JSON. Tool failures are independent; no model
@@ -46,7 +46,8 @@ INTERIM = '''Optional interim reaction. Input JSON: identity_description (the th
 canonical identity components), query (user text). Return one brief sentence of
 plain text acknowledging the query in character. Do not claim to know a pending
 tool result, invent a fact, mention a relationship change, or issue instructions.
-This is transient commentary, not the final answer or rapport evidence.'''
+This is brief commentary, not the final answer, factual evidence or rapport evidence.
+The v2 backend persists delivered commentary; legacy clients may display it transiently.'''
 
 # Purpose: Stage 2 reasons and renders in one embodied synthesis stream.
 # Output: plain prose with optional source markers; backend builds the final result.

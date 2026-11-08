@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, field_validator, model_validator
 
 Tool = Literal["atlas", "shreckworld", "chronicle", "web", "character_memory"]
+COMPANION_ACKNOWLEDGEMENT = "Let me take a look."
 DIMENSIONS = {"connection": 25, "coordination": 20, "trust": 20, "familiarity": 0, "openness": 10, "current_strain": 0}
 TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
 
@@ -54,6 +55,17 @@ class PageContext(StrictModel):
 class Tools(StrictModel):
     allowed: list[Tool] | None = None
     web: Literal["disabled", "allow", "require"] = "disabled"
+
+
+def normalized_turn_request(body):
+    """Omit additive optional defaults so older idempotency hashes keep working."""
+    optional_defaults = {"general_knowledge_opt_in", "use_page_scope", "clarification_id", "foundry_context"}
+    result = {key:value for key,value in body.items() if key not in optional_defaults or value}
+    if result.get('foundry_context', {}).get('version') == 1:
+        result['foundry_context'] = {**result['foundry_context'], 'documents':[
+            {key:value for key,value in doc.items() if key != 'image_available'}
+            for doc in result['foundry_context'].get('documents', [])]}
+    return result
 
 
 def normalized_chat_title(value):
@@ -108,6 +120,7 @@ class FoundryField(StrictModel):
 
 
 class FoundryDocument(StrictModel):
+    image_available: bool = False
     foundry_world_id: str | None = Field(None, min_length=1, max_length=128)
     uuid: FoundryUUID
     kind: Literal["Actor", "Item", "JournalEntryPage"]
@@ -121,13 +134,13 @@ class FoundryDocument(StrictModel):
     links: list[FoundryLink] = Field(default_factory=list, max_length=20)
 
 
-FOUNDRY_CONTEXT_LIMITS = {"versions": [1], "documents": 6, "bytes": 65536,
+FOUNDRY_CONTEXT_LIMITS = {"versions": [1, 2], "documents": 6, "bytes": 65536,
                          "document_characters": 8000, "description_characters": 4000,
                          "fields": 100, "links": 20}
 
 
 class FoundryContext(StrictModel):
-    version: Literal[1]
+    version: Literal[1, 2]
     table: FoundryTable | None = None
     documents: list[FoundryDocument] = Field(default_factory=list, max_length=6)
     captured_at: AwareDatetime
@@ -136,11 +149,13 @@ class FoundryContext(StrictModel):
     @classmethod
     def integer_version(cls, value):
         if type(value) is not int:
-            raise ValueError("Foundry context version must be integer 1")
+            raise ValueError("Foundry context version must be integer 1 or 2")
         return value
 
     @model_validator(mode="after")
     def validate_snapshot(self):
+        if self.version == 1 and any(doc.image_available for doc in self.documents):
+            raise ValueError('Document images require Foundry context version 2')
         if self.table and any(doc.foundry_world_id and doc.foundry_world_id != self.table.foundry_world_id for doc in self.documents):
             raise ValueError("Foundry document belongs to another table")
         if len({doc.uuid for doc in self.documents}) != len(self.documents):
@@ -158,6 +173,9 @@ class TurnCreate(StrictModel):
     foundry_context: FoundryContext | None = None
     tools: Tools = Field(default_factory=Tools)
     retry_of_turn_id: UUID | None = None
+    general_knowledge_opt_in: bool = False
+    use_page_scope: bool = False
+    clarification_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_input(self):
@@ -237,6 +255,9 @@ class ChatRead(BaseModel):
     character_agent_id: str
     title: str
     default_scope: dict | None
+    resolved_ontology: dict | None = None
+    scope_override: bool = False
+    pending_clarification: dict | None = None
     revision: int
     active_turn_id: str | None
     created_at: datetime
@@ -254,6 +275,10 @@ class ChatPage(Page[ChatRead]):
 
 
 class ToolCallRead(BaseModel):
+    id: str | None = None
+    need_ids: list[str] = Field(default_factory=list)
+    recovery: bool = False
+    source_trace: dict | None = None
     tool: Literal["atlas", "shreckworld", "chronicle", "web", "character_memory"]
     status: Literal["ok", "empty", "timed_out", "unavailable"]
     query: str | None = None
@@ -272,7 +297,22 @@ class AnswerSegmentRead(BaseModel):
     evidence_ids: list[str]
 
 
+from app.schemas.companion_rich_response import RichResponse
+
+
 class AnswerDetailsRead(BaseModel):
+    rich_response: RichResponse | None = None
+
+    @field_validator('rich_response', mode='before')
+    @classmethod
+    def supported_rich_response(cls, value):
+        if value is None:
+            return None
+        try:
+            return RichResponse.model_validate(value)
+        except ValueError:
+            return None
+
     tool_calls: list[ToolCallRead]
     evidence: list[Evidence]
     segments: list[AnswerSegmentRead]
@@ -285,6 +325,8 @@ class MessageRead(BaseModel):
     turn_id: str
     chat_id: str
     role: str
+    kind: str = "final"
+    sequence: int = 0
     content: str
     manifest: list[dict]
     answer_details: AnswerDetailsRead | None = None
@@ -307,6 +349,9 @@ class TurnRead(BaseModel):
     chat_id: str
     status: Literal['queued','routing','retrieving','synthesizing','validating','completed','failed','cancelled','interrupted']
     draft: str
+    stage: str | None = None
+    execution_context: dict | None = None
+    commentary: list[dict] = Field(default_factory=list)
     metrics: dict = Field(default_factory=dict)
     result: dict | None
     error: dict | None

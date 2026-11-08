@@ -51,4 +51,4 @@ async def authorize(session, token, tool):
     from app.services.character_agent_service import CharacterAgentService
     async with get_driver().session(database=get_settings().neo4j_database) as graph:
         await CharacterAgentService(None,graph).ensure_queryable(turn.character_agent_id,public_only=getattr(user.role,"value",user.role)!="admin")
-    return {"user_id": user.id, "role": getattr(user.role, "value", user.role), "scope": turn.request.get("context") or {}, "turn_id": turn.id}
+    return {"user_id": user.id, "role": getattr(user.role, "value", user.role), "scope": turn.execution_context if turn.execution_context is not None else (turn.request.get("context") or {}), "turn_id": turn.id}

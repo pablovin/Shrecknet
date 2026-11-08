@@ -27,7 +27,7 @@ def foundry_evidence(snapshot):
         source = evidence("foundry", doc["uuid"], doc["text"],
             title="Foundry snapshot · " + doc["name"],
             reference={key: doc[key] for key in ("uuid", "kind", "captured_at", "source_revision", "parent_uuid")} | document_scope,
-            scope=document_scope, structured={"fields": doc["fields"], "links": doc["links"]})
+            scope=document_scope, structured={"fields": doc["fields"], "links": doc["links"], **({"image_available": True} if snapshot["version"] == 2 and doc.get("image_available") else {})})
         source["coverage"] = {"status": doc["coverage"], "warnings": ["Client-provided snapshot; not verified live game state."]}
         rows.append(source)
     return rows

@@ -48,7 +48,7 @@ def build_answer(raw, evidence, tool_results, *, query=None):
             "returned_count": len(returned),
             "evidence_ids": [item["evidence_id"] for item in returned if item["evidence_id"] in supplied],
         }
-        for key in ("reason", "source_coverage"):
+        for key in ("reason", "source_coverage", "id", "need_ids", "recovery", "source_trace"):
             if key in row:
                 call[key] = row[key]
         tool_calls.append(call)

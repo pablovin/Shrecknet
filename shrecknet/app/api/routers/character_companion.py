@@ -50,10 +50,11 @@ async def idempotency_key(value: UUID = Header(alias="Idempotency-Key")):
 @router.get("/capabilities")
 async def capabilities(actor=Depends(get_current_user)):
     s = get_settings()
-    return {"contract_version": 1, "foundry_context": FOUNDRY_CONTEXT_LIMITS, "enabled": s.companion_enabled and s.enable_ai_agents,
+    from app.schemas.companion_rich_response import BLOCK_TYPES
+    return {"rich_response": {"versions": [1], "block_types": BLOCK_TYPES, "enabled": s.companion_rich_response_active}, "contract_version": 1, "foundry_context": FOUNDRY_CONTEXT_LIMITS, "enabled": s.companion_enabled and s.enable_ai_agents,
             "streaming": bool(s.model_companion_synthesis.name), "images": f"{s.model_companion_synthesis.provider}/{s.model_companion_synthesis.name}" in s.companion_image_models,
             "chat_sessions": {"max_chats": MAX_COMPANION_CHATS, "limit_scope": "user"},
-            "event_versions": [1], "tools": {key: {"available": value, "reason": None if value else "not_configured"} for key, value in
+            "query_pipeline_version": s.companion_query_pipeline_version, "general_knowledge_opt_in": s.companion_general_knowledge_policy == "labeled_opt_in", "event_versions": [1], "tools": {key: {"available": value, "reason": None if value else "not_configured"} for key, value in
                 {"atlas": True, "character_memory": True, "shreckworld": bool(s.companion_shreckworld_url), "chronicle": bool(s.companion_chronicles_url), "web": web_available(s)}.items()},
             "model_roles": {field: {"configured": bool(getattr(s, field).name), "available": None} for field in COMPANION_MODEL_FIELDS},
             "limits": {"image_bytes": 10485760, "images_per_turn": 4, "turn_image_bytes": 20971520, "text_characters": 8000}}
@@ -259,3 +260,10 @@ retrieval_router = APIRouter(prefix="/internal/companion", tags=["companion-inte
 async def authorize_retrieval(tool: str, token=Depends(oauth2_scheme), session=Depends(get_db_session)):
     from app.services.companion_authorization import authorize
     return await authorize(session, token, tool)
+
+
+@router.get('/turns/{turn_id}/assets/{asset_id}')
+async def rich_asset(turn_id: UUID, asset_id: str, actor=Depends(get_current_user), svc=Depends(service)):
+    from app.services.companion_asset_service import atlas_asset
+    path = await atlas_asset(svc, actor, str(turn_id), asset_id)
+    return FileResponse(path, headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})

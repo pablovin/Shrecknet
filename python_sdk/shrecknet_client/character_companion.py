@@ -6,6 +6,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 from .models import LLMModelTarget
 from .errors import raise_for_status
+from .companion_rich_response import RichResponse
 
 PREFIX = '/users/me/character-companion'
 
@@ -16,6 +17,9 @@ class CompanionModelConfig(BaseModel):
     model_companion_interim: LLMModelTarget
     model_companion_rapport_update: LLMModelTarget
 
+    model_companion_web_search: LLMModelTarget | None = None
+    model_companion_evidence: LLMModelTarget | None = None
+
 
 class CompanionModelConfigUpdate(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -23,6 +27,9 @@ class CompanionModelConfigUpdate(BaseModel):
     model_companion_synthesis: LLMModelTarget | None = None
     model_companion_interim: LLMModelTarget | None = None
     model_companion_rapport_update: LLMModelTarget | None = None
+
+    model_companion_web_search: LLMModelTarget | None = None
+    model_companion_evidence: LLMModelTarget | None = None
 
 
 class CompanionSelection(BaseModel):
@@ -40,12 +47,28 @@ class CompanionRapport(BaseModel):
     pending_count: int
 
 
+class CompanionPresentationConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    companion_web_images_enabled: bool = False
+    companion_rich_response_enabled: bool = False
+    companion_rich_response_timeout_s: float = Field(2, ge=0.1, le=10)
+
+
 class CompanionTurn(BaseModel):
     model_config = ConfigDict(extra='allow')
     turn_id: str | None = None
     id: str | None = None
     chat_id: str
     status: str
+    result: dict[str, Any] | None = None
+
+    @property
+    def rich_response(self) -> RichResponse | None:
+        """Decode supported presentation, retaining the raw result and text on failure."""
+        try:
+            return RichResponse.model_validate((self.result or {}).get('rich_response'))
+        except ValueError:
+            return None
 
 
 class CompanionEvent(BaseModel):
@@ -112,9 +135,15 @@ class CharacterCompanionAPI:
     async def messages(self, chat_id, **filters):
         return await self.client.raw_request('GET', PREFIX+f'/chats/{chat_id}/messages', params=filters)
 
-    async def send(self, chat_id: str, text: str, selection_version: int, *, idempotency_key: str, attachment_ids=None, context=None, tools=None, retry_of_turn_id=None, foundry_context=None) -> CompanionTurn:
+    async def send(self, chat_id: str, text: str, selection_version: int, *, idempotency_key: str, attachment_ids=None, context=None, tools=None, retry_of_turn_id=None, foundry_context=None, general_knowledge_opt_in=False, use_page_scope=False, clarification_id=None) -> CompanionTurn:
         """Admit one turn with a stable UUID key; optional foundry_context is an immutable client snapshot."""
         body = {'text':text,'selection_version':selection_version,'attachment_ids':attachment_ids or [],'context':context,'retry_of_turn_id':retry_of_turn_id}
+        if general_knowledge_opt_in:
+            body['general_knowledge_opt_in'] = True
+        if use_page_scope:
+            body['use_page_scope'] = True
+        if clarification_id is not None:
+            body['clarification_id'] = clarification_id
         if foundry_context is not None:
             body['foundry_context'] = foundry_context
         if tools is not None:
@@ -148,11 +177,35 @@ class CharacterCompanionAPI:
             raise_for_status(response.status_code, detail)
         return response.content
 
+    async def rich_asset_content(self, turn_id: str, asset_id: str) -> bytes:
+        """Download saved Atlas media only; other services retain their own auth clients."""
+        from uuid import UUID
+        import re
+        turn_id = str(UUID(turn_id))
+        if not re.fullmatch(r'a[a-f0-9]{20}', asset_id):
+            raise ValueError('Invalid rich asset identifier')
+        response = await self.client._client.get(PREFIX+f'/turns/{turn_id}/assets/{asset_id}', headers=self.client._headers())
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get('detail')
+            except ValueError:
+                detail = None
+            raise_for_status(response.status_code, detail)
+        return response.content
+
+    async def presentation_config(self) -> CompanionPresentationConfig:
+        """Read administrator presentation controls; old servers use disabled defaults."""
+        return CompanionPresentationConfig.model_validate(await self.client.raw_request('GET','/config/'))
+
+    async def update_presentation_config(self, changes: CompanionPresentationConfig) -> CompanionPresentationConfig:
+        """Set presentation controls using the existing administrator config boundary."""
+        return CompanionPresentationConfig.model_validate(await self.client.raw_request('PUT','/config/',json=changes.model_dump(exclude_unset=True)))
+
     async def delete_attachment(self, attachment_id):
         return await self.client.raw_request('DELETE', PREFIX+f'/attachments/{attachment_id}')
 
     async def get_model_config(self) -> CompanionModelConfig:
-        """Read the four administrator-only Companion model assignments."""
+        """Read administrator Companion model assignments (new roles may be absent on older servers)."""
         return CompanionModelConfig.model_validate(await self.client.raw_request('GET','/config/'))
 
     async def update_model_config(self, changes: CompanionModelConfigUpdate) -> CompanionModelConfig:

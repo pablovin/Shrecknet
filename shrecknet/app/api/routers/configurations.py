@@ -369,14 +369,30 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
 # Settings that should not be editable from the frontend runtime config UI because they
 # are bootstrap/infrastructure concerns and typically require service re-provisioning.
 FIELD_UI_META.update({
-    "model_companion_routing": {"type":"llm_target","label":"Companion routing","help":"Optional lightweight routing for ambiguous requests."},
-    "model_companion_synthesis": {"type":"llm_target","label":"Companion synthesis","help":"One embodied streaming response; image interpretation when needed."},
+    "companion_web_images_enabled": {"type":"boolean","label":"Web image discovery","help":"Opt in only for a configured JSON provider supporting source-associated images. Model search does not supply image provenance."},
+    "companion_rich_response_enabled": {"type":"boolean","label":"Rich responses","help":"Verified source cards, tables, excerpts and media in evidence v2; text fallback remains available."},
+    "companion_rich_response_timeout_s": {"type":"number","label":"Optional media deadline","help":"Maximum optional media resolution seconds inside the total turn deadline, 0.1 through 10."},
+    "companion_query_pipeline_version": {"type":"enum","options":["legacy","evidence_v2"],"label":"Query pipeline","help":"V2 resolves world scope, plans sources and verifies factual claims. Apply schema migration before switching workers."},
+    "companion_general_knowledge_policy": {"type":"enum","options":["disabled","labeled_opt_in"],"label":"General knowledge fallback","help":"Requires per-turn opt-in and an explicit label; never verified canon."},
+    "companion_web_backend": {"type":"enum","options":["model","json"],"label":"Web backend","help":"Dedicated model search or configured JSON provider; no silent provider fallback."},
+    "companion_routing_timeout_s": {"type":"number","help":"Ontology inference and planner deadline, seconds."},
+    "companion_evidence_timeout_s": {"type":"number","help":"Coverage and claim verifier deadline per call, seconds."},
+    "companion_web_timeout_s": {"type":"number","help":"Dedicated web retrieval deadline, seconds; overall retrieval budget also applies."},
+    "companion_recovery_max_rounds": {"type":"integer","help":"Targeted Companion recovery rounds, 0 or 1."},
+    "companion_recovery_max_calls": {"type":"integer","help":"Maximum independent calls in recovery, 1 through 4."},
+    "companion_interim_max_messages": {"type":"integer","help":"Permanent commentary messages per turn, including acknowledgement; 0 through 3."},
+    "companion_interim_min_interval_s": {"type":"number","help":"Minimum time between permanent commentary messages, seconds."},
+    "companion_interim_output_tokens": {"type":"integer","help":"Maximum generated commentary tokens."},
+    "model_companion_web_search": {"type":"llm_target","label":"Companion web search","help":"Dedicated public web evidence model; enable its search capability. Per-turn permission still applies."},
+    "model_companion_evidence": {"type":"llm_target","label":"Companion evidence review","help":"Coverage, contradictions and factual claim verification; search disabled."},
+    "model_companion_routing": {"type":"llm_target","label":"Companion routing","help":"V2 ontology inference, ontology updates and source query planning; optional in legacy."},
+    "model_companion_synthesis": {"type":"llm_target","label":"Companion synthesis","help":"Embodied reply and image interpretation; V2 verifies factual drafts before publication."},
     "model_companion_interim": {"type":"llm_target","label":"Companion interim reactions","help":"Optional brief known-context commentary during retrieval."},
     "model_companion_rapport_update": {"type":"llm_target","label":"Companion rapport updates","help":"Asynchronous character-conditioned relational evaluation."},
     "companion_web_search_token": {"type":"string","secret":True,"help":"Write-only credential for the configured web retrieval provider."},
     "companion_enabled": {"type":"boolean","help":"Enable Character Companion after configuring synthesis and rapport models."},
-    "companion_model_routing_enabled": {"type":"boolean","help":"Use the optional routing model for ambiguous requests."},
-    "companion_interim_enabled": {"type":"boolean","help":"Enable optional transient comments; disabled by default."},
+    "companion_model_routing_enabled": {"type":"boolean","help":"Legacy-only optional routing switch. V2 always requires the routing model."},
+    "companion_interim_enabled": {"type":"boolean","help":"Enable character commentary. V2 persists delivered comments in history."},
     "companion_web_enabled": {"type":"boolean","help":"Enable configured external web retrieval; disabled by default."},
     "companion_tool_timeout_s": {"type":"number","help":"Independent retrieval deadline per source, seconds."},
     "companion_retrieval_timeout_s": {"type":"number","help":"Overall parallel retrieval deadline, seconds."},
@@ -444,6 +460,16 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail=f"Invalid model target: {field}") from exc
     merged = get_settings().model_dump()
     merged.update(payload)
+    if any(key.startswith("companion_") or key.startswith("model_companion_") for key in payload):
+        try:
+            validated = Settings(**merged)
+        except ValidationError as exc:
+            raise HTTPException(400, detail="Invalid Companion configuration") from exc
+        if validated.companion_query_pipeline_version == "evidence_v2":
+            if validated.companion_routing_timeout_s >= validated.companion_turn_timeout_s or validated.companion_evidence_timeout_s >= validated.companion_turn_timeout_s:
+                raise HTTPException(400, detail="Companion stage deadlines must be below the turn deadline")
+            if validated.companion_web_backend == "model" and validated.model_companion_web_search.web_search_enabled and validated.model_companion_web_search.provider != "openrouter":
+                raise HTTPException(400, detail="Companion model web search requires an OpenRouter target; disable search to make the tool unavailable")
     if "shreckworld_embedding_backend" in payload:
         try:
             Settings(**merged)
@@ -456,6 +482,8 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail="Invalid embodiment validation retry limit; expected an integer from 0 through 3") from exc
     if merged.get("companion_enabled"):
         required = ["model_companion_synthesis", "model_companion_rapport_update"]
+        if merged.get("companion_query_pipeline_version") == "evidence_v2":
+            required.extend(["model_companion_routing", "model_companion_evidence"])
         if merged.get("companion_model_routing_enabled"):
             required.append("model_companion_routing")
         if merged.get("companion_interim_enabled"):
@@ -630,7 +658,7 @@ def get_config_schema() -> dict[str, Any]:
         {"id": "elder", "label": "Elder Agent", "fields": ["model_elder_planner", "model_elder_synthesis", "model_elder_character_incorporation", "elder_debug_artifacts_enabled", "elder_query_embedding_timeout_s", "embedding_runtime_enabled", "embedding_runtime_queue_max_size", "embedding_runtime_batch_max_size", "embedding_runtime_batch_wait_ms", "embedding_runtime_cache_size", "embedding_runtime_request_timeout_s", "embedding_runtime_startup_timeout_s", "embedding_runtime_fail_open_health", "embedding_model_id", "embedding_dimension", "embedding_device", "semantic_embedding_strategy", "semantic_embedding_version", "semantic_embedding_long_text_threshold_tokens", "semantic_embedding_chunk_target_tokens", "semantic_embedding_chunk_overlap_tokens"]},
         {"id": "novelist", "label": "Novelist Agent", "fields": ["model_novelist_analysis", "model_novelist_writer", "novelist_analysis_context_tokens", "novelist_writer_context_tokens"]},
         {"id": "librarian", "label": "Librarian Agent", "fields": ["model_librarian_planner", "model_librarian_synthesis", "model_librarian_character_incorporation", "librarian_debug_artifacts_enabled"]},
-        {"id": "companion_agent", "label": "Companion Agent", "fields": [*COMPANION_MODEL_FIELDS, "companion_enabled", "companion_model_routing_enabled", "companion_interim_enabled", "companion_web_enabled", "companion_tool_timeout_s", "companion_retrieval_timeout_s", "companion_turn_timeout_s", "companion_output_tokens", "companion_max_evidence_tokens", "companion_image_models"]},
+        {"id": "companion_agent", "label": "Companion Agent", "fields": [*COMPANION_MODEL_FIELDS, "companion_web_images_enabled", "companion_rich_response_enabled", "companion_rich_response_timeout_s", "companion_query_pipeline_version", "companion_general_knowledge_policy", "companion_recovery_max_rounds", "companion_recovery_max_calls", "companion_routing_timeout_s", "companion_evidence_timeout_s", "companion_web_timeout_s", "companion_interim_max_messages", "companion_interim_min_interval_s", "companion_interim_output_tokens", "companion_web_backend", "companion_enabled", "companion_model_routing_enabled", "companion_interim_enabled", "companion_web_enabled", "companion_tool_timeout_s", "companion_retrieval_timeout_s", "companion_turn_timeout_s", "companion_output_tokens", "companion_max_evidence_tokens", "companion_image_models", "companion_shreckworld_url", "companion_chronicles_url", "companion_web_search_url", "companion_web_search_token"]},
         {"id": "character_agent", "label": "Character Agent", "fields": [*CHARACTER_AGENT_MODEL_FIELDS, "character_agent_embodiment_validation_retries", "character_agent_embodiment_debug_artifacts_enabled"]},
         {"id": "security_tokens", "label": "Security Tokens", "fields": ["jwt_issuer", "jwt_audience", "jwt_kid", "jwt_access_token_expiry_minutes"]},
         {"id": "legacy_migration", "label": "Legacy Migration", "fields": ["old_database_url"]},
@@ -667,7 +695,7 @@ def get_config_schema() -> dict[str, Any]:
                 "label": "Reasoning",
                 "help": "Request provider-native model reasoning when supported.",
             },
-            "web_search_enabled": {"type": "boolean", "default": False, "label": "Web search", "help": "Allow provider-managed web search for supported models; additional charges may apply."},
+            "web_search_enabled": {"type": "boolean", "default": field_name == "model_companion_web_search", "label": "Web search", "help": "Allow provider-managed web search for supported models; additional charges may apply."},
             "reasoning_effort": {
                 "type": "string",
                 "nullable": True,

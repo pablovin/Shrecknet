@@ -187,3 +187,90 @@ Real Foundry v14/custom-sheet integration, GM/player acceptance, provider answer
 quality and production latency remain unverified. This feature-validation record
 does not certify live table or backend deployment acceptance. Release packaging
 and public asset availability are separate release checks.
+
+
+## Evidence v2 acceptance
+
+The added `tests/test_companion_query_pipeline.py` covers explicit/saved scope
+inference bypass, Foundry explicit scope, original-request preservation, world
+updates before retrieval, explicit-page conflicts and lasting overrides,
+clarification, independent source failure, bounded targeted recovery, claim repair,
+failed verification, structured snapshot support, cancellation with retained
+commentary, default/invalid configuration, dedicated web targets and idempotent
+SQL migration (including a leftover staging table). Planned-rule adapter tests
+retain child coverage and omit oversized units whole. SDK tests also accept old
+servers missing new model roles. These tests use provider/service doubles.
+
+The focused backend/config/import run passes 162 tests; the full SDK run passes
+68. Affected ShreckWorld planned-query/ontology/grounded-answer checks pass 28,
+and gateway search checks pass 13. The Foundry Node suite passes 88. ShreckOS
+passes 415 unit tests, production build and lint (85 existing warnings, no errors).
+Companion browser checks pass 14 Chromium/mobile cases and 7 Firefox cases.
+WebKit cannot launch on this host because system libraries including `libgtk-4`,
+`libgraphene`, media codecs and GStreamer are missing. Run its browser script on
+an appropriately provisioned host before claiming WebKit acceptance.
+
+Use an isolated writable config seed when the developer's runtime config points
+to container-only storage: `SHRECKNET_CONFIG_SEED_FILE` can name a temporary JSON
+file and `SHRECKNET_DATA_DIR` an isolated temporary directory. Run from each
+package directory; the SDK may need `PYTHONPATH=.` in an uninstalled checkout.
+
+The existing deployed benchmark now records first stage/commentary feedback and
+coverage/outcome as well as completion time. V2 first public reply is measured
+from `response.final` because unverified factual deltas are intentionally absent.
+No live-provider benchmark, production migration/concurrency load test, model
+availability guarantee, cost distribution or curated human grounding acceptance
+is implied by these local tests. Back up deployed SQL/config, drain workers, apply
+the startup migration and deploy compatible API/workers/clients together. New or
+missing pipeline settings default to `evidence_v2`; explicit saved selections persist. Retain compatible binaries for legacy rollback with durable skits.
+
+## Rich response acceptance
+
+The rich-response implementation has focused backend coverage in
+`tests/test_companion_rich_response.py`: wire/schema/SDK synchronization,
+deterministic projection, exact excerpts and physical/printed page separation,
+zero/null fields, complete text fallback under table budgets, owner-only
+history/final-event equivalence, invalid IDs, rejected blocks, optional media
+failure, storage confinement, changed Atlas files/revisions, scoped Atlas
+property definitions, explicit JSON web-image association and Foundry v1/v2
+negotiation/idempotency. Tests use provider, graph and service doubles.
+
+Run from `shrecknet/` with writable isolated data/media paths when installed
+configuration points to container-only `/app` storage:
+
+```bash
+SHRECKNET_MEDIA_ROOT=/tmp/shrecknet-rich-media SHRECKNET_DATA_DIR=/tmp/shrecknet-rich-test ../.venv/bin/pytest -q \
+  tests/test_companion_rich_response.py tests/test_companion_query_pipeline.py \
+  tests/test_companion_answer_details.py tests/test_companion_foundry_context.py \
+  tests/test_companion_chat_sessions.py tests/test_character_companion.py \
+  tests/test_character_companion_import.py tests/test_companion_index_coverage.py \
+  tests/test_character_agent_model_config.py
+```
+
+The affected Shrecknet run passes 179 tests. ShreckWorld's complete suite passes
+168 tests with one skip; the media tests
+exercise protected revision-aware PNG generation, source deletion/inactivation,
+foreign scope, grant restrictions, source-hash changes and unchanged embedding
+metadata. The full SDK suite passes 70 tests (`PYTHONPATH=. ../.venv/bin/pytest -q`
+from `python_sdk/`). The Foundry module passes 93 tests
+(`node --test tests/*.test.mjs` from its package directory).
+
+ShreckOS passes 418 unit tests and a production build. Lint passes with existing
+legacy hook warnings and no errors. Its 32 Companion browser cases pass on
+Chromium/mobile, including saved rich replies, all six types, row sorting,
+lightbox/Escape, unavailable images, reload and unknown-version fallback.
+Run with a free `SHRECKOS_E2E_PORT`, for example:
+
+```bash
+SHRECKOS_E2E_PORT=5187 npm run test:e2e -- tests/e2e/companion-rich-response.spec.ts tests/e2e/character-companion.spec.ts tests/e2e/companion-sessions.spec.ts tests/e2e/companion-experience.spec.ts
+SHRECKOS_E2E_PORT=5188 npm run test:e2e:crossbrowser -- tests/e2e/companion-rich-response.spec.ts
+```
+
+The second command passes both Firefox cases but its two WebKit cases cannot
+launch on this host because required system libraries (GTK/Graphene/GStreamer,
+codecs and related dependencies) are missing. Run WebKit on a provisioned host.
+No live model/provider benchmark, human image-subject evaluation, deployed source
+CORS/authorization check or real Foundry v14 GM/player-sheet acceptance was run.
+The [implementation record](Rich%20Response%20Plan.md#verification-and-delivery-gates)
+keeps those production gates explicit. New rich responses default disabled;
+these local checks do not authorize a claim of live deployment acceptance.

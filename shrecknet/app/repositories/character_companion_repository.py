@@ -10,7 +10,7 @@ from app.models.character_companion import (
     CompanionSelection, CompanionRapport, CompanionChat, CompanionTurn, CompanionMessage,
     CompanionEvent, CompanionOutbox, CompanionRapportAudit, CompanionIdempotency, utcnow,
 )
-from app.schemas.character_companion import DIMENSIONS, TERMINAL
+from app.schemas.character_companion import DIMENSIONS, TERMINAL, normalized_turn_request
 
 
 def fail(status, code):
@@ -52,7 +52,7 @@ class CompanionRepository:
 
     async def message_records(self, rows, user_id):
         """Project owner-only answer details from existing turn JSON, without N+1 reads."""
-        ids = {row.turn_id for row in rows if row.role == "assistant"}
+        ids = {row.turn_id for row in rows if row.role == "assistant" and row.kind == "final"}
         turns = (await self.session.execute(select(CompanionTurn).where(
             CompanionTurn.id.in_(ids), CompanionTurn.user_id == user_id,
         ))).scalars() if ids else []
@@ -60,12 +60,35 @@ class CompanionRepository:
         records = []
         for row in rows:
             data = record(row)
-            result = results.get(row.turn_id) if row.role == "assistant" else None
-            data["answer_details"] = ({key: result[key] for key in
-                ("tool_calls", "evidence", "segments", "coverage", "warnings")}
+            result = results.get(row.turn_id) if row.role == "assistant" and row.kind == "final" else None
+            data["answer_details"] = ({key: result.get(key) for key in
+                ("tool_calls", "evidence", "segments", "coverage", "warnings", "rich_response")}
                 if result and "tool_calls" in result else None)
             records.append(data)
         return records
+
+    async def commentary(self, turn_id, lease, text, sequence):
+        changed = await self.session.execute(update(CompanionTurn).where(
+            CompanionTurn.id == turn_id, CompanionTurn.lease == lease,
+            CompanionTurn.status.notin_(TERMINAL)
+        ).values(updated_at=utcnow()))
+        if changed.rowcount != 1:
+            import asyncio
+            raise asyncio.CancelledError()
+        turn = await self.session.get(CompanionTurn, turn_id)
+        existing = (await self.session.execute(select(CompanionMessage).where(
+            CompanionMessage.turn_id == turn_id, CompanionMessage.role == "assistant",
+            CompanionMessage.sequence == sequence
+        ))).scalars().first()
+        if existing:
+            return record(existing)
+        message = CompanionMessage(turn_id=turn.id, chat_id=turn.chat_id, role="assistant",
+                                   kind="commentary", sequence=sequence, content=text[:400], manifest=[])
+        self.session.add(message)
+        await self.session.flush()
+        payload = record(message)
+        await self.event(turn.user_id, "message.committed", payload, chat_id=turn.chat_id, turn_id=turn.id)
+        return payload
 
     async def conversation_context(self, chat_id, user_id, *, max_exchanges=6, max_characters=48000):
         """Bounded recent complete exchanges; never slice an individual message."""
@@ -75,7 +98,7 @@ class CompanionRepository:
                 CompanionTurn.status == "completed", CompanionChat.deleted.is_(False)
         ).order_by(CompanionTurn.created_at.desc(), CompanionTurn.id.desc()).limit(max_exchanges))).scalars())
         rows = list((await self.session.execute(select(CompanionMessage).where(
-            CompanionMessage.turn_id.in_(turns), CompanionMessage.committed.is_(True)
+            CompanionMessage.turn_id.in_(turns), CompanionMessage.committed.is_(True), CompanionMessage.kind != "commentary"
         ).order_by(CompanionMessage.role.desc()))).scalars())
         recent, used = [], 0
         for turn_id in turns:
@@ -131,6 +154,8 @@ class CompanionRepository:
         return list((await self.session.execute(query.order_by(CompanionEvent.id).limit(limit))).scalars())
 
     async def replay(self, user_id, operation, key, body):
+        if operation.startswith("turn:"):
+            body = normalized_turn_request(body)
         digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         row = await self.session.get(CompanionIdempotency, (user_id, operation, key))
         if row:

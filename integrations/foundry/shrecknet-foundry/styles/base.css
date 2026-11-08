@@ -484,3 +484,14 @@
 .shrecknet.is-companion-sidecar .shrecknet-companion-profile .shrecknet-companion-chooser[open] { flex-basis: 100%; }
 .shrecknet.is-companion-sidecar .shrecknet-companion-profile form { margin-top: 0.4rem; }
 .shrecknet.is-companion-sidecar .shrecknet-companion-heading { gap: 0.4rem; }
+
+.shrecknet-companion-rich-block { border:1px solid currentColor; border-radius:8px; padding:8px; margin:8px 0; min-width:0; }
+.shrecknet-companion-rich-block figure { margin:8px 0; }
+.shrecknet-companion-rich-block img { max-width:100%; max-height:240px; object-fit:contain; }
+.shrecknet-companion-rich-block figcaption { font-size:.8em; }
+.shrecknet-companion-rich-table { max-width:100%; overflow-x:auto; }
+.shrecknet-companion-rich-table table { min-width:240px; }
+.shrecknet-companion-rich-table td { padding:4px; vertical-align:top; }
+.shrecknet-companion-lightbox { max-width:95vw; max-height:95vh; }
+.shrecknet-companion-lightbox::backdrop { background:#000b; }
+.shrecknet-companion-lightbox img { max-width:85vw; max-height:80vh; object-fit:contain; display:block; }

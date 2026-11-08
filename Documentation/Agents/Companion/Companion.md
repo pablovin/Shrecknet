@@ -32,7 +32,7 @@ and settles outstanding evaluations without using deleted conversation content.
 private attachment metadata, audit records, idempotency records and a durable outbox.
 Neo4j remains the authority for CharacterAgent identity and memory.
 
-The worker pipeline is:
+The legacy worker pipeline (`companion_query_pipeline_version="legacy"`) is:
 
 1. Recheck originating user/session and canonical identity; load pair scores and
    up to twelve committed messages from this chat.
@@ -91,6 +91,86 @@ still be used. An incompatible or unready index is not reported as an empty
 search. Reindex affected sources with ShreckWorld's existing indexing workflow.
 Rules evidence is not reused from the prior turn because the active fingerprint
 or source availability may have changed.
+
+## Evidence-first query pipeline
+
+`companion_query_pipeline_version` defaults to `"evidence_v2"` in both code and
+the initial configuration seed. New installations and existing configurations
+missing this setting use the ontology-aware pipeline automatically after startup.
+An explicitly saved `"legacy"` selection remains respected for rollback and is
+editable in Administration → Shrecknet → Companion. Six independently configured model roles
+cover routing, dedicated web search, evidence review, synthesis, commentary and
+rapport. All inherit the repository's OpenRouter DeepSeek Flash model default;
+only the dedicated web target defaults to `web_search_enabled=true`.
+
+1. **Scope fast path.** Validate an explicit page/Foundry ontology or reuse the
+   chat's saved ontology, skipping the ontology-inference call. Missing scope is
+   inferred using the routing model and bounded authenticated ontology discovery.
+   Unresolved scope produces a direct question by world name. The character's
+   ontology is never substituted for an unresolved conversational world.
+2. **LLM source planning.** The routing model declares bounded needs and separate
+   queries for available Atlas, ShreckWorld, Web, Chronicle and character-memory
+   sources. Clarification ends the turn and releases the chat; its pending
+   question is resumed on the next relevant message. New topics abandon pending
+   clarification. Malformed planning never silently becomes a factual answer.
+3. **Ontology update before retrieval.** A router-requested world switch is
+   validated and saved before any retrieval. It clears incompatible source/page
+   bindings, updates grant scope and replans once. A conflicting explicit page
+   selection requires clarification. A confirmed conversational override persists
+   across subsequent page snapshots until `use_page_scope=true`. The selected
+   character, character-memory scope and rapport stay unchanged. A committed
+   switch survives later retrieval failure or cancellation.
+4. **Independent parallel retrieval.** Atlas reuses Elder planning/execution
+   without synthesis. ShreckWorld uses its planned evidence pipeline. The dedicated
+   web model uses gateway search and actual provider excerpts; its generated
+   summary is not evidence. JSON web search remains an explicitly selected
+   alternative. Tool failures/timeouts retain successful siblings. Existing
+   user/source authorization, private grants, revision checks and evidence budgets
+   remain enforced; v2 does not reuse earlier-turn evidence.
+5. **Assessment and recovery.** The evidence model checks coverage, contradictions,
+   missing facts and exact supporting excerpts or serialized structured fields. One configurable recovery round
+   can search specific unresolved needs and reassess once. Empty/failed searches
+   do not establish absence. Unverifiable assessment returns a limitations reply.
+6. **Private synthesis and claim verification.** Synthesis uses identity, traits,
+   subjective memories, rapport and evidence to produce typed segments. Every
+   segment is reviewed, including reactions that might disguise factual claims.
+   Exact quotations and known source IDs are also checked deterministically.
+   Unsupported output gets at most one repair; rejected segments are omitted or
+   replaced with a limitations reply. No unverified factual draft is streamed.
+   Uncited personal reactions are allowed. Semantic review remains model-assisted
+   and requires curated human acceptance evaluation.
+7. **Final commit.** Revalidate identity, session and all supplied source access/
+   revisions before committing the final answer and rapport outbox. Operational
+   clarification/switch-only turns settle rapport in order without score changes.
+
+General-knowledge fallback defaults to disabled. With administrator policy
+`labeled_opt_in`, a turn must also set `general_knowledge_opt_in=true`. Such text
+is labeled **General knowledge — not verified against your world or books** and
+cannot represent verified canon or exact rule text. Per-turn web permission still
+applies independently of model search capability.
+
+An acknowledgement is persisted during admission. `pipeline.status` events report
+resolution, planning, update/replanning, retrieval, assessment/recovery, synthesis
+and factual verification. Optional character commentary runs concurrently; delivered
+commentary remains ordinary owner-only transcript history after finalization,
+failure, cancellation, reload and event-log expiry. Commentary is excluded from
+completed-exchange context, factual evidence and rapport quotations. Snapshots
+retain the current stage and commentary; ShreckOS uses SSE and Foundry polls them.
+
+Chat JSON records `resolved_ontology` (including resolution source and ontology
+revision), `scope_override` and pending clarification.
+Turns preserve the original submitted request separately from the validated
+`execution_context` used by retrieval grants. Message `kind` and `sequence`
+distinguish user, commentary and final records. Startup runs the idempotent
+`migrate_companion_query` migration, replacing the old message uniqueness rule.
+Back up SQL/config and drain workers before upgrading. Startup `create_all` alone
+is insufficient. No graph migration or re-embedding is required. Rollback to
+legacy must use this compatibility release, whose context/rapport reads exclude
+commentary; older binaries assume one assistant message per turn. Keep additive
+columns and delivered messages intact.
+
+See [the design and acceptance plan](Query%20Pipeline%20Plan.md),
+[configuration](Model%20Configuration.md) and [HTTP/SSE additions](Frontend%20API.md#evidence-v2).
 
 ## Recovery, privacy and operations
 
@@ -162,6 +242,7 @@ not a promise of continued access to the original source document.
 
 ## Related contracts
 
+- [Query pipeline redesign plan](Query%20Pipeline%20Plan.md) — design and rollout acceptance baseline
 - [Validation and deployment acceptance](Validation.md)
 - [Frontend HTTP and SSE API](Frontend%20API.md)
 - [Companion model configuration](Model%20Configuration.md)
@@ -262,3 +343,67 @@ for privacy, source-access limits and rollout order.
 ### Ontology-owned ShreckWorld items
 
 A ShreckWorld page context can carry `surface: "shreckworld"`, `ontology_id`, and optional `library_item_ids` directly. It does not require a separately created knowledge world. New clients submit direct ontology scope. Legacy contexts can retain `shreckworld_id` alongside their Atlas ontology; the explicit legacy ID keeps its original source scope. The server may enrich an admitted turn with its character ontology. Direct evidence and citation validation use `/ontologies/{id}/companion-evidence` and `/companion-validate` with the existing turn-bound retrieval grant, pinned to the admitted ontology and optional source subset. Legacy scopes retain their original routes. Evidence cards carry `scope.ontology_id` for direct sources; Nexus opens that ontology/item/page without guessing an association. Model answers and rapport rules are unchanged.
+
+## Verified rich responses
+
+Set `companion_rich_response_enabled=true` after deploying the matching API,
+workers, ShreckWorld and clients. This setting defaults to false and applies
+only to `evidence_v2`; explicitly saved pipeline/model settings are preserved.
+The existing six model roles remain sufficient. Character Companion can return
+ordered narrative, entity/scene cards, images/galleries, one structured property
+table and exact book excerpt cards. Each factual addition is verified with the
+private narrative before the existing atomic final-message/event/rapport commit.
+Unverified blocks are omitted; optional media failure preserves verified prose.
+Commentary, ontology switching, grants and factual coverage retain v2 behavior.
+
+Composition is deterministic. It selects sources cited by the draft, projects
+Atlas/Foundry scalar properties whose labels occur in that source's narrative,
+and uses exact supporting book quotations. Entity descriptions reuse bounded
+factual draft segments rather than generating a second account. At most eight
+blocks, four image assets, one twenty-row/eight-column table and 64 KiB of rich
+JSON are admitted. No rich blocks are generated for casual chat or clarification.
+The optional media budget is `companion_rich_response_timeout_s` (default two
+seconds, range 0.1–10), shared by discovery and final Atlas image checks and
+bounded by the remaining turn deadline. The existing batched evidence call
+verifies block claims with narrative; there is no extra model role/search loop.
+
+The job owner is `app/jobs/companion/rich_response.py`; the typed public contract
+is `app/schemas/companion_rich_response.py`. Source reference normalization,
+Atlas property projection and media adapters live in `app/integrations/companion/`.
+`CompanionRepository.message_records` projects the saved envelope into private
+history. The envelope is stored in existing turn result JSON; no additional
+Companion database migration or historical backfill is needed. The separate v2
+commentary migration remains required. Text fallback includes unique block facts
+and is used by old clients, conversation context and rapport.
+
+Atlas artwork is the admitted entity/scene's own `node_avatar_url`, mapped only
+inside configured local media storage. No category/ontology fallback is claimed
+to depict a specific entity. Source scope, file hash and revision are rechecked
+before commitment and protected delivery. Milestones have no standalone rich
+card; their existing narrative evidence remains available. Atlas tables use the
+retrieved property snapshot and authoritative scoped `OntologyProperty` labels.
+
+ShreckWorld supplies source-hash/document/page-bound thumbnails and PDF picture
+crops through its authenticated media endpoints and optional media-only backfill.
+Media extraction changes no embeddings or active document metadata. Unsupported
+source formats keep text excerpts. Foundry context version 2 can indicate that a
+document has artwork without transmitting a file URL; Foundry alone resolves it
+against the original table, current document revision and read permission.
+ShreckOS shows a local-Foundry-image explanation instead of fetching that file.
+
+Web images require `companion_web_images_enabled=true`, the configured JSON web
+provider, rich responses enabled, and normal per-turn web permission. This new
+provider opt-in defaults false; model-managed search does not claim image support.
+The JSON provider may return `images` on each factual result with `url`,
+`source_page_url` equal to that result's URL, `relation:"page_image"`, and nonblank
+`attribution`. Public-address checks apply. Related search hits without that
+association are discarded. Web pictures are labeled source images, never proof
+of the depicted subject; both clients require an explicit load click and send
+no service bearer token with that external request. There is no image proxy or
+arbitrary server-side remote image fetcher.
+
+See the [rich response implementation and acceptance record](Rich%20Response%20Plan.md)
+and [HTTP/history contract](Frontend%20API.md#rich-response-v1). Disable composition
+to stop generating new rich envelopes while preserving saved replies. Production
+provider quality/latency, real Foundry sheets and human image-grounding acceptance
+remain rollout gates; do not infer them from fixture-based tests.

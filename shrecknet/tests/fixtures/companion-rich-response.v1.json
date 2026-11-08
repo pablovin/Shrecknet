@@ -1,0 +1,481 @@
+{
+  "id": "message-one",
+  "role": "assistant",
+  "kind": "final",
+  "sequence": 0,
+  "content": "Fiona rules.\n\nHP: 0\n\nRules, p. iv: An exact passage.",
+  "manifest": [
+    {
+      "evidence_id": "atlas:e1",
+      "source_id": "fiona",
+      "source_type": "atlas",
+      "title": "Fiona",
+      "excerpt": "Fiona rules.",
+      "structured_evidence": null,
+      "reference": {
+        "node_id": "fiona",
+        "ontology_id": 7,
+        "node_label": "EntityInstance"
+      },
+      "relevance": {
+        "rank": 1,
+        "score": null,
+        "method": "source_ranking"
+      },
+      "coverage": {
+        "status": "partial",
+        "warnings": []
+      },
+      "epistemic_category": "canonical_world",
+      "retrieved_at": "2026-11-08T12:00:00Z",
+      "scope": {
+        "ontology_id": 7
+      },
+      "navigation": {
+        "kind": "atlas",
+        "resource_id": "fiona",
+        "location": {
+          "node_id": "fiona",
+          "ontology_id": 7,
+          "node_label": "EntityInstance"
+        }
+      }
+    },
+    {
+      "evidence_id": "foundry:e2",
+      "source_id": "Actor.hero",
+      "source_type": "foundry",
+      "title": "Foundry snapshot · Hero",
+      "excerpt": "Visible sheet",
+      "structured_evidence": {
+        "fields": [
+          {
+            "label": "HP",
+            "value": 0
+          }
+        ]
+      },
+      "reference": {
+        "foundry_world_id": "table",
+        "uuid": "Actor.hero",
+        "source_revision": "1"
+      },
+      "relevance": {
+        "rank": 1,
+        "score": null,
+        "method": "source_ranking"
+      },
+      "coverage": {
+        "status": "partial",
+        "warnings": []
+      },
+      "epistemic_category": "user_provided",
+      "retrieved_at": "2026-11-08T12:00:00Z",
+      "scope": {},
+      "navigation": {
+        "kind": "foundry",
+        "resource_id": "Actor.hero",
+        "location": {
+          "foundry_world_id": "table",
+          "uuid": "Actor.hero",
+          "source_revision": "1"
+        }
+      }
+    },
+    {
+      "evidence_id": "shreckworld:e3",
+      "source_id": "book:chunk",
+      "source_type": "shreckworld",
+      "title": "Rules",
+      "excerpt": "An exact passage.",
+      "structured_evidence": null,
+      "reference": {
+        "library_item_id": "book",
+        "document_id": "doc",
+        "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "page_number": 12,
+        "page_label": "iv"
+      },
+      "relevance": {
+        "rank": 1,
+        "score": null,
+        "method": "source_ranking"
+      },
+      "coverage": {
+        "status": "partial",
+        "warnings": []
+      },
+      "epistemic_category": "document_evidence",
+      "retrieved_at": "2026-11-08T12:00:00Z",
+      "scope": {
+        "ontology_id": 7
+      },
+      "navigation": {
+        "kind": "shreckworld",
+        "resource_id": "book:chunk",
+        "location": {
+          "library_item_id": "book",
+          "document_id": "doc",
+          "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "page_number": 12,
+          "page_label": "iv"
+        }
+      }
+    }
+  ],
+  "answer_details": {
+    "rich_response": {
+      "version": 1,
+      "blocks": [
+        {
+          "id": "narrative",
+          "evidence_ids": [
+            "atlas:e1"
+          ],
+          "target_id": null,
+          "type": "narrative",
+          "segment_ids": [
+            "s1"
+          ]
+        },
+        {
+          "id": "b1",
+          "evidence_ids": [
+            "atlas:e1"
+          ],
+          "target_id": "t1",
+          "type": "entity_card",
+          "entity_ref": {
+            "ontology_id": 7,
+            "node_id": "fiona",
+            "node_label": "EntityInstance"
+          },
+          "name": "Fiona",
+          "description": null,
+          "asset_id": "a11111111111111111111",
+          "fallback_text": "Fiona"
+        },
+        {
+          "id": "b2",
+          "evidence_ids": [
+            "atlas:e1"
+          ],
+          "target_id": "t1",
+          "asset_id": "a22222222222222222222",
+          "alt": "Source image",
+          "caption": null,
+          "fallback_text": "Fiona",
+          "type": "image"
+        },
+        {
+          "id": "b3",
+          "evidence_ids": [
+            "atlas:e1"
+          ],
+          "target_id": "t1",
+          "type": "gallery",
+          "items": [
+            {
+              "asset_id": "a33333333333333333333",
+              "alt": "Source image",
+              "caption": null,
+              "evidence_ids": [
+                "atlas:e1"
+              ],
+              "target_id": "t1"
+            }
+          ],
+          "fallback_text": "Fiona"
+        },
+        {
+          "id": "b4",
+          "evidence_ids": [
+            "foundry:e2"
+          ],
+          "target_id": "t2",
+          "type": "table",
+          "title": "Hero",
+          "columns": [
+            {
+              "id": "label",
+              "label": "Property"
+            },
+            {
+              "id": "value",
+              "label": "Value"
+            }
+          ],
+          "rows": [
+            {
+              "id": "r1",
+              "cells": [
+                {
+                  "value": "HP",
+                  "evidence_ids": [
+                    "foundry:e2"
+                  ]
+                },
+                {
+                  "value": 0,
+                  "evidence_ids": [
+                    "foundry:e2"
+                  ]
+                }
+              ],
+              "evidence_ids": [
+                "foundry:e2"
+              ],
+              "target_id": "t2"
+            }
+          ],
+          "fallback_text": "HP: 0"
+        },
+        {
+          "id": "b5",
+          "evidence_ids": [
+            "shreckworld:e3"
+          ],
+          "target_id": "t3",
+          "type": "book_excerpt",
+          "quote": "An exact passage.",
+          "title": "Rules",
+          "document_ref": {
+            "ontology_id": 7,
+            "shreckworld_id": null,
+            "library_item_id": "book",
+            "document_id": "doc",
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "page_number": 12,
+            "page_label": "iv"
+          },
+          "asset_id": null,
+          "fallback_text": "Rules, p. iv: An exact passage."
+        }
+      ],
+      "assets": [
+        {
+          "id": "a11111111111111111111",
+          "source_type": "atlas",
+          "evidence_ids": [
+            "atlas:e1"
+          ],
+          "source_revision": "1",
+          "provenance_kind": "entity_image",
+          "mime_type": null,
+          "width": null,
+          "height": null,
+          "attribution": "Fiona",
+          "target_id": "t1",
+          "delivery_ref": {
+            "kind": "service",
+            "service": "shrecknet",
+            "path": "/users/me/character-companion/turns/11111111-1111-4111-8111-111111111111/assets/a11111111111111111111"
+          }
+        },
+        {
+          "id": "a22222222222222222222",
+          "source_type": "atlas",
+          "evidence_ids": [
+            "atlas:e1"
+          ],
+          "source_revision": "1",
+          "provenance_kind": "entity_image",
+          "mime_type": null,
+          "width": null,
+          "height": null,
+          "attribution": "Fiona",
+          "target_id": "t1",
+          "delivery_ref": {
+            "kind": "service",
+            "service": "shrecknet",
+            "path": "/users/me/character-companion/turns/11111111-1111-4111-8111-111111111111/assets/a22222222222222222222"
+          }
+        },
+        {
+          "id": "a33333333333333333333",
+          "source_type": "atlas",
+          "evidence_ids": [
+            "atlas:e1"
+          ],
+          "source_revision": "1",
+          "provenance_kind": "entity_image",
+          "mime_type": null,
+          "width": null,
+          "height": null,
+          "attribution": "Fiona",
+          "target_id": "t1",
+          "delivery_ref": {
+            "kind": "service",
+            "service": "shrecknet",
+            "path": "/users/me/character-companion/turns/11111111-1111-4111-8111-111111111111/assets/a33333333333333333333"
+          }
+        }
+      ],
+      "targets": [
+        {
+          "id": "t1",
+          "kind": "atlas",
+          "reference": {
+            "ontology_id": 7,
+            "node_id": "fiona",
+            "node_label": "EntityInstance"
+          }
+        },
+        {
+          "id": "t2",
+          "kind": "foundry",
+          "reference": {
+            "foundry_world_id": "table",
+            "uuid": "Actor.hero",
+            "source_revision": "1"
+          }
+        },
+        {
+          "id": "t3",
+          "kind": "shreckworld",
+          "reference": {
+            "ontology_id": 7,
+            "shreckworld_id": null,
+            "library_item_id": "book",
+            "document_id": "doc",
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "page_number": 12,
+            "page_label": "iv"
+          }
+        }
+      ]
+    },
+    "tool_calls": [],
+    "evidence": [
+      {
+        "evidence_id": "atlas:e1",
+        "source_id": "fiona",
+        "source_type": "atlas",
+        "title": "Fiona",
+        "excerpt": "Fiona rules.",
+        "structured_evidence": null,
+        "reference": {
+          "node_id": "fiona",
+          "ontology_id": 7,
+          "node_label": "EntityInstance"
+        },
+        "relevance": {
+          "rank": 1,
+          "score": null,
+          "method": "source_ranking"
+        },
+        "coverage": {
+          "status": "partial",
+          "warnings": []
+        },
+        "epistemic_category": "canonical_world",
+        "retrieved_at": "2026-11-08T12:00:00Z",
+        "scope": {
+          "ontology_id": 7
+        },
+        "navigation": {
+          "kind": "atlas",
+          "resource_id": "fiona",
+          "location": {
+            "node_id": "fiona",
+            "ontology_id": 7,
+            "node_label": "EntityInstance"
+          }
+        }
+      },
+      {
+        "evidence_id": "foundry:e2",
+        "source_id": "Actor.hero",
+        "source_type": "foundry",
+        "title": "Foundry snapshot · Hero",
+        "excerpt": "Visible sheet",
+        "structured_evidence": {
+          "fields": [
+            {
+              "label": "HP",
+              "value": 0
+            }
+          ]
+        },
+        "reference": {
+          "foundry_world_id": "table",
+          "uuid": "Actor.hero",
+          "source_revision": "1"
+        },
+        "relevance": {
+          "rank": 1,
+          "score": null,
+          "method": "source_ranking"
+        },
+        "coverage": {
+          "status": "partial",
+          "warnings": []
+        },
+        "epistemic_category": "user_provided",
+        "retrieved_at": "2026-11-08T12:00:00Z",
+        "scope": {},
+        "navigation": {
+          "kind": "foundry",
+          "resource_id": "Actor.hero",
+          "location": {
+            "foundry_world_id": "table",
+            "uuid": "Actor.hero",
+            "source_revision": "1"
+          }
+        }
+      },
+      {
+        "evidence_id": "shreckworld:e3",
+        "source_id": "book:chunk",
+        "source_type": "shreckworld",
+        "title": "Rules",
+        "excerpt": "An exact passage.",
+        "structured_evidence": null,
+        "reference": {
+          "library_item_id": "book",
+          "document_id": "doc",
+          "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "page_number": 12,
+          "page_label": "iv"
+        },
+        "relevance": {
+          "rank": 1,
+          "score": null,
+          "method": "source_ranking"
+        },
+        "coverage": {
+          "status": "partial",
+          "warnings": []
+        },
+        "epistemic_category": "document_evidence",
+        "retrieved_at": "2026-11-08T12:00:00Z",
+        "scope": {
+          "ontology_id": 7
+        },
+        "navigation": {
+          "kind": "shreckworld",
+          "resource_id": "book:chunk",
+          "location": {
+            "library_item_id": "book",
+            "document_id": "doc",
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "page_number": 12,
+            "page_label": "iv"
+          }
+        }
+      }
+    ],
+    "segments": [
+      {
+        "id": "s1",
+        "kind": "factual",
+        "text": "Fiona rules.",
+        "evidence_ids": [
+          "atlas:e1"
+        ]
+      }
+    ],
+    "coverage": "partial",
+    "warnings": []
+  }
+}

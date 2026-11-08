@@ -295,3 +295,50 @@ The administrator synthesizer model target additionally accepts
 `web_search_enabled: false` by default and forwards it to shreckLLM. It is separate
 from world-level search policy. See [shared agent web search](../Architecture/LLM_WEB_SEARCH.md)
 for capability discovery, errors, source handling, and compatible deployment.
+
+## Document media
+
+Authenticated source reading adds
+`GET /ontologies/{ontology_id}/items/{item_id}/documents/{document_id}/media/{media_id}?revision={source_sha256}`.
+The legacy equivalent is
+`GET /shreckworlds/{shreckworld_id}/library-items/{item_id}/documents/{document_id}/media/{media_id}?revision={source_sha256}`.
+Direct routes use the existing authorized ontology dependency; legacy routes use
+the existing authenticated source-read policy. Source IDs, an active matching
+document and the current source hash must agree. Missing/wrong-scope/inactive
+resources return 404; changed/mismatched revisions return 409. Images are PNG and
+private/no-store; no original source bytes or storage paths are returned.
+
+`media_id` is `p{physical_page}-thumbnail` or
+`p{physical_page}-image-{0..2}`. Physical pages start at one and are independent
+of printed citation labels. Cached page manifests and bounded raster crops live
+beside the owning source under `media/{source_sha256}/{document_id}/` and are
+removed by its existing deletion lifecycle. PDF generation uses the existing
+PyMuPDF dependency, a maximum output dimension of 960 pixels, at most three page
+illustrations plus one thumbnail, and a 200 MiB source ceiling for this optional
+media path. Unsupported source formats retain excerpts without pictures.
+The PDF's own image bounds establish page provenance, not subject identity.
+
+`POST /ontologies/{ontology_id}/companion-media` and the legacy
+`POST /shreckworlds/{shreckworld_id}/companion-media` accept a retrieval-only
+Companion grant and `{references:[...]}` (one through four existing citation
+references with `library_item_id`, `document_id`, `source_sha256`, `page_number`).
+Grant scope/book restrictions are checked before access. The response is
+`{items:[{id,kind,document_id,source_sha256,page_number,width,height,bounds}]}`;
+`kind` is `page_thumbnail` or `book_illustration`, and `bounds` is the source PDF
+rectangle. These endpoints do not authorize ordinary reads or mutations with a
+retrieval grant. Companion evidence grants admit both `single` and `planned`
+evidence queries while retaining the existing ontology/book restrictions.
+
+Media-only backfill is resumable and requires no SQL migration, document
+activation, text reparse or vector re-embedding. Run from `shreckworld/` with the
+service's normal environment and private data mounts:
+
+```bash
+PYTHONPATH=. python scripts/backfill_document_media.py --item-id ITEM_ID --max-pages 50
+```
+
+Existing atomic page manifests are reused; increase `--max-pages` to cover more
+physical pages. Interactive media requests can lazily create the same manifests;
+Companion's optional deadline may omit a slow first-time picture while preserving
+its verified text. Disable Companion rich responses to stop new visual composition;
+retain source media and existing result JSON for compatible rollback.

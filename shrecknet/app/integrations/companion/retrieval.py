@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 class ScopedEvidence:
     rows: list[dict]
     source_coverage: dict[str, int]
+    trace: dict | None = None
 
 
 def evidence(tool, identifier, text, *, title="Source", reference=None, scope=None, rank=1, structured=None):
@@ -40,11 +41,15 @@ def evidence(tool, identifier, text, *, title="Source", reference=None, scope=No
 
 
 def provider_web_enabled(settings):
-    target = getattr(settings, "model_companion_synthesis", None)
-    return bool(getattr(target, "web_search_enabled", False) and getattr(target, "provider", "") == "openrouter")
+    target = getattr(settings, "model_companion_web_search" if getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else "model_companion_synthesis", None)
+    return bool(getattr(target, "web_search_enabled", False) and getattr(target, "provider", "") == "openrouter" and bool(getattr(target, "name", "")))
 
 
 def web_available(settings):
+    if getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2":
+        if settings.companion_web_backend == "model":
+            return provider_web_enabled(settings)
+        return bool(settings.companion_web_enabled and settings.companion_web_search_url)
     return provider_web_enabled(settings) or bool(settings.companion_web_enabled and getattr(settings, "companion_web_search_url", ""))
 
 
@@ -62,7 +67,7 @@ async def safe_web_url(url):
 class CompanionRetrieval:
     def __init__(self, turn, actor):
         self.turn, self.actor, self.settings = turn, actor, get_settings()
-        self.scope = turn.request.get("context") or {}
+        self.scope = getattr(turn, "execution_context", None) if getattr(turn, "execution_context", None) is not None else (turn.request.get("context") or {})
 
     async def cached(self, tool, query, previous):
         """Reuse bounded same-chat evidence only after current-source validation."""
@@ -89,11 +94,13 @@ class CompanionRetrieval:
     async def retrieve(self, tool, query):
         start = time.monotonic()
         try:
-            result = await asyncio.wait_for(getattr(self, tool)(query), timeout=self.settings.companion_tool_timeout_s)
+            result = await asyncio.wait_for(getattr(self, tool)(query), timeout=self.settings.companion_web_timeout_s if tool == "web" and getattr(self.settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else self.settings.companion_tool_timeout_s)
             rows = result.rows if isinstance(result, ScopedEvidence) else result
             response = {"tool": tool, "status": "ok" if rows else "empty", "evidence": rows[:6], "elapsed_ms": round((time.monotonic()-start)*1000), "coverage": "partial"}
             if isinstance(result, ScopedEvidence):
                 response["source_coverage"] = result.source_coverage
+                if result.trace is not None:
+                    response["source_trace"] = result.trace
                 if result.source_coverage["sources_requiring_reindex"]:
                     response.update(status="unavailable", reason="incompatible_index")
                 elif result.source_coverage["sources_without_ready_index"]:
@@ -111,7 +118,7 @@ class CompanionRetrieval:
             rows = await CharacterMemoryService(characters).retrieve(self.turn.character_agent_id, query,
                 public_only=str(getattr(self.actor.role, "value", self.actor.role)) != "admin")
         return [evidence("character_memory", row["id"], row.get("perspective") or "", title="Subjective character memory",
-                         reference={key: row.get(key) for key in ("id", "scene_id", "source_type", "updated_at")}, scope={"character_agent_id": self.turn.character_agent_id, "ontology_id": self.scope.get("character_ontology_id", self.scope["ontology_id"])},
+                         reference={key: row.get(key) for key in ("id", "scene_id", "source_type", "updated_at")}, scope={"character_agent_id": self.turn.character_agent_id, "ontology_id": self.scope.get("character_ontology_id") or self.scope.get("ontology_id")},
                          structured={key: row.get(key, []) for key in ("emotions", "beliefs", "impacts")}) for row in rows]
 
     async def atlas(self, query):
@@ -126,10 +133,34 @@ class CompanionRetrieval:
                 yield graph
         retriever = HybridNeo4jGraphRetriever(session_factory=factory)
         plan = RetrievalPlan(answer_goal=query, steps=[RetrievalStep(id="companion", operation="hybrid_search", query=query, limit=6)])
+        if getattr(self.settings, "companion_query_pipeline_version", "legacy") == "evidence_v2":
+            from app.jobs.elder.planner import create_retrieval_plan
+            from app.integrations.llm.shreckllm_client import ShreckLLMClient
+            async with ShreckLLMClient(base_url=self.settings.shreckllm_base_url,
+                                      timeout=self.settings.companion_tool_timeout_s, max_retries=0) as client:
+                plan = await create_retrieval_plan(llm_client=client,
+                    model=self.settings.model_elder_planner.model_copy(update={"web_search_enabled":False}),
+                    repair_model=self.settings.model_agents_repair_json.model_copy(update={"web_search_enabled":False}),
+                    query=query, grounding={"ontology_ids":[self.scope["ontology_id"]]},
+                    usage_tag="companion.elder_planning")
         rows, _, _ = await retrieve_plan(retriever, plan=plan, ontology_ids=[self.scope["ontology_id"]], instance_id=None, candidate_limit=30, rerank_limit=6)
-        return [evidence("atlas", row.node_id, row.text, title=getattr(row, "name", None) or "Atlas record",
-                         reference={"node_id": row.node_id, "ontology_id": self.scope["ontology_id"], "node_label": row.node_label}, scope={"ontology_id": self.scope["ontology_id"]})
-                for row in rows.get("companion", [])]
+        records = list({row.node_id:row for values in rows.values() for row in values}.values())
+        fields = {}
+        if self.settings.companion_rich_response_active:
+            from app.db.session import AsyncSessionMaker
+            from app.integrations.companion.atlas_properties import fields_for
+            # This call owns its session; parallel adapters never share it.
+            try:
+                async with AsyncSessionMaker() as session:
+                    for row in records:
+                        fields[row.node_id] = await fields_for(row, self.scope['ontology_id'], session)
+            except Exception:
+                fields = {}  # Optional structured presentation cannot fail text retrieval.
+        return [evidence("atlas", row.node_id, row.text, title=getattr(row, "node_name", None) or getattr(row, "node_alias", None) or "Atlas record",
+                         reference={"node_id": row.node_id, "ontology_id": self.scope["ontology_id"], "node_label": row.node_label,
+                                    **({'updated_at':str(row.properties['updated_at'])} if row.properties.get('updated_at') else {})},
+                         scope={"ontology_id": self.scope["ontology_id"]}, structured={'fields':fields[row.node_id]} if fields.get(row.node_id) else None)
+                for row in records]
 
     async def shreckworld(self, query):
         identifier = self.scope.get("shreckworld_id") or self.scope.get("ontology_id")
@@ -137,20 +168,31 @@ class CompanionRetrieval:
         path = f"/ontologies/{identifier}" if direct else f"/shreckworlds/{identifier}"
         if not identifier or not self.settings.companion_shreckworld_url:
             return []
-        payload = {"query": query[:4000], "mode": "evidence", "retrieval_strategy": "single", "top_k": 6}
+        payload = {"query": query[:4000], "mode": "evidence", "retrieval_strategy": "planned" if getattr(self.settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else "single", "top_k": 6}
         if self.scope.get("library_item_ids"):
             payload["library_item_ids"] = self.scope["library_item_ids"]
         async with httpx.AsyncClient(base_url=self.settings.companion_shreckworld_url, follow_redirects=False) as client:
             response = await client.post(f"{path}/companion-evidence", json=payload, headers={"Authorization": f"Bearer {grant(self.turn, 'shreckworld')}"})
             response.raise_for_status()
             data = response.json()
-        rows = [evidence("shreckworld", str(row.get("library_item_id", identifier)) + ":" + str(row.get("chunk_id") or row.get("id") or i), row.get("excerpt") or row.get("text") or "", title=row.get("title") or "Book passage",
-                         reference=row, scope={"ontology_id" if direct else "shreckworld_id": identifier}, rank=i) for i, row in enumerate(data.get("citations") or data.get("evidence") or [], 1)]
+        planned = payload["retrieval_strategy"] == "planned"
+        trace = {key:data.get(key) for key in ("query_plan", "evidence_coverage", "evidence_groups", "v3_trace")} if planned else None
+        rows = []
+        for i, row in enumerate(data.get("citations") or data.get("evidence") or [], 1):
+            text = (row.get("evidence_text") if planned else None) or row.get("excerpt") or row.get("text") or ""
+            if planned and len(text) > 8000:
+                trace["omitted_oversized_units"] = trace.get("omitted_oversized_units", 0) + 1
+                continue
+            groups = [g for g in data.get("evidence_groups", []) if g["evidence_id"] == row.get("source_id")]
+            rows.append(evidence("shreckworld", str(row.get("library_item_id", identifier)) + ":" + str(row.get("chunk_id") or row.get("id") or i),
+                text, title=row.get("title") or "Book passage", reference=row,
+                scope={"ontology_id" if direct else "shreckworld_id": identifier}, rank=i,
+                structured={"evidence_groups":groups} if planned else None))
         coverage = data["source_coverage"]
         keys = ("requested_source_count", "searched_source_count", "sources_without_ready_index", "sources_requiring_reindex")
         if any(type(coverage[key]) is not int or coverage[key] < 0 for key in keys):
             raise ValueError("invalid_source_coverage")
-        return ScopedEvidence(rows, {key: coverage[key] for key in keys})
+        return ScopedEvidence(rows, {key: coverage[key] for key in keys}, trace)
 
     async def chronicle(self, query):
         if not self.settings.companion_chronicles_url:
@@ -166,12 +208,12 @@ class CompanionRetrieval:
     async def web(self, query):
         if not web_available(self.settings):
             return []
-        if provider_web_enabled(self.settings):
+        if provider_web_enabled(self.settings) and (getattr(self.settings, "companion_query_pipeline_version", "legacy") == "legacy" or self.settings.companion_web_backend == "model"):
             from app.integrations.llm.shreckllm_client import ShreckLLMClient
             from app.jobs.companion.prompts import WEB_RETRIEVAL
             async with ShreckLLMClient(base_url=self.settings.shreckllm_base_url,
-                                      timeout=self.settings.companion_tool_timeout_s, max_retries=0) as client:
-                data = await client.chat(model=self.settings.model_companion_synthesis,
+                                      timeout=getattr(self.settings, "companion_web_timeout_s", self.settings.companion_tool_timeout_s), max_retries=0) as client:
+                data = await client.chat(model=self.settings.model_companion_web_search if getattr(self.settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else self.settings.model_companion_synthesis,
                     messages=[{"role": "system", "content": WEB_RETRIEVAL}, {"role": "user", "content": query[:500]}],
                     usage_tag="companion.web_retrieval", max_tokens=1000, return_metadata=True)
             results = [row["url_citation"] for row in data.get("annotations", []) if row.get("type") == "url_citation"]
@@ -185,13 +227,20 @@ class CompanionRetrieval:
         # No page fetching: unsafe result URLs are discarded, not followed.
         headers = {"Authorization": f"Bearer {self.settings.companion_web_search_token}"} if self.settings.companion_web_search_token else {}
         async with httpx.AsyncClient(follow_redirects=False) as client:
-            response = await client.post(self.settings.companion_web_search_url, json={"query": query[:500], "limit": 6}, headers=headers)
+            response = await client.post(self.settings.companion_web_search_url, json={"query": query[:500], "limit": 6, **({"include_images": True} if self.settings.companion_rich_response_active and self.settings.companion_web_images_enabled else {})}, headers=headers)
             response.raise_for_status()
             data = response.json()
         rows = []
         for row in data.get("results", [])[:6]:
             if await safe_web_url(row.get("url", "")):
-                rows.append(evidence("web", row["url"], row.get("snippet", "")[:4000], title=row.get("title", "Web result"), reference={"url": row["url"]}))
+                images = []
+                if self.settings.companion_rich_response_active and self.settings.companion_web_images_enabled:
+                    for image in (row.get('images') or [])[:4]:
+                        if (isinstance(image,dict) and image.get('source_page_url') == row['url'] and
+                            image.get('relation') == 'page_image' and isinstance(image.get('attribution'),str) and
+                            image['attribution'].strip() and isinstance(image.get('url'),str) and await safe_web_url(image['url'])):
+                            images.append({'url':image['url'],'attribution':image['attribution'][:1000]})
+                rows.append(evidence("web", row["url"], row.get("snippet", "")[:4000], title=row.get("title", "Web result"), reference={"url": row["url"], **({'images':images} if images else {})}))
         return rows
 
     async def validate_sources(self, sources):

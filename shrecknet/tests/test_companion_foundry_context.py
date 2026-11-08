@@ -33,7 +33,7 @@ def snapshot():
 
 
 @pytest.mark.parametrize("mutation", [
-    lambda s: s.update(version=2),
+    lambda s: s.update(version=3),
     lambda s: s.update(version=True),
     lambda s: s.update(captured_at="2026-11-06T12:00:00"),
     lambda s: s.update(private_flags={"gm": True}),
@@ -186,7 +186,7 @@ async def test_snapshot_reaches_synthesis_and_committed_history(session_maker, m
     from app.core.config_store import get_settings
     from app.jobs.companion import runner
     from app.services import character_companion_service as service_module
-    settings = get_settings().model_copy(update={"companion_enabled": True, "enable_ai_agents": True,
+    settings = get_settings().model_copy(update={"companion_query_pipeline_version": "legacy", "companion_enabled": True, "enable_ai_agents": True,
         "companion_model_routing_enabled": False, "companion_max_evidence_tokens": 10000})
     monkeypatch.setattr(runner, "get_settings", lambda: settings)
     monkeypatch.setattr(service_module, "get_settings", lambda: settings)

@@ -122,9 +122,12 @@ Open in browser:
 ## Character Companion (optional)
 
 Character Companion adds persistent CharacterAgent selection, private conversations,
-streaming and per-user rapport. It is disabled by default. Its four model roles
+streaming and per-user rapport. Optional verified rich responses add source-backed
+cards, tables, excerpts and media in ShreckOS and Foundry. It is disabled by default. Its six model roles
 default to OpenRouter `deepseek/deepseek-v4.1-flash` and are independently editable
-in frontend Administration or `/config/`. Configure and activate OpenRouter (or
+in frontend Administration or `/config/`. The evidence-first `evidence_v2` query
+pipeline is the default for new or missing configuration; explicit saved pipeline
+selections are preserved. Configure and activate OpenRouter (or
 choose another configured provider), then enable the feature. The standard
 Compose startup includes its isolated turn and rapport workers.
 

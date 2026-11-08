@@ -290,7 +290,7 @@ def test_every_agent_persists_independent_web_search_option(isolated_config, fie
     config.update_settings({field: {**target('search-model'), 'web_search_enabled': True}})
     assert getattr(config.reload_settings(), field).web_search_enabled is True
     schema = configurations.get_config_schema()
-    assert schema['field_meta'][field]['value_fields']['web_search_enabled']['default'] is False
+    assert schema['field_meta'][field]['value_fields']['web_search_enabled']['default'] is (field == 'model_companion_web_search')
     for other in config.LLM_TARGET_FIELDS:
         if other != field:
             assert getattr(config.get_settings(), other).model_dump() == before[other]
@@ -303,3 +303,24 @@ def test_search_survives_legacy_normalization(isolated_config):
     store({field: {'provider': 'openrouter', 'name': 'm', 'web_search_enabled': True}})
     assert getattr(config.load_settings(), field).web_search_enabled is True
     assert getattr(config.reload_settings(), field).web_search_enabled is True
+
+
+def test_companion_pipeline_defaults_to_evidence_v2_for_missing_setting(isolated_config):
+    assert config.Settings().companion_query_pipeline_version == 'evidence_v2'
+    # Represents an installed config database predating the pipeline setting.
+    store({'companion_enabled': False})
+    assert config.load_settings().companion_query_pipeline_version == 'evidence_v2'
+    assert config.reload_settings().companion_query_pipeline_version == 'evidence_v2'
+    assert stored(isolated_config)['companion_query_pipeline_version'] == 'evidence_v2'
+
+
+def test_companion_pipeline_keeps_explicit_legacy_selection(isolated_config):
+    store({'companion_query_pipeline_version': 'legacy'})
+    assert config.load_settings().companion_query_pipeline_version == 'legacy'
+    assert config.reload_settings().companion_query_pipeline_version == 'legacy'
+
+
+def test_companion_initial_seed_selects_evidence_v2():
+    from pathlib import Path
+    seed = Path(__file__).resolve().parents[2] / 'configs' / 'shrecknet.initial.json'
+    assert json.loads(seed.read_text())['companion_query_pipeline_version'] == 'evidence_v2'

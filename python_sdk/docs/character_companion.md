@@ -31,7 +31,7 @@ configuration read/update. `attachment_content(id)` returns authenticated PNG by
 for a private image reference in a message manifest.
 Selection, rapport, turn and event models are typed Pydantic models. List/chat/image
 responses retain the server dictionaries. `CompanionModelConfigUpdate` independently
-updates any of the four Companion model roles; it never modifies CharacterAgent roles.
+updates any of the six Companion model roles; it never modifies CharacterAgent roles.
 
 See the [runnable example](../examples/12_character_companion/chat.py),
 [HTTP contract](../../Documentation/Agents/Companion/Frontend%20API.md), and
@@ -125,3 +125,59 @@ grounding or continued source access. See the canonical [API contract](../../Doc
 ShreckWorld tool calls may include `source_coverage` counts and an `unavailable`
 reason of `incompatible_index` or `index_not_ready`. Compatible evidence may
 still be present; reindex affected sources before relying on full coverage.
+
+## Evidence-first pipeline
+
+Administrators can select `companion_query_pipeline_version="evidence_v2"` through
+`/config/` (the frontend exposes the same Companion group). SDK model configuration
+now includes `model_companion_web_search` and `model_companion_evidence` alongside
+the existing four roles. The web target defaults to OpenRouter DeepSeek Flash with
+search enabled; per-turn `tools.web` still controls whether it may run.
+
+`send()` additionally accepts `general_knowledge_opt_in`, `use_page_scope`, and
+`clarification_id`. For example, after reading the chat's pending clarification:
+
+```python
+chat = await sdk.character_companion.chat(chat_id)
+pending = chat.get("pending_clarification")
+turn = await sdk.character_companion.send(
+    chat_id, "Use Ravenloft", selection_version,
+    idempotency_key=str(uuid4()),
+    clarification_id=pending["id"] if pending else None,
+)
+```
+
+`general_knowledge_opt_in=True` permits labeled unverified content
+only when the server policy allows it. `use_page_scope=True` releases a saved
+conversational override; submit the desired page `context` with that turn.
+
+Chat reads retain resolved ontology, scope override and pending question metadata.
+Message dictionaries include permanent `commentary` records in ordinary history;
+never discard them on `response.final`. Turn snapshots add stage and commentary.
+Events add `pipeline.status`, `message.committed` and `ontology.updated`; the
+existing event parser preserves their names and payloads. Factual drafts stay
+private until verification. See the [canonical API](../../Documentation/Agents/Companion/Frontend%20API.md#evidence-v2)
+for migration, replay, limitations and failure behavior.
+
+## Rich responses
+
+`turn.result` preserves complete `text` and additive raw presentation fields.
+`turn.rich_response` decodes supported version-one envelopes into generated typed
+models; it returns `None` for absent, unknown or malformed presentation while
+retaining the raw result/text. Messages and final event payloads retain
+`answer_details.rich_response` and `rich_response` respectively. Types are also
+exported as `CompanionRichResponse` and `CompanionPresentationConfig`.
+
+Administrators can read `presentation_config()` or call
+`update_presentation_config(CompanionPresentationConfig(companion_rich_response_enabled=True))`.
+Only explicitly set fields are sent. Rich responses default disabled and require
+`evidence_v2`; web images have a separate default-off JSON-provider capability
+opt-in. No new model role is needed. Deploy matching services/workers/clients first.
+
+`rich_asset_content(turn_id, asset_id)` downloads saved owner-only Atlas raster
+bytes with the current SDK authentication, preserving normal HTTP errors. The
+ShreckWorld client/service owns book media and Foundry resolves local UUID images;
+never attach service tokens to an external asset URL. Read the runnable
+`examples/12_character_companion/rich_responses.py` for safe saved-turn inspection.
+The [frontend contract](../../Documentation/Agents/Companion/Frontend%20API.md#rich-response-v1)
+defines block/asset/navigation fields and compatibility.

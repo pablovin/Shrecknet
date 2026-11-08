@@ -94,7 +94,7 @@ No description.
 
 ### `get_model_config(self)`
 
-Read the four administrator-only Companion model assignments.
+Read the administrator-only Companion model assignments.
 
 ### `update_model_config(self, changes)`
 
@@ -156,3 +156,29 @@ ShreckWorld tool calls can additionally include `source_coverage` and a reason
 of `incompatible_index` or `index_not_ready`.
 See [the workflow guide](../character_companion.md#inspect-answer-origins) for
 matching evidence IDs, cache semantics and compatibility.
+
+
+Evidence v2 model configuration adds `model_companion_web_search` and
+`model_companion_evidence`. `send()` accepts optional
+`general_knowledge_opt_in=False`, `use_page_scope=False` and
+`clarification_id=None`; default-valued fields are omitted from requests.
+`chat()`, `messages()` and `turn()` retain additive scope, commentary and stage
+metadata. Event names/payloads remain unmodified. See the
+[Companion guide](../character_companion.md#evidence-first-pipeline).
+
+### Rich presentation
+
+- `CompanionTurn.result`: nullable raw saved result, including complete text.
+- `CompanionTurn.rich_response`: nullable typed version-one `RichResponse`; absent,
+  malformed and future envelopes retain text fallback.
+- `CompanionRichResponse`: generated block, target and delivery unions, exported
+  from `shrecknet_client`; generated definitions live in `companion_rich_response.py`.
+- `presentation_config()` / `update_presentation_config(CompanionPresentationConfig)`:
+  existing administrator `/config/` controls; updates send explicitly set fields.
+- `rich_asset_content(turn_id, asset_id)`: authenticated saved Atlas image bytes;
+  validates identifier syntax and propagates HTTP errors. Other services own their
+  media contracts. Never send bearer tokens to external image URLs.
+
+No existing turn, message or event method loses additive fields. Source access and
+revisions may change after a reply is saved. See the
+[workflow guide](../character_companion.md#rich-responses) for rollout and examples.

@@ -144,7 +144,7 @@ async def import_companions(session, source, chats_dir, installation, user_mappi
                         for pos,entry in entries:
                             role=entry.get('role','legacy')
                             interim=(entry.get('meta') or entry.get('metadata') or {}).get('message_kind')=='interim'
-                            session.add(CompanionMessage(id=mapped('message',f"{row['session_id']}:{pos}"),turn_id=turn_id,chat_id=chat_id,role='interim' if interim else role,content=entry['content'],manifest=[],committed=complete,created_at=timestamp(entry.get('created_at') or entry.get('ts') or entry.get('timestamp') or row.get('created_at'))))
+                            session.add(CompanionMessage(id=mapped('message',f"{row['session_id']}:{pos}"),turn_id=turn_id,chat_id=chat_id,role='interim' if interim else role,kind='commentary' if interim else 'user' if role=='user' else 'final',content=entry['content'],manifest=[],committed=complete,created_at=timestamp(entry.get('created_at') or entry.get('ts') or entry.get('timestamp') or row.get('created_at'))))
                         index+=len(entries)
                 source_id=chat_id
             remember(info,source_id)

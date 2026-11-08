@@ -114,3 +114,8 @@ shreckworld/models/
 
 # Category snapshot backups (can be many GB)
 /backups/
+
+# Versioned Companion wire-contract fixtures (no private data).
+!shrecknet/tests/fixtures/companion-rich-response.v1.json
+!integrations/foundry/shrecknet-foundry/tests/fixtures/companion-rich-response.v1.json
+!python_sdk/tests/fixtures/companion-rich-response.v1.json

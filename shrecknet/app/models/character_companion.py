@@ -53,6 +53,9 @@ class CompanionChat(Base):
     character_agent_id: Mapped[str] = mapped_column(String(255), index=True)
     title: Mapped[str] = mapped_column(String(255))
     default_scope: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    resolved_ontology: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    pending_clarification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    scope_override: Mapped[bool] = mapped_column(default=False)
     revision: Mapped[int] = mapped_column(default=1)
     active_turn_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     deleted: Mapped[bool] = mapped_column(default=False)
@@ -67,6 +70,8 @@ class CompanionTurn(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     character_agent_id: Mapped[str] = mapped_column(String(255))
     request: Mapped[dict] = mapped_column(JSON)
+    execution_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
     principal: Mapped[dict] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
     draft: Mapped[str] = mapped_column(Text, default="")
@@ -84,11 +89,13 @@ class CompanionTurn(Base):
 
 class CompanionMessage(Base):
     __tablename__ = "character_companion_messages"
-    __table_args__ = (UniqueConstraint("turn_id", "role"),)
+    __table_args__ = (UniqueConstraint("turn_id", "role", "sequence"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid)
     turn_id: Mapped[str] = mapped_column(ForeignKey("character_companion_turns.id", ondelete="CASCADE"), index=True)
     chat_id: Mapped[str] = mapped_column(ForeignKey("character_companion_chats.id", ondelete="CASCADE"), index=True)
     role: Mapped[str] = mapped_column(String(20))
+    kind: Mapped[str] = mapped_column(String(20), default="final")
+    sequence: Mapped[int] = mapped_column(default=0)
     content: Mapped[str] = mapped_column(Text)
     manifest: Mapped[list] = mapped_column(JSON, default=list)
     committed: Mapped[bool] = mapped_column(default=True)

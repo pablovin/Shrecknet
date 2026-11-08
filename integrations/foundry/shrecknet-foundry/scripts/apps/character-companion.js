@@ -1,3 +1,4 @@
+import { richMessage, bindRichMedia, openRichSource } from './companion-rich-response.js';
 import { safeImageUrl } from "./atlas-content.js";
 import { buildSnapshot, documentSnapshot, tableSnapshot, readable, referenceFromDrop, openFoundrySource, contextLimits } from "./foundry-context.js";
 
@@ -103,7 +104,7 @@ export class CompanionWorkspace {
       availability: ({ none: "Choose a companion", ready: "Ready to talk", identity_pending: "Preparing character", archived: "Archived", unavailable: "Currently unavailable" })[this.selection?.availability] || "Choose a companion",
       candidates: this.candidates.map((c) => ({ ...c, selected: c.id === this.selection?.character_agent_id })),
       chats: this.chats.map((c) => ({ ...c, selected: c.id === this.chat?.id })),
-      messages: this.messages.map((m) => ({ ...m, isUser: m.role === "user",
+      messages: this.messages.map((m) => ({ ...m, rich: richMessage(m), isUser: m.role === "user",
         indexWarnings: (m.answer_details?.tool_calls || []).filter((call) => call.reason === "incompatible_index" || call.reason === "index_not_ready").map((call) => ({
           ...call, incompatible: call.reason === "incompatible_index",
         })),
@@ -211,6 +212,7 @@ export class CompanionWorkspace {
   }
 
   bind(root) {
+    bindRichMedia(this, root);
     clearTimeout(this.timer);
     this.boundChatId = this.chat?.id;
     const state = this.state();
@@ -259,7 +261,12 @@ export class CompanionWorkspace {
   async checkTurn() {
     const turn = await this.request(`/turns/${id(this.turnId)}`);
     if (turn.chat_id !== this.chat.id) throw new Error("The reply belongs to another conversation.");
-    this.status = turn.status;
+    this.status = ({ontology_resolution:"Choosing the world",planning:"Planning the search",ontology_update:"Updating the world",replanning:"Planning for the new world",retrieving:"Checking sources",assessing:"Comparing evidence",recovering:"Looking up missing information",synthesizing:"Preparing the reply",resolving_media:"Finding source images",composing_response:"Arranging the reply",verifying_claims:"Checking factual claims",validating:"Checking citations"})[turn.stage] || turn.status;
+    for (const message of turn.commentary || []) {
+      if (!this.messages.some((existing) => existing.id === message.id)) this.messages.push(message);
+    }
+    const ontologyId = turn.execution_context?.ontology_id;
+    if (ontologyId && this.chat.resolved_ontology?.id !== ontologyId) this.chat = await this.request(`/chats/${id(this.chat.id)}`);
     this.provisional = turn.draft || "";
     if (terminal.has(turn.status)) {
       this.busy = false;
@@ -290,6 +297,7 @@ function action(fn, { duringTurn = false } = {}) {
 }
 
 export const companionActions = {
+  openCompanionRichSource: action((w,event,target)=>openRichSource(w,target.dataset.messageId,target.dataset.evidenceId,target.dataset.targetId),{duringTurn:true}),
   openCompanion: action(async (w) => {
     await w.refresh();
     await w.prepareFoundry();
@@ -297,6 +305,8 @@ export const companionActions = {
     w.app.resource = { kind: "companion", title: "Companion" };
     w.app.history.navigate(w.app.resource);
   }, { duringTurn: true }),
+  useCompanionPageScope: action(async (w) => { w.state().usePageScope = !w.state().usePageScope; }),
+  toggleCompanionGeneralKnowledge: action(async (w) => { w.state().generalKnowledge = !w.state().generalKnowledge; }),
   refreshCompanion: action(async (w) => { await w.refresh(); await w.prepareFoundry(); }, { duringTurn: true }),
   chooseCompanion: action(async (w, event, target) => {
     const characterId = w.app._form(event, target).get("characterId");
@@ -380,10 +390,10 @@ export const companionActions = {
       const state = w.state();
       if (state.references.length && !w.foundryReady) throw new Error("Update the backend before sending document context.");
       const web = state.webAllowed && w.capabilities?.tools?.web?.available === true ? "allow" : "disabled";
-      const body = { text, selection_version: w.selection.version, context: { surface: "global" }, tools: { web } };
+      const body = { text, ...(w.chat?.pending_clarification ? { clarification_id: w.chat.pending_clarification.id } : {}), ...(state.usePageScope ? { use_page_scope: true } : {}), ...(state.generalKnowledge && w.capabilities?.general_knowledge_opt_in ? { general_knowledge_opt_in: true } : {}), selection_version: w.selection.version, context: { surface: "global" }, tools: { web } };
       if (w.foundryReady && (state.includeTable || state.references.length)) {
         const generation = w.generation;
-        const snapshot = await buildSnapshot(w.app.connection, state);
+        const snapshot = await buildSnapshot(w.app.connection, state, w.capabilities?.foundry_context?.versions?.includes(2) ? 2 : 1);
         if (generation !== w.generation) throw new Error("Companion session changed.");
         body.foundry_context = snapshot;
         if (state.includeTable && state.ontologyId) body.context.ontology_id = Number(state.ontologyId);
@@ -402,6 +412,8 @@ export const companionActions = {
       throw error;
     }
     w.pendingTurn = null;
+    w.state().usePageScope = false;
+    w.state().generalKnowledge = false;
     w.turnId = turn.turn_id;
     w.busy = true;
     w.status = "Thinking…";

@@ -87,3 +87,42 @@ async def test_answer_breakdown_survives_turn_and_message_reads():
         assert (await api.messages('chat'))['items'][0]['answer_details']==details
     finally:
         await client.aclose()
+
+
+def test_model_config_accepts_older_server_without_new_roles():
+    from shrecknet_client.character_companion import CompanionModelConfig
+    target={'provider':'openrouter','name':'legacy'}
+    config=CompanionModelConfig(**{f'model_companion_{role}':target for role in ('routing','synthesis','interim','rapport_update')})
+    assert config.model_companion_web_search is None and config.model_companion_evidence is None
+
+
+def test_rich_result_models_preserve_fallback_and_unknown_versions():
+    from pathlib import Path
+    from shrecknet_client.character_companion import CompanionTurn
+    fixture=json.loads((Path(__file__).parent/'fixtures/companion-rich-response.v1.json').read_text())
+    result={'text':fixture['content'],'rich_response':fixture['answer_details']['rich_response']}
+    turn=CompanionTurn(chat_id='chat',status='completed',result=result)
+    assert turn.rich_response.blocks[4].rows[0].cells[1].value==0
+    result['rich_response']={**result['rich_response'],'version':2}
+    turn=CompanionTurn(chat_id='chat',status='completed',result=result)
+    assert turn.rich_response is None and 'HP: 0' in turn.result['text']
+
+
+@pytest.mark.asyncio
+async def test_presentation_configuration_and_saved_media_use_existing_authenticated_boundaries():
+    from shrecknet_client.character_companion import CompanionPresentationConfig
+    calls=[]
+    def handler(request):
+        calls.append(request)
+        if '/assets/' in request.url.path:return httpx.Response(200,content=b'png',headers={'content-type':'image/png'})
+        return httpx.Response(200,json={'companion_rich_response_enabled':True,'companion_rich_response_timeout_s':2})
+    client=AsyncShrecknetClient('http://test',token='token')
+    await client._client.aclose();client._client=httpx.AsyncClient(base_url='http://test',transport=httpx.MockTransport(handler))
+    try:
+        api=CharacterCompanionAPI(client)
+        assert (await api.update_presentation_config(CompanionPresentationConfig(companion_rich_response_enabled=True))).companion_rich_response_enabled
+        assert json.loads(calls[0].content)=={'companion_rich_response_enabled':True}
+        assert await api.rich_asset_content('11111111-1111-4111-8111-111111111111','a'+'1'*20)==b'png'
+        assert calls[-1].headers['Authorization']=='Bearer token'
+        with pytest.raises(ValueError):await api.rich_asset_content('11111111-1111-4111-8111-111111111111','../other')
+    finally:await client.aclose()

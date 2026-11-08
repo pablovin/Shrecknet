@@ -65,6 +65,7 @@ CHARACTER_AGENT_MODEL_FIELDS = (
 COMPANION_MODEL_FIELDS = (
     "model_companion_routing", "model_companion_synthesis",
     "model_companion_interim", "model_companion_rapport_update",
+    "model_companion_web_search", "model_companion_evidence",
 )
 LLM_TARGET_FIELDS = (
     *COMPANION_MODEL_FIELDS,
@@ -351,6 +352,22 @@ class Settings(BaseSettings):
     model_orchestrator_synthesis: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
+    companion_web_images_enabled: bool = False
+    companion_rich_response_enabled: bool = False
+    companion_rich_response_timeout_s: float = Field(2, ge=0.1, le=10)
+    companion_query_pipeline_version: Literal["legacy", "evidence_v2"] = "evidence_v2"
+    companion_general_knowledge_policy: Literal["disabled", "labeled_opt_in"] = "disabled"
+    companion_recovery_max_rounds: int = Field(1, ge=0, le=1)
+    companion_recovery_max_calls: int = Field(2, ge=1, le=4)
+    companion_routing_timeout_s: float = Field(3, ge=0.1, le=60)
+    companion_evidence_timeout_s: float = Field(8, ge=0.1, le=60)
+    companion_web_timeout_s: float = Field(12, ge=0.1, le=120)
+    companion_interim_max_messages: int = Field(2, ge=0, le=3)
+    companion_interim_min_interval_s: float = Field(8, ge=1, le=120)
+    companion_interim_output_tokens: int = Field(100, ge=32, le=300)
+    companion_web_backend: Literal["model", "json"] = "model"
+    model_companion_web_search: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash", web_search_enabled=True))
+    model_companion_evidence: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
     companion_enabled: bool = False
     companion_model_routing_enabled: bool = False
     companion_interim_enabled: bool = False
@@ -359,7 +376,7 @@ class Settings(BaseSettings):
     model_companion_interim: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
     model_companion_rapport_update: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
     companion_tool_timeout_s: float = Field(4, ge=0.1, le=60)
-    companion_retrieval_timeout_s: float = Field(8, ge=0.1, le=120)
+    companion_retrieval_timeout_s: float = Field(20, ge=0.1, le=120)
     companion_turn_timeout_s: int = Field(180, ge=10, le=1800)
     companion_event_retention_days: int = Field(7, ge=1, le=90)
     companion_rapport_max_attempts: int = Field(3, ge=1, le=10)
@@ -409,6 +426,12 @@ class Settings(BaseSettings):
     jwt_access_token_expiry_minutes: int = 60 * 24 * 365
     jwt_private_key_pem: str = Field(default_factory=lambda: read_runtime_secret("jwt_private_key.pem"))
     jwt_public_key_pem: str = Field(default_factory=lambda: read_runtime_secret("jwt_public_key.pem"))
+
+
+    @property
+    def companion_rich_response_active(self) -> bool:
+        """Presentation configuration never changes legacy pipeline behavior."""
+        return self.companion_rich_response_enabled and self.companion_query_pipeline_version == 'evidence_v2'
 
 
 class AppConfig(BaseModel):

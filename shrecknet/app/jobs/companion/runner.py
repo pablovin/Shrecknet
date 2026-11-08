@@ -54,6 +54,8 @@ async def mutate(turn_id, lease, *, stage=None, delta=None, event=None, payload=
         values = {"updated_at": utcnow()}
         if stage:
             values["status"] = stage
+        if event == "pipeline.status":
+            values["stage"] = payload["stage"]
         if delta is not None:
             values["draft"] = CompanionTurn.draft + delta
         if identity is not None:
@@ -153,6 +155,11 @@ async def execute_turn(turn, lease):
         previous = None
     llm = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.companion_turn_timeout_s, max_retries=0)
     try:
+        if settings.companion_query_pipeline_version == "evidence_v2":
+            from app.jobs.companion.query_pipeline import run
+            return await run(turn, lease, actor=actor, identity=identity, rapport=rapport,
+                recent=recent, images=images, image_sources=image_sources, llm=llm,
+                settings=settings, metrics=metrics, started=started)
         tools = await route(turn, llm, recent)
         if not tools and previous and turn.request["text"].casefold().strip().startswith(("what about ", "tell me more", "explain that", "why is that", "and then")):
             permitted = turn.request["tools"]["allowed"]
@@ -294,12 +301,13 @@ async def evaluate_rapport(turn, lease=None):
             return False  # A lower sequence must settle first, across all chats.
         base_version, generation = pair.version, pair.generation
         scores = {key: getattr(pair, key) for key in DIMENSIONS}
-        messages = [record(row) for row in (await session.execute(select(CompanionMessage).where(CompanionMessage.turn_id == turn.id))).scalars()]
+        messages = [record(row) for row in (await session.execute(select(CompanionMessage).where(CompanionMessage.turn_id == turn.id, CompanionMessage.kind != "commentary"))).scalars()]
     old_generation = turn.generation != generation
     # Purged conversations settle their sequence without reusing deleted content.
     deleted_exchange = not turn.identity or not messages
+    operational = (turn.result or {}).get("outcome") in {"needs_clarification", "ontology_updated"}
     proposal, error = None, None
-    if not old_generation and not deleted_exchange:
+    if not old_generation and not deleted_exchange and not operational:
         llm = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.companion_turn_timeout_s, max_retries=0)
         try:
             data = {"turn_id": turn.id, "generation": generation, "base_version": base_version, "completion_sequence": turn.completion_sequence,

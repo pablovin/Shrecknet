@@ -18,7 +18,7 @@ async def authorize(token, world_id, payload):
             raise HTTPException(503, 'Retrieval authorization unavailable') from exc
     scope = principal['scope']
     matches = (scope.get('ontology_id') == world_id.ontology_id and not scope.get('shreckworld_id')) if isinstance(world_id, OntologyScope) else scope.get('shreckworld_id') == world_id
-    if not matches or payload.mode != 'evidence' or payload.retrieval_strategy != 'single':
+    if not matches or payload.mode != 'evidence' or payload.retrieval_strategy not in {'single', 'planned'}:
         raise HTTPException(403, 'Retrieval scope mismatch')
     books = scope.get('library_item_ids') or []
     requested = payload.library_item_ids or ([payload.library_item_id] if payload.library_item_id else [])

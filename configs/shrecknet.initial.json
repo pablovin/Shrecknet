@@ -166,5 +166,24 @@
   "companion_enabled": false,
   "companion_image_models": [
     "openrouter/deepseek/deepseek-v4.1-flash"
-  ]
+  ],
+  "model_companion_web_search": {
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
+    "reasoning": false,
+    "reasoning_effort": null,
+    "web_search_enabled": true
+  },
+  "model_companion_evidence": {
+    "provider": "openrouter",
+    "name": "deepseek/deepseek-v4.1-flash",
+    "reasoning": false,
+    "reasoning_effort": null,
+    "web_search_enabled": false
+  },
+  "companion_interim_enabled": true,
+  "companion_query_pipeline_version": "evidence_v2",
+  "companion_web_images_enabled": false,
+  "companion_rich_response_enabled": false,
+  "companion_rich_response_timeout_s": 2
 }

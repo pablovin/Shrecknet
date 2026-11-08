@@ -1,0 +1,106 @@
+"""Strict internal contracts for scope selection, source plans and evidence checks."""
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class Contract(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+
+class OntologyDecision(Contract):
+    status: Literal['resolved', 'ambiguous', 'unresolved', 'not_needed']
+    ontology_id: int | None = None
+    ontology_name: str | None = Field(None, max_length=255)
+    reason: str = Field(max_length=500)
+
+
+class Need(Contract):
+    id: str = Field(min_length=1, max_length=40)
+    question: str = Field(min_length=1, max_length=1000)
+
+
+class PlannedCall(Contract):
+    id: str = Field(min_length=1, max_length=40)
+    tool: Literal['atlas', 'shreckworld', 'web', 'chronicle', 'character_memory']
+    query: str = Field(min_length=1, max_length=4000)
+    need_ids: list[str] = Field(min_length=1, max_length=6)
+
+
+class OntologyUpdate(Contract):
+    ontology_name: str = Field(min_length=1, max_length=255)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class QueryPlan(Contract):
+    action: Literal['retrieve', 'ontology_update', 'clarify', 'conversation']
+    ontology_update: OntologyUpdate | None
+    needs: list[Need] = Field(max_length=6)
+    calls: list[PlannedCall] = Field(max_length=4)
+    clarification_questions: list[str] = Field(max_length=3)
+    resume_pending: bool = False
+
+    @model_validator(mode='after')
+    def consistent(self):
+        ids = {n.id for n in self.needs}
+        if len(ids) != len(self.needs) or len({c.id for c in self.calls}) != len(self.calls):
+            raise ValueError('duplicate_plan_ids')
+        if any(not set(c.need_ids) <= ids for c in self.calls):
+            raise ValueError('unknown_need')
+        if self.action == 'retrieve':
+            if not self.calls or not self.needs or self.ontology_update or self.clarification_questions:
+                raise ValueError('invalid_retrieval_action')
+        elif self.action == 'ontology_update':
+            if not self.ontology_update or self.calls or self.needs or self.clarification_questions:
+                raise ValueError('invalid_update_action')
+        elif self.action == 'clarify':
+            if not self.clarification_questions or any(not q.strip() or len(q) > 500 for q in self.clarification_questions) or self.calls or self.needs or self.ontology_update:
+                raise ValueError('invalid_clarification_action')
+        elif self.calls or self.needs or self.ontology_update or self.clarification_questions:
+            raise ValueError('invalid_conversation_action')
+        return self
+
+
+class Support(Contract):
+    evidence_id: str
+    quote: str = Field(min_length=1, max_length=2000)
+
+
+class NeedAssessment(Contract):
+    need_id: str
+    status: Literal['supported', 'partial', 'missing', 'contradicted', 'unverified']
+    supports: list[Support] = Field(max_length=10)
+    conflicting_evidence_ids: list[str] = Field(max_length=10)
+    missing: str = Field(max_length=1000)
+
+
+class Assessment(Contract):
+    needs: list[NeedAssessment] = Field(max_length=6)
+    follow_up_calls: list[PlannedCall] = Field(max_length=4)
+
+
+class Segment(Contract):
+    id: str = Field(min_length=1, max_length=40)
+    kind: Literal['factual', 'reaction', 'uncertainty', 'clarification', 'general_knowledge']
+    text: str = Field(min_length=1, max_length=8000)
+    claims: list[str] = Field(max_length=12)
+    supports: list[Support] = Field(max_length=12)
+
+
+class Draft(Contract):
+    segments: list[Segment] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode='after')
+    def unique(self):
+        if len({s.id for s in self.segments}) != len(self.segments):
+            raise ValueError('duplicate_segments')
+        return self
+
+
+class SegmentCheck(Contract):
+    segment_id: str
+    supported: bool
+    reason: str = Field(max_length=500)
+
+
+class Verification(Contract):
+    segments: list[SegmentCheck] = Field(max_length=28)

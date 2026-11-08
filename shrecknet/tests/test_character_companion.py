@@ -231,7 +231,7 @@ async def test_durable_worker_completion_and_duplicate_rapport_delivery(session_
     from app.services import character_companion_service
     from app.models.character_companion import CompanionOutbox, CompanionRapportAudit, CompanionEvent
     target=LLMModelTarget(provider='test',name='test')
-    settings=Settings(companion_enabled=True,enable_ai_agents=True,model_companion_synthesis=target,model_companion_rapport_update=target)
+    settings=Settings(companion_query_pipeline_version="legacy",companion_enabled=True,enable_ai_agents=True,model_companion_synthesis=target,model_companion_rapport_update=target)
     monkeypatch.setattr(character_companion_service,'get_settings',lambda:settings)
     monkeypatch.setattr(runner,'get_settings',lambda:settings)
     @asynccontextmanager
@@ -438,7 +438,7 @@ async def test_private_image_normalization_ownership_and_deletion(session_maker,
         assert len(list(tmp_path.iterdir()))==1
         from app.core.config_store import Settings
         from app.services import character_companion_service as companion_module
-        monkeypatch.setattr(companion_module,'get_settings',lambda:Settings(companion_enabled=True,enable_ai_agents=True))
+        monkeypatch.setattr(companion_module,'get_settings',lambda:Settings(companion_query_pipeline_version="legacy",companion_enabled=True,enable_ai_agents=True))
         companion=CharacterCompanionService(session,Characters())
         await companion.select(first,'fiona',0)
         chat=await companion.create_chat(first,ChatCreate(character_agent_id='fiona',selection_version=1),str(uuid4()))
@@ -578,7 +578,7 @@ async def test_web_query_excludes_foundry_context_and_breakdown_records_actual_q
     from app.services import character_companion_service
 
     target = LLMModelTarget(provider='test', name='test')
-    settings = Settings(companion_enabled=True, enable_ai_agents=True,
+    settings = Settings(companion_query_pipeline_version="legacy",companion_enabled=True, enable_ai_agents=True,
                         model_companion_synthesis=target, model_companion_rapport_update=target)
     monkeypatch.setattr(character_companion_service, 'get_settings', lambda: settings)
     monkeypatch.setattr(runner, 'get_settings', lambda: settings)
@@ -653,7 +653,7 @@ async def test_provider_failure_emits_safe_actionable_error(session_maker, monke
     from app.services import character_companion_service
     from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
     from app.models.character_companion import CompanionOutbox, CompanionEvent
-    settings=Settings(companion_enabled=True,enable_ai_agents=True)
+    settings=Settings(companion_query_pipeline_version="legacy",companion_enabled=True,enable_ai_agents=True)
     monkeypatch.setattr(character_companion_service,'get_settings',lambda:settings)
     monkeypatch.setattr(runner,'get_settings',lambda:settings)
     @asynccontextmanager

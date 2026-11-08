@@ -269,4 +269,14 @@ SQL resolves active, encoder-compatible documents from directly owned items. Qdr
 
 Startup adds the nullable ownership column/index and relaxes the legacy item-parent constraint. Existing SQLite tables are rebuilt transactionally with foreign keys temporarily disabled on that connection, copying all source columns and preserving indexes, triggers and child references; foreign-key verification precedes commit. PostgreSQL-style installations use `ALTER COLUMN ... DROP NOT NULL`. Startup does not guess ownership for old sources. The manager-only preview/apply contract in the [reader API](../API/SHRECKWORLD_READER_API.md#legacy-item-migration) performs verified migration separately.
 
+SQLite migration records existing `PRAGMA foreign_key_check` violations under
+the rebuild's write lock, preserves rowids as well as public IDs, and rolls back
+if the rebuild introduces any new violations. Historical orphan rows do not block
+this schema upgrade: they are retained without inventing missing owners or
+deleting job history, and a warning logs their count. This migration does not
+repair historical integrity issues. Before rollout, take a consistent SQLite
+backup and retain source files; investigate preserved orphan records separately.
+If startup reports new violations, retain the database and logs for diagnosis;
+the rebuild transaction is rolled back and foreign-key enforcement is restored.
+
 Legacy parent references remain aliases for existing links, local reading-progress namespaces and recovery. Legacy world deletion refuses migrated items, preventing cascading data loss. No automatic ontology-deletion purge is introduced: direct operations reject missing/inaccessible ontologies and retained sources require administrative recovery. Snapshot owner data and files together before rollout. Cross-installation restores require verifying ontology identity before applying numeric mappings; an ID match alone cannot prove identity. Full rollback uses coordinated snapshots; older frontends do not discover newly uploaded direct items.

@@ -1,6 +1,10 @@
 """Add direct item ownership without deleting legacy sources or their children."""
+import logging
+
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
+
+logger = logging.getLogger(__name__)
 
 
 def migrate_ontology_items(engine: Engine) -> None:
@@ -31,6 +35,7 @@ def _migrate_direct_scope(engine: Engine, table: str) -> None:
         try:
             with connection.begin():
                 connection.exec_driver_sql("BEGIN IMMEDIATE")
+                existing_violations = set(connection.exec_driver_sql("PRAGMA foreign_key_check").all())
                 schema = connection.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).scalar_one()
                 objects = list(connection.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type IN ('index', 'trigger') AND tbl_name=? AND sql IS NOT NULL ORDER BY type", (table,)).scalars())
                 replacement = re.sub(r'^(CREATE TABLE\s+)(?:"' + table + r'"|' + table + r')', r'\1"ontology_items_migration"', schema, count=1, flags=re.I)
@@ -39,13 +44,19 @@ def _migrate_direct_scope(engine: Engine, table: str) -> None:
                     raise RuntimeError("Unrecognized source schema; refusing to rebuild it")
                 connection.exec_driver_sql(replacement)
                 names = ", ".join('"' + name + '"' for name in [column["name"] for column in inspect(connection).get_columns(table)])
-                connection.exec_driver_sql(f'INSERT INTO ontology_items_migration ({names}) SELECT {names} FROM {table}')
+                # Keep rowids as well as public IDs so pre-existing violation
+                # identities remain stable across a rebuild with deleted rows.
+                connection.exec_driver_sql(f'INSERT INTO ontology_items_migration (rowid, {names}) SELECT rowid, {names} FROM {table}')
                 connection.exec_driver_sql(f'DROP TABLE {table}')
                 connection.exec_driver_sql(f'ALTER TABLE ontology_items_migration RENAME TO {table}')
                 for sql in objects:
                     connection.exec_driver_sql(sql)
-                if connection.exec_driver_sql("PRAGMA foreign_key_check").first():
-                    raise RuntimeError("Source migration failed foreign-key verification")
+                violations = set(connection.exec_driver_sql("PRAGMA foreign_key_check").all())
+                if violations - existing_violations:
+                    raise RuntimeError("Source migration introduced new foreign-key violations; rebuild rolled back")
+                if existing_violations:
+                    logger.warning("Ontology scope migration for %s preserved %d pre-existing foreign-key violations; no records were deleted",
+                                   table, len(existing_violations))
         finally:
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
             connection.commit()

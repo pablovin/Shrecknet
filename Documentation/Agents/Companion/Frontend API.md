@@ -107,7 +107,11 @@ Retrieval partial failures appear as diagnostics/coverage, not fabricated citati
 Model targets include `web_search_enabled`, default `false`. Enabling it on the
 synthesis target permits OpenRouter retrieval without a separate JSON search URL;
 `tools.web` still gates each turn. Provider source excerpts enter the existing
-evidence/source events and final citation validation. See
+evidence/source events and final citation validation. Web retrieval receives the
+first 500 characters of the submitted question, without added Foundry names or
+image-derived terms; the question itself is not automatically redacted.
+Provider search is disabled on routing, interim, image interpretation, synthesis
+and rapport calls. See
 [shared configuration](../../Architecture/LLM_WEB_SEARCH.md) for capability
 discovery, unsupported models, budgets, and rollout.
 
@@ -272,8 +276,8 @@ affects future turns, not historical conversation content.
 Completed turn snapshots (`GET /users/me/character-companion/turns/{turn_id}`)
 and `response.final` retain the existing result fields and add `result.tool_calls`.
 Each entry contains `tool` (`atlas`, `character_memory`, `shreckworld`, `chronicle`,
-`web`), `status` (`ok`, `empty`, `timed_out`, `unavailable`), `query` (the retrieval
-query requested this turn), `cache_hit`, nullable `elapsed_ms`, `returned_count`,
+`web`), `status` (`ok`, `empty`, `timed_out`, `unavailable`), `query` (the
+tool-specific retrieval query requested this turn), `cache_hit`, nullable `elapsed_ms`, `returned_count`,
 and `evidence_ids`. Cached retrieval uses the current request query; it does not
 claim to have run another search. Missing timing is null, never an invented zero.
 `returned_count` counts the bounded adapter results, not the provider's total hits.

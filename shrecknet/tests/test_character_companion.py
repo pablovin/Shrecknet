@@ -536,15 +536,113 @@ async def test_provider_web_search_uses_annotations_as_evidence_and_never_genera
     assert await adapter.web('latest news') == []
 
 
-def test_turn_web_denial_fences_optional_role_settings():
+def test_private_stages_disable_provider_managed_search():
     from app.core.config_store import LLMModelTarget
-    from app.jobs.companion.runner import turn_target
+    from app.jobs.companion.runner import private_stage_target
     target = LLMModelTarget(provider='openrouter', name='m', web_search_enabled=True)
-    turn = SimpleNamespace(request={'tools': {'web': 'disabled'}})
-    assert turn_target(target, turn).web_search_enabled is False
+    assert private_stage_target(target).web_search_enabled is False
     assert target.web_search_enabled is True
-    turn.request['tools']['web'] = 'allow'
-    assert turn_target(target, turn).web_search_enabled is True
+    disabled = target.model_copy(update={'web_search_enabled': False})
+    assert private_stage_target(disabled) is disabled
+
+
+@pytest.mark.asyncio
+async def test_optional_router_does_not_enable_provider_search_for_allowed_turn(monkeypatch):
+    from app.core.config_store import LLMModelTarget
+    from app.jobs.companion import runner
+    target = LLMModelTarget(provider='openrouter', name='router', web_search_enabled=True)
+    monkeypatch.setattr(runner, 'get_settings', lambda: SimpleNamespace(
+        model_companion_synthesis=target, companion_web_enabled=False,
+        companion_model_routing_enabled=True, model_companion_routing=target,
+        companion_tool_timeout_s=1))
+    calls = []
+
+    class LLM:
+        async def chat(self, **kwargs):
+            calls.append(kwargs)
+            return '{"tools":[]}'
+
+    turn = SimpleNamespace(request={'text': 'Can we talk?', 'context': None,
+                                    'tools': {'allowed': None, 'web': 'allow'}})
+    assert await runner.route(turn, LLM(), [{'role': 'user', 'content': 'private history'}]) == []
+    assert calls[0]['model'].web_search_enabled is False
+    assert target.web_search_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_web_query_excludes_foundry_context_and_breakdown_records_actual_query(session_maker, monkeypatch):
+    from contextlib import asynccontextmanager
+    from app.core.config_store import Settings, LLMModelTarget
+    from app.jobs.companion import runner
+    from app.models.character_companion import CompanionOutbox
+    from app.services import character_companion_service
+
+    target = LLMModelTarget(provider='test', name='test')
+    settings = Settings(companion_enabled=True, enable_ai_agents=True,
+                        model_companion_synthesis=target, model_companion_rapport_update=target)
+    monkeypatch.setattr(character_companion_service, 'get_settings', lambda: settings)
+    monkeypatch.setattr(runner, 'get_settings', lambda: settings)
+
+    @asynccontextmanager
+    async def database():
+        async with session_maker() as session:
+            yield session
+
+    async def identity(turn):
+        return SimpleNamespace(id=turn.user_id, role='player'), {
+            'character_agent': {'identity_description': {'identity_summary': 'Fiona'}},
+            'personality_context': {},
+        }
+
+    async def route(*args):
+        return ['atlas', 'web']
+
+    queries = {}
+
+    class Retrieval:
+        def __init__(self, *args): pass
+        async def cached(self, *args): return None
+        async def retrieve(self, tool, query):
+            queries[tool] = query
+            return {'tool': tool, 'status': 'empty', 'evidence': []}
+        async def validate_sources(self, sources): pass
+
+    class LLM:
+        def __init__(self, **kwargs): pass
+        async def aclose(self): pass
+        async def stream_chat(self, **kwargs):
+            yield 'A limited answer.'
+
+    monkeypatch.setattr(runner, 'database', database)
+    monkeypatch.setattr(runner, 'load_identity', identity)
+    monkeypatch.setattr(runner, 'route', route)
+    monkeypatch.setattr(runner, 'CompanionRetrieval', Retrieval)
+    monkeypatch.setattr(runner, 'ShreckLLMClient', LLM)
+    monkeypatch.setattr(runner, 'foundry_evidence', lambda snapshot: [])
+    question = 'latest rules ' + 'x' * 600
+    async with session_maker() as session:
+        user = await owner(session)
+        svc = CharacterCompanionService(session, Characters())
+        await svc.select(user, 'fiona', 0)
+        chat = await svc.create_chat(user, ChatCreate(character_agent_id='fiona', selection_version=1), str(uuid4()))
+        admitted = await svc.admit(user, chat['id'], TurnCreate(text=question, selection_version=1, tools={'web': 'allow'}),
+                                   str(uuid4()), {'expires_at': int(time.time()) + 600, 'sid': None})
+        turn = await session.get(CompanionTurn, admitted['turn_id'])
+        turn.request = {**turn.request, 'foundry_context': {'table': {'system_title': 'Private system'},
+                                                            'documents': [{'name': 'Private document'}]}}
+        outbox = (await session.execute(select(CompanionOutbox).where(CompanionOutbox.kind == 'turn'))).scalars().one()
+        outbox_id = outbox.id
+        await session.commit()
+
+    await runner.process_outbox(outbox_id)
+    assert queries['web'] == question[:500]
+    assert 'Private document' in queries['atlas']
+    async with session_maker() as session:
+        turn = await session.get(CompanionTurn, admitted['turn_id'])
+        assert turn.status == 'completed'
+        calls = {call['tool']: call for call in turn.result['tool_calls']}
+        assert calls['web']['query'] == queries['web']
+        assert calls['atlas']['query'] == queries['atlas']
 
 
 @pytest.mark.asyncio

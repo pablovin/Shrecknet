@@ -68,9 +68,9 @@ async def mutate(turn_id, lease, *, stage=None, delta=None, event=None, payload=
         await session.commit()
 
 
-def turn_target(target, turn):
-    """Per-turn denial also fences optional routing, interim, and rapport searches."""
-    if getattr(target, "web_search_enabled", False) and turn.request.get("tools", {}).get("web", "disabled") == "disabled":
+def private_stage_target(target):
+    """Keep provider-managed search confined to the dedicated web adapter."""
+    if getattr(target, "web_search_enabled", False):
         return target.model_copy(update={"web_search_enabled": False})
     return target
 
@@ -110,7 +110,7 @@ async def route(turn, llm, recent):
         tools.add("web")
     if not tools and s.companion_model_routing_enabled and s.model_companion_routing.name:
         try:
-            raw = await asyncio.wait_for(llm.chat(model=turn_target(s.model_companion_routing, turn), messages=[{"role": "system", "content": ROUTER}, {"role": "user", "content": json.dumps({"query": query, "context": context, "recent": recent, "available_tools": sorted(candidates)})}], usage_tag="companion.routing"), s.companion_tool_timeout_s)
+            raw = await asyncio.wait_for(llm.chat(model=private_stage_target(s.model_companion_routing), messages=[{"role": "system", "content": ROUTER}, {"role": "user", "content": json.dumps({"query": query, "context": context, "recent": recent, "available_tools": sorted(candidates)})}], usage_tag="companion.routing"), s.companion_tool_timeout_s)
             parsed = json.loads(raw)
             proposed = parsed.get("tools", [])
             if not isinstance(proposed, list) or any(not isinstance(tool, str) for tool in proposed):
@@ -183,7 +183,7 @@ async def execute_turn(turn, lease):
             retrieval_query += " " + " ".join(observations["retrieval_terms"])
         async def interim():
             try:
-                text=await llm.chat(model=turn_target(settings.model_companion_interim, turn),messages=[{"role":"system","content":INTERIM},{"role":"user","content":json.dumps({"identity_description":identity["character_agent"]["identity_description"],"query":turn.request["text"]})}],usage_tag="companion.interim",max_tokens=100)
+                text=await llm.chat(model=private_stage_target(settings.model_companion_interim),messages=[{"role":"system","content":INTERIM},{"role":"user","content":json.dumps({"identity_description":identity["character_agent"]["identity_description"],"query":turn.request["text"]})}],usage_tag="companion.interim",max_tokens=100)
                 await mutate(turn.id,lease,event="companion.interim",payload={"text":text[:400],"provisional":True})
             except Exception:
                 pass
@@ -198,8 +198,10 @@ async def execute_turn(turn, lease):
             await mutate(turn.id, lease, event="source.discovered", payload=source)
         async def one(tool):
             await mutate(turn.id, lease, event="retrieval.status", payload={"tool": tool, "status": "started"})
-            cached = await retrieval.cached(tool, retrieval_query, previous)
-            return cached if cached is not None else await retrieval.retrieve(tool, retrieval_query)
+            query = turn.request["text"][:500] if tool == "web" else retrieval_query
+            cached = await retrieval.cached(tool, query, previous)
+            item = cached if cached is not None else await retrieval.retrieve(tool, query)
+            return {**item, "query": query}
         retrieval_started=time.monotonic()
         tasks = [asyncio.create_task(one(tool)) for tool in tools]
         try:
@@ -214,7 +216,9 @@ async def execute_turn(turn, lease):
                     await mutate(turn.id, lease, event="source.discovered", payload=source)
         except asyncio.TimeoutError:
             completed = {r["tool"] for r in results}
-            results.extend({"tool": tool, "status": "timed_out", "evidence": []} for tool in tools if tool not in completed)
+            results.extend({"tool": tool, "status": "timed_out", "evidence": [],
+                            "query": turn.request["text"][:500] if tool == "web" else retrieval_query}
+                           for tool in tools if tool not in completed)
         finally:
             for task in tasks:
                 if not task.done():
@@ -301,7 +305,7 @@ async def evaluate_rapport(turn, lease=None):
             data = {"turn_id": turn.id, "generation": generation, "base_version": base_version, "completion_sequence": turn.completion_sequence,
                     "scores": scores, "messages": messages, **(turn.identity or {})}
             data["identity_description"] = data.pop("character_agent", {}).get("identity_description")
-            raw = await llm.chat(model=turn_target(settings.model_companion_rapport_update, turn), messages=[{"role": "system", "content": RAPPORT}, {"role": "user", "content": json.dumps(data)}], usage_tag="companion.rapport_update", max_tokens=2000)
+            raw = await llm.chat(model=private_stage_target(settings.model_companion_rapport_update), messages=[{"role": "system", "content": RAPPORT}, {"role": "user", "content": json.dumps(data)}], usage_tag="companion.rapport_update", max_tokens=2000)
             proposal = RapportProposal.model_validate_json(raw)
         except Exception:
             error = "evaluation_failed"

@@ -40,7 +40,11 @@ See the [runnable example](../examples/12_character_companion/chat.py),
 Agent `LLMModelTarget` values also accept `web_search_enabled=False`. Set it on
 Companion synthesis for gateway-backed OpenRouter retrieval; per-turn web permission
 still applies. Unsupported providers/models cannot enable search in the administration
-UI. See [shared agent web search](../../Documentation/Architecture/LLM_WEB_SEARCH.md).
+UI. Web retrieval sends up to the first 500 characters of the submitted question,
+without appended Foundry names or image-derived terms. The question is not redacted;
+avoid including private information when permitting web search. Routing, interim,
+image interpretation, synthesis and rapport calls do not use provider-managed
+search. See [shared agent web search](../../Documentation/Architecture/LLM_WEB_SEARCH.md).
 
 
 ## Chat session limits and context

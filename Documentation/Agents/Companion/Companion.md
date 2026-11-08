@@ -42,10 +42,13 @@ The worker pipeline is:
    observations and search terms. Interpretation is not published as an answer.
 4. Retrieve allowed sources concurrently with independent tool timeouts and an
    overall deadline. When the synthesis target enables provider search,
-   `WEB_RETRIEVAL` receives only a bounded query; provider citations with source
-   excerpts become external-web evidence. Its generated summary is not evidence.
+   `WEB_RETRIEVAL` receives at most the first 500 characters of the submitted
+   question, without added Foundry names or image-derived terms; provider citations
+   with source excerpts become external-web evidence. Its generated summary is not evidence.
    An optional interim model can react concurrently using only
    identity and the question. Its output is provisional and excluded from rapport.
+   Provider-managed search is disabled for routing, interim reactions and rapport
+   evaluation, even when enabled on those model targets.
 5. Stage 2 streams one embodied prose answer with provider search disabled;
    image interpretation also disables provider search. Text deltas are provisional.
    The backend removes optional inline source markers, builds the response envelope
@@ -74,6 +77,9 @@ ShreckWorld uses evidence-only book retrieval. Chronicle search filters authoriz
 notes before ranking and uses text offsets/revision references; ShreckOS opens the
 referenced body/reply passage and warns when the revision has changed. Optional web search
 uses a configured JSON HTTP provider; it does not fetch arbitrary result pages.
+The question itself is not automatically redacted or converted to a public-only
+query; users should not include private information in questions when permitting
+web search. Search remains subject to the existing per-turn permission and routing.
 Evidence is capped at twenty records and the configured estimated token budget.
 The final context also has a bounded token estimate; model-specific context-window
 fit and image token costs still require deployment validation.

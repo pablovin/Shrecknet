@@ -73,8 +73,10 @@ No third-party search key or separately configured search-service URL is require
 For Companion, enabling search on `model_companion_synthesis` permits provider web
 retrieval. A turn must also allow it through `tools.web`; `disabled` prevents web
 retrieval. Routing chooses whether an allowed turn needs search. The separate
-retrieval call receives only the bounded query, not the identity, rapport, chat
-history, private attachment bytes, or canonical source bundle. Provider URL
+retrieval call receives only the first 500 characters of the submitted question;
+identity, rapport, chat history, Foundry names, image-derived terms, private
+attachment bytes and canonical source bundles are not appended. The question itself
+is not automatically redacted, so it may still contain private information. Provider URL
 annotations with actual source excerpts become `external_web` evidence; generated
 summaries, citations without excerpts, and unsafe/private URLs are excluded.
 Embodied synthesis and image interpretation explicitly disable provider search so
@@ -83,8 +85,8 @@ search cannot bypass the turn permission or evidence/reference validator.
 The original JSON search integration remains compatible: when provider search is
 not enabled, `companion_web_enabled` plus `companion_web_search_url` use the existing
 `{results:[{title,url,snippet}]}` protocol. OpenRouter search takes precedence when
-both are configured. Other role flags remain independent, but a turn-level denial also disables
-provider search for routing, interim, and the subsequent rapport evaluation. A search timeout or
+both are configured. Companion routing, interim, and rapport calls always disable
+provider-managed search, even if their saved role flags enable it. A search timeout or
 failure follows the existing independent retrieval diagnostic path; configure
 Companion's tool/overall retrieval deadlines for expected search latency.
 

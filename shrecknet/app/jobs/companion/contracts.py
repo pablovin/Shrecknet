@@ -43,7 +43,7 @@ def build_answer(raw, evidence, tool_results, *, query=None):
     for row in tool_results:
         returned = row.get("evidence", [])
         call = {
-            "tool": row["tool"], "status": row["status"], "query": query,
+            "tool": row["tool"], "status": row["status"], "query": row.get("query", query),
             "cache_hit": row.get("cache_hit", False), "elapsed_ms": row.get("elapsed_ms"),
             "returned_count": len(returned),
             "evidence_ids": [item["evidence_id"] for item in returned if item["evidence_id"] in supplied],

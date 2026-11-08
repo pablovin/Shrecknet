@@ -74,7 +74,8 @@ Example partial administrator write (substitute configured IDs):
 Enable `web_search_enabled` on `model_companion_synthesis` to use OpenRouter
 search through the existing gateway credentials. Turn-level web permission still
 applies; provider citations with excerpts enter the normal evidence validator.
-Search is disabled on the final synthesis/image interpretation calls. See
+Search is disabled on routing, interim, image interpretation, final synthesis and
+rapport calls regardless of those roles' saved search flags. See
 [shared agent web search](../../Architecture/LLM_WEB_SEARCH.md) for capabilities,
 budgets, errors, compatibility, and deployment.
 

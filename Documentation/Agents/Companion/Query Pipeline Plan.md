@@ -10,7 +10,7 @@ The optional [rich response extension](Rich%20Response%20Plan.md) adds a shared
 ShreckOS/Foundry display contract and media resolution inside this pipeline's
 verification gate. It preserves buffered factual publication, durable commentary,
 scope/permission rules and text fallback. Rich composition is implemented behind
-`companion_rich_response_enabled=false` by default and shares factual verification.
+`companion_rich_response_enabled=true` by default and shares factual verification.
 
 ## Goal and scope
 

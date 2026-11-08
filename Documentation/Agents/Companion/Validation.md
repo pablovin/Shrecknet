@@ -272,5 +272,5 @@ codecs and related dependencies) are missing. Run WebKit on a provisioned host.
 No live model/provider benchmark, human image-subject evaluation, deployed source
 CORS/authorization check or real Foundry v14 GM/player-sheet acceptance was run.
 The [implementation record](Rich%20Response%20Plan.md#verification-and-delivery-gates)
-keeps those production gates explicit. New rich responses default disabled;
+keeps those production gates explicit. Rich responses default enabled for new/missing settings, preserving saved false values;
 these local checks do not authorize a claim of live deployment acceptance.

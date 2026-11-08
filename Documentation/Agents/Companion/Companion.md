@@ -346,9 +346,11 @@ A ShreckWorld page context can carry `surface: "shreckworld"`, `ontology_id`, an
 
 ## Verified rich responses
 
-Set `companion_rich_response_enabled=true` after deploying the matching API,
-workers, ShreckWorld and clients. This setting defaults to false and applies
-only to `evidence_v2`; explicitly saved pipeline/model settings are preserved.
+`companion_rich_response_enabled` defaults to true for new or missing settings
+and applies only to `evidence_v2`. Explicitly saved false values and pipeline/model
+settings are preserved. Deploy matching API, workers, ShreckWorld and clients
+together; existing installations with a saved false value can enable it through
+Administration or `/config/`.
 The existing six model roles remain sufficient. Character Companion can return
 ordered narrative, entity/scene cards, images/galleries, one structured property
 table and exact book excerpt cards. Each factual addition is verified with the

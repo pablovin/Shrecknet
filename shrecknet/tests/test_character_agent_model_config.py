@@ -324,3 +324,26 @@ def test_companion_initial_seed_selects_evidence_v2():
     from pathlib import Path
     seed = Path(__file__).resolve().parents[2] / 'configs' / 'shrecknet.initial.json'
     assert json.loads(seed.read_text())['companion_query_pipeline_version'] == 'evidence_v2'
+
+
+def test_companion_rich_responses_default_enabled_for_missing_setting(isolated_config):
+    settings = config.get_settings()
+    assert settings.companion_rich_response_enabled is True
+    assert settings.companion_rich_response_active is True
+    assert settings.companion_web_images_enabled is False
+    assert config.reload_settings().companion_rich_response_enabled is True
+
+
+@pytest.mark.parametrize('saved', [False, True])
+def test_companion_rich_response_explicit_setting_survives_default_update(isolated_config, saved):
+    store({'companion_rich_response_enabled': saved})
+    assert config.get_settings().companion_rich_response_enabled is saved
+    assert config.reload_settings().companion_rich_response_enabled is saved
+
+
+def test_companion_initial_seed_enables_rich_responses():
+    from pathlib import Path
+    seed = Path(__file__).resolve().parents[2] / 'configs' / 'shrecknet.initial.json'
+    settings = json.loads(seed.read_text())
+    assert settings['companion_rich_response_enabled'] is True
+    assert settings['companion_web_images_enabled'] is False

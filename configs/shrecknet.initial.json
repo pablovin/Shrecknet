@@ -184,6 +184,6 @@
   "companion_interim_enabled": true,
   "companion_query_pipeline_version": "evidence_v2",
   "companion_web_images_enabled": false,
-  "companion_rich_response_enabled": false,
+  "companion_rich_response_enabled": true,
   "companion_rich_response_timeout_s": 2
 }

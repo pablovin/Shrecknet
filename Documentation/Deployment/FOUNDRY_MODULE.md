@@ -549,8 +549,9 @@ source actions open the corresponding authenticated website reader; web targets
 open the original source page. External web pictures require an explicit load
 click and never receive the player's Shrecknet bearer token.
 
-Deploy the updated ShreckWorld, API/workers and module before enabling
-`companion_rich_response_enabled` on evidence v2. Output media support is separate
+Deploy the updated ShreckWorld, API/workers and module together.
+`companion_rich_response_enabled` defaults true for new/missing settings on
+evidence v2; explicitly saved false values remain respected. Output media support is separate
 from user image uploads, which this Foundry view still does not implement. No
 additional Companion database migration is introduced; v2's durable-commentary
 migration remains required. Disabling rich composition preserves saved text and

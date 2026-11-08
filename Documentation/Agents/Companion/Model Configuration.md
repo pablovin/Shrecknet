@@ -141,7 +141,7 @@ and tables. No canonical identity regeneration or re-embedding is required. See
 ## Rich presentation controls
 
 The existing Administration **Shrecknet → Companion Agent** schema group also
-contains `companion_rich_response_enabled` (default false),
+contains `companion_rich_response_enabled` (default true for new/missing settings; saved false values are preserved),
 `companion_rich_response_timeout_s` (default 2, allowed 0.1–10), and
 `companion_web_images_enabled` (default false). Saved values are preserved during
 upgrade. Rich presentation requires `evidence_v2`; legacy replies remain text.

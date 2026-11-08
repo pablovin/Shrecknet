@@ -1,7 +1,7 @@
 # Companion rich response implementation and acceptance plan
 
-Status: implemented locally behind `companion_rich_response_enabled=false` by
-default on `evidence_v2`. Live provider quality/latency, human image-grounding and
+Status: implemented locally with `companion_rich_response_enabled=true` by
+default for new/missing settings on `evidence_v2`; saved false values are preserved. Live provider quality/latency, human image-grounding and
 real Foundry v14 sheet acceptance remain deployment gates. This document records
 the delivered design; the [Companion guide](Companion.md#verified-rich-responses),
 [frontend contract](Frontend%20API.md#rich-response-v1), and
@@ -140,8 +140,9 @@ Deployment acceptance remains distinct from local implementation:
 ## Operations and rollback
 
 Deploy ShreckWorld contracts/media delivery, Shrecknet API/workers, SDK and both
-clients before enabling `companion_rich_response_enabled` in Administration's
-Companion group or `/config/`. Preserve the existing six model settings and saved
+clients together. Rich responses default enabled for new/missing settings.
+Existing installations with a saved false value can enable
+`companion_rich_response_enabled` in Administration's Companion group or `/config/`. Preserve the existing six model settings and saved
 pipeline choice. `companion_rich_response_timeout_s` defaults to two seconds;
 `companion_web_images_enabled` defaults false and requires a capable JSON provider.
 These flags never bypass ordinary per-turn web/source permission.

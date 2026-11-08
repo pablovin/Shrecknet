@@ -353,7 +353,7 @@ class Settings(BaseSettings):
         default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     companion_web_images_enabled: bool = False
-    companion_rich_response_enabled: bool = False
+    companion_rich_response_enabled: bool = True
     companion_rich_response_timeout_s: float = Field(2, ge=0.1, le=10)
     companion_query_pipeline_version: Literal["legacy", "evidence_v2"] = "evidence_v2"
     companion_general_knowledge_policy: Literal["disabled", "labeled_opt_in"] = "disabled"

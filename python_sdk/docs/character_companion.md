@@ -170,9 +170,11 @@ exported as `CompanionRichResponse` and `CompanionPresentationConfig`.
 
 Administrators can read `presentation_config()` or call
 `update_presentation_config(CompanionPresentationConfig(companion_rich_response_enabled=True))`.
-Only explicitly set fields are sent. Rich responses default disabled and require
-`evidence_v2`; web images have a separate default-off JSON-provider capability
-opt-in. No new model role is needed. Deploy matching services/workers/clients first.
+Only explicitly set fields are sent. New/missing backend settings enable rich
+responses by default, preserving saved false values, and require `evidence_v2`; web images have a separate default-off JSON-provider capability
+opt-in. No new model role is needed. Deploy matching services/workers/clients together.
+The SDK conservatively reports rich responses disabled when an older server
+omits presentation settings.
 
 `rich_asset_content(turn_id, asset_id)` downloads saved owner-only Atlas raster
 bytes with the current SDK authentication, preserving normal HTTP errors. The

@@ -22,10 +22,14 @@ def parser(tmp_path, monkeypatch):
         def __init__(self, *args, **kwargs):
             assert kwargs["require_complete"] and not kwargs["export_markdown"]
             assert kwargs["num_threads"] == 4
+            assert kwargs["table_former_mode"] == "fast"
+            assert kwargs["table_structure_enabled"] is Settings().parser_table_structure_enabled
             self.phase_seconds = {"conversion": 0.25}
+            self.progress = kwargs["on_page_progress"]
 
         def parse(self, path, output):
             calls.append(path)
+            self.progress(1, 1)
             logging.getLogger("docling.parser").warning("retained diagnostic")
             return None, {"pages": {"1": {"size": {"width": 600, "height": 800}}}}, "", [
                 {"reference": "heading", "block_type": "heading", "text": "Combat", "level": 1,
@@ -40,6 +44,35 @@ def parser(tmp_path, monkeypatch):
         return parse_source(source, ingestion_id=job, output_dir=tmp_path / "parsed" / job, heartbeat=lambda _: None)
 
     return source, calls, run
+
+
+def test_fast_table_mode_does_not_reuse_accurate_mode_cache(parser, monkeypatch):
+    import app.services.parser_cache as parser_cache
+
+    source, _, _ = parser
+    settings = Settings()
+    assert settings.parser_table_structure_enabled is True
+    fast_key = cache_identity(source, settings, "test-parser")
+    original_dumps = json.dumps
+
+    def accurate_identity(value, **kwargs):
+        if isinstance(value, dict) and value.get("tables") == "fast":
+            value = {**value, "tables": "accurate"}
+        return original_dumps(value, **kwargs)
+
+    monkeypatch.setattr(parser_cache.json, "dumps", accurate_identity)
+    assert cache_identity(source, settings, "test-parser") != fast_key
+
+
+def test_page_callback_is_marshaled_back_to_calling_thread(parser, tmp_path):
+    import threading
+    source, _, _ = parser
+    observed = []
+    caller = threading.get_ident()
+    parse_source(source, ingestion_id="progress", output_dir=tmp_path / "progress",
+                 heartbeat=lambda _: None,
+                 page_progress=lambda done, total: observed.append((done, total, threading.get_ident())))
+    assert observed == [(1, 1, caller)]
 
 
 def test_reindex_reuses_parse_with_fresh_ids_and_identical_evidence(parser, tmp_path):
@@ -61,7 +94,7 @@ def test_reindex_reuses_parse_with_fresh_ids_and_identical_evidence(parser, tmp_
     assert (tmp_path / "parsed" / "second" / "normalized_document.json").exists()
 
 
-@pytest.mark.parametrize("change", ["source", "parser", "threads", "layout_batch", "table_batch", "artifacts", "corrupt", "checksum", "disabled"])
+@pytest.mark.parametrize("change", ["source", "parser", "threads", "layout_batch", "table_batch", "table_structure", "artifacts", "corrupt", "checksum", "disabled"])
 def test_cache_invalidates_or_reparses_safely(parser, tmp_path, monkeypatch, change):
     source, calls, run = parser
     run("first")
@@ -76,6 +109,8 @@ def test_cache_invalidates_or_reparses_safely(parser, tmp_path, monkeypatch, cha
         return
     elif change in {"layout_batch", "table_batch"}:
         monkeypatch.setenv(f"SHRECKWORLD_PARSER_{change.upper()}_SIZE", "8")
+    elif change == "table_structure":
+        monkeypatch.setenv("SHRECKWORLD_PARSER_TABLE_STRUCTURE_ENABLED", "false")
     elif change == "artifacts":
         root = tmp_path / "models"
         root.mkdir()

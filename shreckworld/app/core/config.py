@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 import os
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shreckconfig.shreckworld import DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, read_runtime_config, runtime_config_file
+
+PARSER_TABLE_MODE: Literal["fast"] = "fast"
 
 
 class Settings(BaseSettings):
@@ -41,6 +44,7 @@ class Settings(BaseSettings):
     parser_threads: int = Field(default=4, ge=1, le=32)
     parser_layout_batch_size: int = Field(default=4, ge=1, le=64)
     parser_table_batch_size: int = Field(default=4, ge=1, le=64)
+    parser_table_structure_enabled: bool = True
     reranker_model_id: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     reranker_enabled: bool = True
     qdrant_url: str = "http://qdrant:6333"

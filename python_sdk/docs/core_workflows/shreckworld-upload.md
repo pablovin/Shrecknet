@@ -41,6 +41,19 @@ Processing time prefers recorded monotonic phase durations; while running it
 estimates time since the last checkpoint. See the
 [job timing contract](../../../Documentation/API/SHRECKWORLD_INDEXING_API.md#job-response).
 
+During PDF parsing, current Docling versions update `metrics.processed_pages` and
+`metrics.total_pages` on each heartbeat interval (five seconds by default).
+Display these existing counters; completed pages count successful layout/table
+processing, with duplicates and out-of-order page events handled. Parsing may
+continue with export/normalization after all pages complete. Older Docling versions
+without callbacks retain indeterminate page progress. OCR is disabled.
+
+`metrics.parser_table_structure_enabled` records whether TableFormer reconstruction
+was enabled (`null` on historical attempts). For parsing experiments, compare
+`metrics.parser_seconds["conversion"]` with `parser_cache_hit=False`; changing
+table reconstruction can alter chunk counts and embedding time. See the
+[comparison procedure](../../../Documentation/API/SHRECKWORLD_INDEXING_API.md#comparing-table-reconstruction-costs).
+
 Run the [polling example](../../examples/11_shreckworld/poll_indexing_job.py):
 
 ```bash

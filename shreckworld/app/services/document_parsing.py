@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import asdict, dataclass, field
 from importlib.metadata import version
 from pathlib import Path
+from queue import Empty, SimpleQueue
 from time import monotonic
 from typing import Callable, TypeVar
 
@@ -15,7 +16,7 @@ from shreckdoc.pipeline import (
     _parse_quality_summary, _atomic_text, normalize_document,
 )
 
-from app.core.config import get_settings
+from app.core.config import PARSER_TABLE_MODE, get_settings
 from app.services.parser_cache import ParserPayload, cache_identity, read_cache, write_cache
 
 T = TypeVar("T")
@@ -68,11 +69,29 @@ class ParsedSource:
 
 
 def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
-                 heartbeat: Callable[[int | None], None]) -> ParsedSource:
+                 heartbeat: Callable[[int | None], None],
+                 page_progress: Callable[[int, int], None] | None = None) -> ParsedSource:
     settings = get_settings()
     output_dir.mkdir(parents=True, exist_ok=True)
     native_count = _native_pdf_page_count(path) if path.suffix.lower() == ".pdf" else None
     heartbeat(native_count)
+    pages: SimpleQueue[tuple[int, int]] = SimpleQueue()
+
+    def flush_pages() -> None:
+        # Docling runs in a background thread. Only the caller thread invokes
+        # callbacks which may use its SQLAlchemy session.
+        latest = None
+        while True:
+            try:
+                latest = pages.get_nowait()
+            except Empty:
+                break
+        if latest is not None and page_progress is not None:
+            page_progress(*latest)
+
+    def parser_heartbeat() -> None:
+        flush_pages()
+        heartbeat(native_count)
     capture = ParserDiagnostics()
     timings: dict[str, float] = {}
     cached = None
@@ -100,6 +119,9 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
             device=settings.embedding_device, log_prefix="[SHRECKWORLD_INDEX]", require_complete=True,
             num_threads=settings.parser_threads, layout_batch_size=settings.parser_layout_batch_size,
             table_batch_size=settings.parser_table_batch_size, export_markdown=settings.parser_export_markdown,
+            on_page_progress=lambda done, total: pages.put((done, total)),
+            table_structure_enabled=settings.parser_table_structure_enabled,
+            table_former_mode=PARSER_TABLE_MODE,
         )
         if cached is not None:
             canonical, items, diagnostics = cached.canonical, cached.items, cached.diagnostics
@@ -114,9 +136,12 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
             root_logger = logging.getLogger()
             root_logger.addHandler(capture)
             try:
-                _, canonical, markdown, items, diagnostics = with_heartbeat(
-                    lambda: adapter.parse(path, output_dir), lambda: heartbeat(native_count)
-                )
+                try:
+                    _, canonical, markdown, items, diagnostics = with_heartbeat(
+                        lambda: adapter.parse(path, output_dir), parser_heartbeat
+                    )
+                finally:
+                    flush_pages()
             finally:
                 root_logger.removeHandler(capture)
             diagnostics = list(dict.fromkeys([*diagnostics, *capture.messages]))

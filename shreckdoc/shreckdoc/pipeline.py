@@ -7,6 +7,7 @@ contextual, tokenizer-bounded children. Callers own storage and inference.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -15,7 +16,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Literal
 from uuid import NAMESPACE_URL, uuid5
 
 logger = logging.getLogger(__name__)
@@ -234,7 +235,12 @@ class DoclingAdapter:
 
     def __init__(self, artifacts_path: str | None = None, *, device: str | None = None, log_prefix: str = "[LIBRARIAN_EMBED]", require_complete: bool = False,
                  num_threads: int | None = None, layout_batch_size: int | None = None,
-                 table_batch_size: int | None = None, export_markdown: bool = True) -> None:
+                 table_batch_size: int | None = None, export_markdown: bool = True,
+                 on_page_progress: Callable[[int, int], None] | None = None,
+                 table_structure_enabled: bool = True,
+                 table_former_mode: Literal["accurate", "fast"] = "accurate") -> None:
+        if table_former_mode not in ("accurate", "fast"):
+            raise ValueError(f"Unsupported TableFormer mode: {table_former_mode}")
         self.artifacts_path = artifacts_path or os.getenv("DOCLING_ARTIFACTS_PATH")
         self.device = device
         self.log_prefix = log_prefix
@@ -243,6 +249,9 @@ class DoclingAdapter:
         self.layout_batch_size = layout_batch_size
         self.table_batch_size = table_batch_size
         self.export_markdown = export_markdown
+        self.on_page_progress = on_page_progress
+        self.table_structure_enabled = table_structure_enabled
+        self.table_former_mode = table_former_mode
         self.phase_seconds: dict[str, float] = {}
 
     def parse(self, pdf_path: Path, output_dir: Path) -> tuple[Any, dict[str, Any], str, list[dict[str, Any]], list[str]]:
@@ -273,7 +282,7 @@ class DoclingAdapter:
             # can alter source wording and is intentionally disabled, including
             # selective/page-level OCR fallback.
             do_ocr=False,
-            do_table_structure=True,
+            do_table_structure=self.table_structure_enabled,
             generate_parsed_pages=True,
             # Picture/page assets are not used by retrieval or synthesis. Keep
             # structural picture blocks and provenance, but do not spend disk
@@ -288,7 +297,12 @@ class DoclingAdapter:
                     raise RuntimeError(f"Installed Docling does not support {name}")
                 setattr(options, name, value)
         if hasattr(options.table_structure_options, "mode"):
-            options.table_structure_options.mode = TableFormerMode.ACCURATE
+            options.table_structure_options.mode = {
+                "accurate": TableFormerMode.ACCURATE,
+                "fast": TableFormerMode.FAST,
+            }[self.table_former_mode]
+        elif self.table_structure_enabled and self.table_former_mode == "fast":
+            raise RuntimeError("Installed Docling does not support TableFormer mode selection")
         hierarchy = getattr(options, "heading_hierarchy_options", None)
         if hierarchy is not None:
             hierarchy.enabled = True
@@ -301,7 +315,22 @@ class DoclingAdapter:
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
         )
         export_started = time.monotonic()
-        result = converter.convert(str(pdf_path))
+        convert_kwargs: dict[str, Any] = {}
+        if self.on_page_progress is not None and "progress_callback" in inspect.signature(converter.convert).parameters:
+            completed: set[int] = set()
+
+            def report_page(event: Any) -> None:
+                if getattr(event, "kind", None) != "page_completed":
+                    return
+                page, total = event.page_no, event.total_pages
+                if total <= 0 or not 1 <= page <= total:
+                    return
+                if event.success:
+                    completed.add(page)
+                self.on_page_progress(len(completed), total)
+
+            convert_kwargs["progress_callback"] = report_page
+        result = converter.convert(str(pdf_path), **convert_kwargs)
         self.phase_seconds["conversion"] = time.monotonic() - export_started
         status = str(getattr(getattr(result, "status", None), "value", getattr(result, "status", "success")))
         if self.require_complete and status != "success":
@@ -871,5 +900,3 @@ def _parse_quality_summary(
         "pictures_detected": sum(item.get("block_type") == "picture" for item in items),
         "explicit_parser_diagnostics": len(diagnostics),
     }
-
-

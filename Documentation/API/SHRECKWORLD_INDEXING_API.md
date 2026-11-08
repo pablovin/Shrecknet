@@ -28,7 +28,8 @@ roles `403`. Job status is separate from the last successful active generation.
 The worker uses the same Docling normalization and structural parent/child
 algorithms as Librarian through `shreckdoc`, without its Neo4j persistence.
 PDF/DOCX/Markdown preserve headings, tables, lists, reading order, and available
-provenance. Plain text uses paragraph blocks. PDF table structure is accurate-mode,
+provenance. Plain text uses paragraph blocks. PDF table structure uses TableFormer
+fast mode when enabled (the default),
 heading inference is enabled where supported, and OCR is disabled. DOCX/Markdown/
 text have logical page 1; no PDF coordinates are invented for them.
 
@@ -115,12 +116,26 @@ with illustrative counts/timings (not a benchmark):
 
 `metrics.phase` follows `validating_model` → `parsing` → `chunking` → `embedding`
 → `storing` → `completed`, or `failed` from any stage. `progress_mode` is
-`indeterminate` while opaque model/Docling/chunk construction runs and
-`determinate` during batch encoding/storage/completion. Parsing reports a known
-native PDF `total_pages` when available but keeps `processed_pages=0` until the
-structured parse completes: Docling does not expose reliable completed-page
-callbacks. A heartbeat commits every `parser_heartbeat_seconds`, including while
-canonical exports are running. Child counts become known after chunk construction.
+`indeterminate` while opaque model/chunk construction runs and before Docling's
+first page event, then `determinate` during page processing, batch encoding,
+storage, and completion. With Docling versions exposing
+`convert(progress_callback=...)`, `processed_pages` counts unique successfully
+completed pages, including their layout/table processing, rather than the highest
+page number encountered. Out-of-order events and duplicates do not inflate it;
+failed pages do not count as successfully processed. `total_pages` is known from
+the native PDF where available. Polling frontends can render the existing
+`metrics.processed_pages / metrics.total_pages` fields without an API/model change.
+
+Page events are marshalled from the parser thread to the owning job thread and
+committed at the next `parser_heartbeat_seconds` interval (default five seconds),
+with a final flush when conversion returns or fails. Parsing progress moves from
+5% through at most 34%; chunk construction starts at 35%. Finishing all pages
+does not finish parsing: document assembly, canonical export, normalization, and
+cache publication may remain. Older Docling versions without the public callback
+retain indeterminate parsing and report page counts after normalization. A
+heartbeat continues during canonical exports. Child counts become known after
+chunk construction. OCR remains disabled (`do_ocr=False`); CPU PDF rendering,
+layout detection, and accurate table reconstruction still run.
 
 `text_pages` counts pages with retrievable text, excluding headers/footers and
 heading-only pages; `empty_pages` is the remaining page count. `parse_quality`
@@ -144,7 +159,7 @@ to the configured embedding backend. Historical metrics may contain `hash`;
 this is preserved as historical evidence, never used as a semantic fallback.
 Model/fingerprint/revision/tokenizer fields remain `null` until verified. Phase
 seconds use a monotonic clock. Progress is an approximate stage indicator:
-validation 1%, parsing 5%, chunking 35%, encoding 50–90%, storage 95%, success
+validation 1%, parsing 5–34% (5% without callbacks), chunking 35%, encoding 50–90%, storage 95%, success
 100%. Failure retains last progress. Batches checkpoint at phase boundaries and
 at most once per second; a single long inference/remote write may delay updates.
 Timers continue growing on polling; progress is not an estimated completion time
@@ -177,6 +192,7 @@ readiness until a new probe passes. A missing encoder/artifact directory yields
 | `EMBEDDING_THREADS` | `4`, range 1–32 |
 | `DOCLING_ARTIFACTS_PATH` | `./models/docling`; Compose `/hf-cache/docling` |
 | `PARSER_HEARTBEAT_SECONDS` | `5`, range 0.1–60 |
+| `PARSER_TABLE_STRUCTURE_ENABLED` | `true` enables Docling `do_table_structure=True` with TableFormer fast mode; `false` skips reconstruction while retaining layout analysis and keeping OCR disabled. Restart API/worker after changing |
 | `RERANKER_MODEL_ID` | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `RERANKER_ENABLED` | `true`; failed optional reranking retains RRF order and trace warning |
 | `QDRANT_COLLECTION` | `shreckworld_semantic_v2` |
@@ -190,6 +206,35 @@ The existing GPU overlay also configures ShreckWorld; CUDA does not silently
 fall back to CPU. Semantic readiness does not guarantee perfect document
 recognition or factual correctness, and future hardware/model errors can still
 occur; such errors must be visible instead of generating hash vectors.
+
+### Comparing table reconstruction costs
+
+Set `SHRECKWORLD_PARSER_TABLE_STRUCTURE_ENABLED=false` in the root `.env` and
+recreate Shreckworld API/worker, then start a new indexing attempt for the same
+source. Layout analysis and its existing settings remain enabled, OCR stays off,
+and TableFormer reconstruction is skipped. ShreckWorld normally uses fast mode;
+the shared adapter retains enabled, accurate-mode defaults for Librarian callers.
+Fast mode may produce different table evidence from accurate mode. Disabling
+reconstruction may lose table rows/cells and
+structured table evidence; review retrieval quality before retaining its index.
+
+The flag and table mode participate in parser-cache identity: switching either forces a fresh parse
+without deleting the previous cache. Subsequent identical runs can hit the new
+cache, so verify `metrics.parser_cache_hit=false` when comparing timings.
+Existing accurate-mode cache entries are not reused for fast-mode parsing.
+`metrics.parser_table_structure_enabled` records the choice in API/SDK job metrics
+and `[SHRECKWORLD_INDEXING_SUMMARY]` logs; historical jobs have `null`.
+Compare `metrics.parser_seconds.conversion` to isolate the conversion-path change,
+and `metrics.phase_seconds.parsing` for the complete parsing cost. Changed table
+content can also change chunk counts and embedding time; the embedding phase is
+not a direct measure of TableFormer cost. Keep thread counts and other parser
+settings fixed for comparisons.
+
+Restore the flag to `true` and recreate API/worker to re-enable fast-mode reconstruction.
+Reindex the experimental source to restore table-aware evidence. Old caches and
+source files are preserved, and no database migration is required. Parsing options
+do not change encoder identity; the newly activated document replaces the prior
+retrievable generation only after successful indexing as usual.
 
 ### Portable CPU backends
 
@@ -283,7 +328,8 @@ Failed jobs show the measured work up to failure; historical jobs may lack timin
 The worker also emits one `[SHRECKWORLD_INDEXING_SUMMARY]` JSON console log per
 terminal attempt: `job_id`, `library_item_id`, `status`, `embedding_backend`,
 `elapsed_seconds`, `queue_wait_seconds`, `processing_seconds`, `phase_seconds`,
-`parser_seconds`, `parser_cache_hit`, `processed_chunks`, and `total_chunks`.
+`parser_seconds`, `parser_cache_hit`, `parser_table_structure_enabled`,
+`processed_chunks`, and `total_chunks`.
 Successful attempts log at INFO (enabled by the default worker); failures log at
 WARNING and retain partial timings. These are the persisted job measurements;
 parser substeps overlap parsing. Post-activation artifact/retired-vector cleanup

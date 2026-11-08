@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from shreckdoc.pipeline import EMBEDDING_VERSION, TokenCountingTokenizer, _atomic_json, _sha256, _token_count, build_chunks
 
 from app.models import ShreckWorld, ShreckWorldDocument, ShreckWorldDocumentChunk, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem
+from app.core.config import get_settings
 from app.repositories.documents import activate_document
 from app.schemas.shreckworld import EmbeddingJobRead, IndexingJobMetrics
 from app.services.document_parsing import parse_source, with_heartbeat
@@ -31,6 +32,7 @@ def _log_indexing_summary(job: ShreckWorldEmbeddingJob, metrics: IndexingJobMetr
         "processing_seconds": result.processing_seconds,
         "phase_seconds": metrics.phase_seconds, "parser_seconds": metrics.parser_seconds,
         "parser_cache_hit": metrics.parser_cache_hit,
+        "parser_table_structure_enabled": metrics.parser_table_structure_enabled,
         "processed_chunks": metrics.processed_chunks, "total_chunks": metrics.total_chunks,
     }
     logger.log(logging.INFO if job.status == "completed" else logging.WARNING,
@@ -75,6 +77,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
     try:
         embedder = get_embedder()
         health = embedder.ensure_ready()
+        metrics.parser_table_structure_enabled = get_settings().parser_table_structure_enabled
         metrics.embedding_backend = embedder.backend
         metrics.embedding_model = embedder.settings.embedding_model_id
         metrics.embedding_fingerprint = str(health["fingerprint"])
@@ -84,13 +87,22 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         if _sha256(path) != item.source_sha256:
             raise ValueError("Source hash changed after upload; refusing to index a different document")
         world = session.get(ShreckWorld, item.shreckworld_id) if item.shreckworld_id else None
-        phase("parsing", 5, "Parsing structure with Docling; page progress is indeterminate", indeterminate=True)
+        phase("parsing", 5, "Parsing structure with Docling; waiting for page progress; OCR disabled", indeterminate=True)
 
         def parsing_heartbeat(total: int | None) -> None:
             metrics.total_pages = total
             checkpoint(force=True)
 
-        parsed = parse_source(path, ingestion_id=job.id, output_dir=output_dir, heartbeat=parsing_heartbeat)
+        def parsing_pages(done: int, total: int) -> None:
+            metrics.processed_pages = max(metrics.processed_pages, min(done, total))
+            metrics.total_pages = total
+            metrics.progress_mode = "determinate"
+            job.progress = max(job.progress, 5 + int(metrics.processed_pages / total * 29))
+            job.detail = f"Processed {metrics.processed_pages}/{total} PDF pages; completing structured parsing; OCR disabled"
+            checkpoint(force=True)
+
+        parsed = parse_source(path, ingestion_id=job.id, output_dir=output_dir, heartbeat=parsing_heartbeat,
+                              page_progress=parsing_pages)
         normalized = parsed.document
         metrics.parser_name, metrics.parser_version = parsed.parser_name, parsed.parser_version
         metrics.parse_quality = parsed.quality

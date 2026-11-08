@@ -207,6 +207,25 @@ opt-in path. No agent runtime or persistence owned by Elder or Librarian is used
 
 ## Model readiness and operation
 
+`SHRECKWORLD_PARSER_TABLE_STRUCTURE_ENABLED` defaults to `true` and controls
+Docling's `do_table_structure` through the shared adapter. Turning it off skips
+TableFormer reconstruction while retaining layout analysis and the no-OCR rule.
+When enabled, ShreckWorld uses TableFormer fast mode; the cache identity includes
+both the enabled state and mode, so accurate-mode entries are not reused.
+Terminal job metrics/logs record the enabled state. The shared adapter retains
+enabled, accurate-mode defaults for existing Librarian callers.
+See the [table reconstruction comparison](../API/SHRECKWORLD_INDEXING_API.md#comparing-table-reconstruction-costs)
+for fresh-parse timing comparisons, evidence-quality impact, and rollback.
+
+The shared `DoclingAdapter` accepts an optional `on_page_progress(done, total)`
+callback, using Docling's public conversion progress events when supported.
+Shreckworld queues events from the conversion thread and updates SQL job progress
+on its owning thread during regular heartbeats. Unique successful page completions
+populate the existing frontend page counters and parsing-stage progress; document
+assembly/export may continue after all pages finish. Older Docling versions keep
+the existing indeterminate behavior. This does not enable OCR or change extraction
+algorithms; see the [page progress contract](../API/SHRECKWORLD_INDEXING_API.md#job-response).
+
 Sentence Transformers and Docling are required image dependencies. The pinned
 E5 snapshot is prefetched alongside the optional cross-encoder and Docling
 layout/table artifacts. Runtime uses local caches with remote downloads disabled.

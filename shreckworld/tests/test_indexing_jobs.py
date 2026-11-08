@@ -193,6 +193,28 @@ def test_parsing_is_indeterminate_and_heartbeat_is_visible(api, runtime, monkeyp
     run(item_id, job_id)
 
 
+@pytest.mark.parametrize("failed", [False, True])
+def test_live_page_counts_are_visible_before_parse_finishes(api, runtime, monkeypatch, failed):
+    prefix, item_id, job_id = queued_job(api, monkeypatch)
+    def observe(path, **kwargs):
+        kwargs["page_progress"](1, 2)
+        client, headers, _ = api
+        current = client.get(f"{prefix}/index-jobs/{job_id}", headers=headers).json()
+        assert current["metrics"]["phase"] == "parsing"
+        assert current["metrics"]["processed_pages"] == 1 and current["metrics"]["total_pages"] == 2
+        assert current["metrics"]["progress_mode"] == "determinate"
+        assert 5 < current["progress"] < 35 and "OCR disabled" in current["detail"]
+        if failed:
+            raise ValueError("conversion failed after one page")
+        return parsed_source(path, **kwargs)
+    monkeypatch.setattr("app.services.ingestion.parse_source", observe)
+    run(item_id, job_id)
+    client, headers, _ = api
+    final = client.get(f"{prefix}/index-jobs/{job_id}", headers=headers).json()
+    assert final["status"] == ("failed" if failed else "completed")
+    assert final["metrics"]["processed_pages"] == (1 if failed else 2)
+
+
 @pytest.mark.parametrize("backend", ["onnx", "openvino"])
 def test_accelerated_backend_is_preserved_in_final_metrics(api, runtime, monkeypatch, backend):
     runtime.backend = backend
@@ -229,6 +251,16 @@ def test_terminal_console_summary_matches_persisted_metrics(api, runtime, monkey
     assert summary["parser_seconds"] == final["metrics"]["parser_seconds"]
     assert summary["processing_seconds"] == final["processing_seconds"]
     assert "private source detail" not in records[0].message
+
+
+def test_table_experiment_setting_is_recorded_in_job_metrics(api, runtime, monkeypatch):
+    monkeypatch.setenv("SHRECKWORLD_PARSER_TABLE_STRUCTURE_ENABLED", "false")
+    prefix, item_id, job_id = queued_job(api, monkeypatch)
+    run(item_id, job_id)
+    client, headers, _ = api
+    final = client.get(f"{prefix}/index-jobs/{job_id}", headers=headers).json()
+    assert final["status"] == "completed", final
+    assert final["metrics"]["parser_table_structure_enabled"] is False
 
 
 def test_duration_uses_utc_and_legacy_jobs_have_unknown_processing_time():

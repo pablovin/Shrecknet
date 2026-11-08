@@ -24,7 +24,8 @@ def test_indexing_polling_and_readiness_preserve_model_diagnostics_and_auth(back
                     "created_at": "2026-10-15T12:00:00Z", "processing_seconds": 12.5,
                     "metrics": {"phase": "completed", "embedding_backend": backend,
                                 "embedding_fingerprint": "a" * 64, "parent_chunks": 4, "total_chunks": 10,
-                                "parser_cache_hit": True, "parser_seconds": {"cache_lookup": 0.1},
+                                "parser_cache_hit": True, "parser_table_structure_enabled": False,
+                                "parser_seconds": {"cache_lookup": 0.1},
                                 "embedding_batch_size": 32, "phase_seconds": {"parsing": 10.0, "embedding": 2.5}}})
             await sdk.shreckworld._transport._client.aclose()
             sdk.shreckworld._transport._client = httpx.AsyncClient(base_url="http://world.test", transport=httpx.MockTransport(handler))
@@ -35,6 +36,7 @@ def test_indexing_polling_and_readiness_preserve_model_diagnostics_and_auth(back
             assert result.metrics.embedding_backend == backend
             assert result.processing_seconds == 12.5 and result.metrics.parent_chunks == 4
             assert result.metrics.parser_cache_hit is True
+            assert result.metrics.parser_table_structure_enabled is False
             assert result.metrics.parser_seconds == {"cache_lookup": 0.1}
             assert result.metrics.embedding_batch_size == 32
             assert "/world%2Fa/library-items/book%2Fa/index-jobs/job%2Fa" in calls[-1]

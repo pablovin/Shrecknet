@@ -13,6 +13,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 from shreckdoc.pipeline import _sha256
 
+from app.core.config import PARSER_TABLE_MODE
+
 logger = logging.getLogger(__name__)
 CACHE_VERSION = 1
 
@@ -63,7 +65,8 @@ def cache_identity(path: Path, settings: Any, parser_version: str) -> str:
         "layout_batch_size": settings.parser_layout_batch_size,
         "table_batch_size": settings.parser_table_batch_size,
         "markdown": settings.parser_export_markdown,
-        "ocr": False, "tables": "accurate", "heading_inference": True,
+        "ocr": False, "tables": PARSER_TABLE_MODE if settings.parser_table_structure_enabled else "disabled",
+        "heading_inference": True,
     }
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 

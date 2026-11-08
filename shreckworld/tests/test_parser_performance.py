@@ -41,7 +41,7 @@ def docling(monkeypatch):
 
     modules = {
         "docling.datamodel.base_models": {"InputFormat": SimpleNamespace(PDF="pdf")},
-        "docling.datamodel.pipeline_options": {"PdfPipelineOptions": Options, "TableFormerMode": SimpleNamespace(ACCURATE="accurate")},
+        "docling.datamodel.pipeline_options": {"PdfPipelineOptions": Options, "TableFormerMode": SimpleNamespace(ACCURATE="accurate", FAST="fast")},
         "docling.datamodel.accelerator_options": {"AcceleratorOptions": lambda **kwargs: SimpleNamespace(**kwargs)},
         "docling.document_converter": {"DocumentConverter": Converter, "PdfFormatOption": lambda **kwargs: SimpleNamespace(**kwargs)},
         "docling_core.types.doc": {"ImageRefMode": SimpleNamespace(PLACEHOLDER="placeholder")},
@@ -66,6 +66,7 @@ def test_adapter_uses_memory_exports_and_preserves_quality_options(tmp_path, doc
     assert options.layout_batch_size == 8 and options.table_batch_size == 2
     assert options.accelerator_options.num_threads == 8
     assert options.table_structure_options.mode == "accurate"
+    assert options.do_table_structure is True
     assert options.heading_hierarchy_options.enabled
     assert not options.do_ocr and not options.generate_page_images and not options.generate_picture_images
     assert set(adapter.phase_seconds) >= {"conversion", "canonical_export", "primitive_extraction"}
@@ -76,6 +77,49 @@ def test_incomplete_conversion_does_not_export(tmp_path, docling):
     with pytest.raises(RuntimeError, match="partial_success"):
         DoclingAdapter(require_complete=True).parse(tmp_path / "source.pdf", tmp_path)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_table_reconstruction_can_be_disabled_without_enabling_ocr(tmp_path, docling):
+    DoclingAdapter(table_structure_enabled=False).parse(tmp_path / "source.pdf", tmp_path)
+    options = docling["options"]
+    assert options.do_table_structure is False and options.do_ocr is False
+    assert options.heading_hierarchy_options.enabled
+
+
+def test_fast_table_reconstruction_is_enabled(tmp_path, docling):
+    DoclingAdapter(table_former_mode="fast", table_structure_enabled=True).parse(tmp_path / "source.pdf", tmp_path)
+    options = docling["options"]
+    assert options.table_structure_options.mode == "fast"
+    assert options.do_table_structure is True
+    assert options.do_ocr is False
+
+
+def test_fast_table_reconstruction_requires_mode_support(tmp_path, docling, monkeypatch):
+    options = sys.modules["docling.datamodel.pipeline_options"].PdfPipelineOptions
+    monkeypatch.setattr(options.model_fields["table_structure_options"], "default_factory", lambda: SimpleNamespace())
+    options.model_rebuild(force=True)
+    with pytest.raises(RuntimeError, match="does not support TableFormer mode selection"):
+        DoclingAdapter(table_former_mode="fast").parse(tmp_path / "source.pdf", tmp_path)
+
+
+def test_page_callback_counts_successful_unique_pages_not_page_number(tmp_path, docling, monkeypatch):
+    converter = sys.modules["docling.document_converter"].DocumentConverter
+    original = converter.convert
+    def convert(self, path, progress_callback=None):
+        progress_callback(SimpleNamespace(kind="phase_started"))
+        for page, success in [(3, True), (3, True), (1, False), (2, True)]:
+            progress_callback(SimpleNamespace(kind="page_completed", page_no=page, total_pages=3, success=success))
+        return original(self, path)
+    monkeypatch.setattr(converter, "convert", convert)
+    observed = []
+    DoclingAdapter(on_page_progress=lambda done, total: observed.append((done, total))).parse(tmp_path / "source.pdf", tmp_path)
+    assert observed == [(1, 3), (1, 3), (1, 3), (2, 3)]
+
+
+def test_old_docling_without_callback_remains_compatible(tmp_path, docling):
+    observed = []
+    DoclingAdapter(on_page_progress=lambda *args: observed.append(args)).parse(tmp_path / "source.pdf", tmp_path)
+    assert observed == []
 
 
 def test_unsupported_tuning_fails_explicitly(tmp_path, docling, monkeypatch):

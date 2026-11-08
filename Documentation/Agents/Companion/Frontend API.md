@@ -69,9 +69,11 @@ validating, completed, failed, cancelled and interrupted. Snapshot includes
 A completed result contains text, typed segments, citations, coverage/warnings,
 model targets and provider usage when reported; cost may be null.
 
-Segments distinguish conversation, fact, subjective_memory, opinion, speculation
-and uncertainty. Citation IDs must refer to supplied authorized evidence. Memory
-citations are subjective. User message manifests include private `user_attachment` references with an
+New answers contain one `conversation` segment for the entire response; its
+`evidence_ids` identify supplied sources referenced by the model, not verified
+claim-level support. Older answers may retain other segment kinds. Memory evidence
+is subjective. `coverage` is `unknown` unless tool failure or partial Foundry
+context makes it `partial`. User message manifests include private `user_attachment` references with an
 `attachment_id` and content hash. Load their bytes only through the authenticated
 attachment content route; do not construct public media URLs. Chronicle references
 carry `section_id` (`note:revision:reply-or-zero:Unicode-offset`) for revision-aware
@@ -278,13 +280,27 @@ claim to have run another search. Missing timing is null, never an invented zero
 `evidence_ids` includes only results admitted to the synthesis evidence budget;
 excluded payloads are not published. Empty/failed tools remain visible.
 
+ShreckWorld tool calls may include `source_coverage` with
+`requested_source_count`, `searched_source_count`, `sources_without_ready_index`
+and `sources_requiring_reindex`. If any requested indexes are incompatible,
+`status` is `unavailable` and `reason` is `incompatible_index`; if none are
+incompatible but some are not ready, the reason is `index_not_ready`. Compatible
+sources may still return evidence in either case. The reason and counts also
+appear in the terminal `retrieval.status` event; existing status values are
+unchanged. An older or malformed service response without coverage is
+`unavailable`, not `empty`. Reindex affected sources through ShreckWorld.
+
 `result.evidence` contains all supplied evidence, including uncited records.
-`result.segments[].evidence_ids` maps answer passages to that evidence; the existing
-`citations` field remains unchanged. Evidence includes excerpts, structured evidence,
+For new answers, the single segment's `evidence_ids` maps the entire answer to
+sources selected by the model using optional inline markers. The backend strips
+markers from displayed text and ignores unknown markers with a warning; missing
+markers yield no citations, not a failed answer. The existing `citations` field
+keeps its shape. Evidence includes excerpts, structured evidence,
 source references/revisions and navigation. Attached images and Foundry context
 are supplied context, not retrieval tool executions. Source access/revisions for
 all supplied evidence are checked before final commit. Citation links describe
-model-declared support and do not independently prove semantic grounding.
+model-declared answer-level support and do not prove semantic grounding or identify
+which particular statement a source supports.
 
 `GET /users/me/character-companion/chats/{chat_id}/messages` adds nullable
 `answer_details` to each message: `{tool_calls, evidence, segments, coverage,

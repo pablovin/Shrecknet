@@ -4,8 +4,10 @@ import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import ipaddress
+import logging
 import socket
 import time
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 import httpx
 from app.core.config_store import get_settings
@@ -17,6 +19,13 @@ from app.schemas.character_companion import Evidence
 from app.models.character_companion import utcnow
 
 CATEGORIES = {"foundry": "user_provided", "user_attachment": "user_provided", "atlas": "canonical_world", "shreckworld": "document_evidence", "chronicle": "chronicle_record", "web": "external_web", "character_memory": "subjective_memory"}
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ScopedEvidence:
+    rows: list[dict]
+    source_coverage: dict[str, int]
 
 
 def evidence(tool, identifier, text, *, title="Source", reference=None, scope=None, rank=1, structured=None):
@@ -64,6 +73,10 @@ class CompanionRetrieval:
         followup = normalized.startswith(("what about ", "tell me more", "explain that", "why is that", "and then"))
         if age > 300 or not (normalized == previous["query"].casefold().strip() or followup):
             return None
+        # A previous partial rules search cannot prove that the current index is
+        # compatible, even when its returned passages remain readable.
+        if tool == "shreckworld":
+            return None
         rows = [row for row in previous["evidence"] if row.get("source_type") == tool][:6]
         if not rows:
             return None
@@ -76,11 +89,20 @@ class CompanionRetrieval:
     async def retrieve(self, tool, query):
         start = time.monotonic()
         try:
-            rows = await asyncio.wait_for(getattr(self, tool)(query), timeout=self.settings.companion_tool_timeout_s)
-            return {"tool": tool, "status": "ok" if rows else "empty", "evidence": rows[:6], "elapsed_ms": round((time.monotonic()-start)*1000), "coverage": "partial"}
+            result = await asyncio.wait_for(getattr(self, tool)(query), timeout=self.settings.companion_tool_timeout_s)
+            rows = result.rows if isinstance(result, ScopedEvidence) else result
+            response = {"tool": tool, "status": "ok" if rows else "empty", "evidence": rows[:6], "elapsed_ms": round((time.monotonic()-start)*1000), "coverage": "partial"}
+            if isinstance(result, ScopedEvidence):
+                response["source_coverage"] = result.source_coverage
+                if result.source_coverage["sources_requiring_reindex"]:
+                    response.update(status="unavailable", reason="incompatible_index")
+                elif result.source_coverage["sources_without_ready_index"]:
+                    response.update(status="unavailable", reason="index_not_ready")
+            return response
         except asyncio.TimeoutError:
             return {"tool": tool, "status": "timed_out", "evidence": [], "coverage": "unknown"}
-        except Exception:
+        except Exception as exc:
+            logger.warning("Companion retrieval %s failed: %s", tool, type(exc).__name__)
             return {"tool": tool, "status": "unavailable", "evidence": [], "coverage": "unknown"}
 
     async def character_memory(self, query):
@@ -122,8 +144,13 @@ class CompanionRetrieval:
             response = await client.post(f"{path}/companion-evidence", json=payload, headers={"Authorization": f"Bearer {grant(self.turn, 'shreckworld')}"})
             response.raise_for_status()
             data = response.json()
-        return [evidence("shreckworld", str(row.get("library_item_id", identifier)) + ":" + str(row.get("chunk_id") or row.get("id") or i), row.get("excerpt") or row.get("text") or "", title=row.get("title") or "Book passage",
+        rows = [evidence("shreckworld", str(row.get("library_item_id", identifier)) + ":" + str(row.get("chunk_id") or row.get("id") or i), row.get("excerpt") or row.get("text") or "", title=row.get("title") or "Book passage",
                          reference=row, scope={"ontology_id" if direct else "shreckworld_id": identifier}, rank=i) for i, row in enumerate(data.get("citations") or data.get("evidence") or [], 1)]
+        coverage = data["source_coverage"]
+        keys = ("requested_source_count", "searched_source_count", "sources_without_ready_index", "sources_requiring_reindex")
+        if any(type(coverage[key]) is not int or coverage[key] < 0 for key in keys):
+            raise ValueError("invalid_source_coverage")
+        return ScopedEvidence(rows, {key: coverage[key] for key in keys})
 
     async def chronicle(self, query):
         if not self.settings.companion_chronicles_url:

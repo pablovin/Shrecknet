@@ -17,7 +17,7 @@ from app.models.world import World
 from app.schemas.character_companion import ChatCreate, FoundryContext, TurnCreate
 from app.services.character_companion_service import CharacterCompanionService
 from app.services.companion_foundry_context import foundry_evidence, resolve_foundry_scope
-from app.jobs.companion.contracts import Answer
+from app.jobs.companion.contracts import build_answer
 
 
 def snapshot():
@@ -68,8 +68,7 @@ def test_provenance_and_citations_do_not_promote_client_claims():
     assert rows[1]["reference"]["uuid"] == "Actor.hero"
     assert rows[1]["structured_evidence"]["fields"][0]["value"] == 8
     assert rows[1]["evidence_id"] == foundry_evidence(value)[1]["evidence_id"]
-    answer = Answer.model_validate({"segments": [{"id": "s1", "kind": "fact", "text": "The snapshot shows 8 Power Points.", "evidence_ids": [rows[1]["evidence_id"]]}], "coverage": "complete", "warnings": []})
-    result = answer.final(rows, [])
+    result = build_answer("The snapshot shows 8 Power Points.[[source:2]]", rows, [])
     assert result["coverage"] == "partial"
     assert result["citations"][0]["source_type"] == "foundry"
     assert result["warnings"]
@@ -211,7 +210,7 @@ async def test_snapshot_reaches_synthesis_and_committed_history(session_maker, m
             context = json.loads(messages[1]["content"])
             captured.append(context)
             source = next(row for row in context["evidence"] if row["reference"].get("uuid") == "Actor.hero")
-            yield json.dumps({"segments": [{"id": "s1", "kind": "fact", "text": "The attached snapshot shows 8 Power Points.", "evidence_ids": [source["evidence_id"]]}], "coverage": "partial", "warnings": []})
+            yield "The attached snapshot shows 8 Power Points." + source["citation_marker"]
 
         async def aclose(self):
             pass

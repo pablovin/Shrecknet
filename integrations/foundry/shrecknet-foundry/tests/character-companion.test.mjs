@@ -88,6 +88,29 @@ test("chat quota and availability gate creation while the hero image rejects scr
   assert.equal(w.context().canSend, false);
 });
 
+test("rules index warnings remain visible in historical messages", () => {
+  const { w } = fixture(async () => ({}));
+  w.messages = [{ role: "assistant", content: "Partial answer", answer_details: { tool_calls: [
+    { tool: "shreckworld", status: "unavailable", reason: "incompatible_index",
+      source_coverage: { requested_source_count: 2, searched_source_count: 1 } },
+  ] } }];
+  const message = w.context().messages[0];
+  assert.equal(message.indexWarnings[0].incompatible, true);
+  assert.equal(message.indexWarnings[0].source_coverage.searched_source_count, 1);
+});
+
+test("web permission follows provider capability and explicit opt-out", async () => {
+  for (const [available, allowed, expected] of [[true, true, "allow"], [true, false, "disabled"], [false, true, "disabled"]]) {
+    let body;
+    const { app, w } = fixture(async (path, options) => { body = options.body; return { turn_id: "turn" }; });
+    w.capabilities = { tools: { web: { available } } };
+    w.state().webAllowed = allowed;
+    await companionActions.sendCompanionMessage.call(app);
+    assert.equal(body.tools.web, expected);
+    assert.equal(w.context().webAvailable, available);
+  }
+});
+
 test("pagination prepends chronological history and keeps the server cursor opaque", async () => {
   const { app, w } = fixture(async (path) => {
     assert.equal(path, "/chats/chat/messages?limit=100&before=a%2Fb");

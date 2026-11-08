@@ -61,17 +61,28 @@ test("ambiguous contextual admissions retry the original snapshot and key despit
     if (calls.length === 1) throw new Error("connection lost");
     return { turn_id: "turn" };
   });
+  w.capabilities = { tools: { web: { available: true } } };
   docs.set("Actor.bao", actor());
   await w.attach("Actor.bao");
   await companionActions.sendCompanionMessage.call(app);
   docs.get("Actor.bao").name = "Changed after admission";
   docs.get("Actor.bao")._stats.modifiedTime = 99;
+  w.state().webAllowed = false;
   await companionActions.sendCompanionMessage.call(app);
   assert.deepEqual(calls[0], calls[1]);
   assert.equal(calls[0].body.foundry_context.documents[0].name, "Bao");
   assert.equal(calls[0].body.foundry_context.table, null);
+  assert.equal(calls[0].body.tools.web, "allow");
   assert.equal(w.turnId, "turn");
   assert.equal(w.pendingTurn, null);
+});
+
+test("web permission does not broaden detached Foundry searches to unrelated world lore", async () => {
+  let body;
+  const { app, w } = fixture(async (path, options) => { body = options.body; return { turn_id: "turn" }; });
+  w.capabilities = { tools: { web: { available: true } } };
+  await companionActions.sendCompanionMessage.call(app);
+  assert.deepEqual(body.tools, { allowed: ["character_memory", "web"], web: "allow" });
 });
 
 test("fresh turns refresh documents and revoked access prevents transmission", async () => {

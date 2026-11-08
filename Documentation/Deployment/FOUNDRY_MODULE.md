@@ -300,6 +300,16 @@ expands rename/delete controls. Returned source titles and excerpts are availabl
 in expandable source panels, rendered as escaped text. Refresh respects a
 selection made in another client instead of reopening the old character.
 
+Completed messages also show when ShreckWorld sources require reindexing or have
+no ready index, including how many requested sources were searched. A partial
+result can still cite passages from compatible sources.
+
+The **Allow web search** control is selected by default when the Companion
+capabilities report a configured provider; clear it to disable web search for
+subsequent questions in that chat. It is disabled when web search is unavailable.
+The choice is kept in memory per chat, not persisted across sign-out. Ambiguous
+admission retries keep the original web permission and payload.
+
 The character chooser updates the account's global selection with its current
 optimistic version. Opening a chat for a different character also selects that
 character; chats stay bound to their original character. Unavailable characters

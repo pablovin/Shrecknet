@@ -261,6 +261,8 @@ class ToolCallRead(BaseModel):
     elapsed_ms: float | None = None
     returned_count: int
     evidence_ids: list[str]
+    reason: Literal["incompatible_index", "index_not_ready"] | None = None
+    source_coverage: dict[str, int] | None = None
 
 
 class AnswerSegmentRead(BaseModel):

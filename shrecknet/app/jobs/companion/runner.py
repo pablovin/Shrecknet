@@ -15,7 +15,7 @@ from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient, LLMProviderUnavailableError
 from app.integrations.companion.retrieval import CompanionRetrieval, web_available
 from app.jobs.companion.prompts import ROUTER, SYNTHESIS, RAPPORT, IMAGE_INTERPRETATION, INTERIM
-from app.jobs.companion.contracts import Answer, RapportProposal, provisional_text
+from app.jobs.companion.contracts import RapportProposal, build_answer, provisional_text
 from app.jobs.elder.context_budget import estimate_tokens
 from app.models.character_companion import CompanionTurn, CompanionOutbox, CompanionChat, CompanionMessage, CompanionRapport, CompanionRapportAudit, CompanionAttachment, utcnow
 from app.repositories.character_companion_repository import CompanionRepository, record, fail
@@ -206,7 +206,7 @@ async def execute_turn(turn, lease):
             for task in asyncio.as_completed(tasks, timeout=settings.companion_retrieval_timeout_s):
                 item = await task
                 results.append(item)
-                await mutate(turn.id, lease, event="retrieval.status", payload={key: item[key] for key in ("tool", "status")})
+                await mutate(turn.id, lease, event="retrieval.status", payload={key: item[key] for key in ("tool", "status", "reason", "source_coverage") if key in item})
                 for source in item["evidence"]:
                     if len(evidence) >= 20 or sum(estimate_tokens(json.dumps(e)) for e in evidence) + estimate_tokens(json.dumps(source)) > settings.companion_max_evidence_tokens:
                         break
@@ -226,7 +226,9 @@ async def execute_turn(turn, lease):
         metrics["retrieval_ms"]=round((time.monotonic()-retrieval_started)*1000,2)
         metrics["tool_results"]=[{key:row[key] for key in ("tool","status")} | {"cache_hit": row.get("cache_hit",False)} for row in results]
         context = {"identity_description": identity["character_agent"]["identity_description"], "personality_context": identity.get("personality_context"),
-                   "rapport": rapport, "query": turn.request["text"], "context": turn.request.get("context"), "recent": recent, "evidence": evidence}
+                   "rapport": rapport, "query": turn.request["text"], "context": turn.request.get("context"), "recent": recent,
+                   "retrieval_outcomes": [{key: row[key] for key in ("tool", "status", "reason", "source_coverage") if key in row} for row in results],
+                   "evidence": [{**item, "citation_marker": f"[[source:{index}]]"} for index, item in enumerate(evidence, 1)]}
         serialized = json.dumps(context, ensure_ascii=False)
         while context["recent"] and estimate_tokens(serialized) + estimate_tokens(SYNTHESIS) > settings.companion_max_evidence_tokens + 12000:
             # Drop only complete oldest exchanges to reserve the established
@@ -251,10 +253,13 @@ async def execute_turn(turn, lease):
                     await mutate(turn.id, lease, delta=pending, event="response.delta", payload={"segment_id": "draft", "delta": pending, "provisional": True})
                     delivered = projected
                     pending = ""
+        projected = provisional_text(raw, complete=True)
+        if projected.startswith(delivered):
+            pending = projected[len(delivered):]
         if pending:
             await mutate(turn.id, lease, delta=pending, event="response.delta", payload={"segment_id": "draft", "delta": pending, "provisional": True})
         await mutate(turn.id, lease, stage="validating")
-        result = Answer.model_validate_json(raw).final(evidence, results, query=retrieval_query)
+        result = build_answer(raw, evidence, results, query=retrieval_query)
         result["model_targets"]={field:getattr(settings,field).model_dump() for field in COMPANION_MODEL_FIELDS}
         result["usage"]=getattr(llm,"last_response_metadata",{}).get("usage")
         result["cost"]=None
@@ -374,9 +379,8 @@ async def process_outbox(identifier):
                     from pydantic import ValidationError
                     if isinstance(exc, ValidationError):
                         failure["validation_rules"] = [row["type"] for row in exc.errors(include_input=False, include_context=False)]
-                    allowed_rules = {"Missing evidence", "Unknown evidence ID", "Objective source cannot be a subjective memory", "Subjective memory cannot establish objective fact", "Duplicate segment IDs"}
-                    if isinstance(exc, ValueError) and str(exc) in allowed_rules:
-                        failure["validation_rule"] = str(exc)
+                    if type(exc) is ValueError and str(exc) == "empty_synthesis":
+                        failure["validation_rule"] = "empty_synthesis"
                     current.metrics = {**(current.metrics or {}), **failure}
                     logger.warning("companion_turn_failed turn_id=%s stage=%s error_type=%s", aggregate, current.status, type(exc).__name__)
                     await CompanionRepository(session).terminal(current, "failed", error={"code": "llm_provider_unavailable" if isinstance(exc, LLMProviderUnavailableError) else "companion_execution_failed", "retryable": True}, lease=lease)

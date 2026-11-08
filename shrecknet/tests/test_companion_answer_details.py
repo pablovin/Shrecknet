@@ -1,23 +1,16 @@
 """Delivered evidence provenance, budget exclusions and private history projection."""
 import pytest
 from app.integrations.companion.retrieval import evidence
-from app.jobs.companion.contracts import Answer
+from app.jobs.companion.contracts import build_answer
 from app.models.character_companion import CompanionChat, CompanionTurn, CompanionMessage
 from app.models.user import User
 from app.repositories.character_companion_repository import CompanionRepository
 from app.schemas.character_companion import MessageRead
 
 
-def answer():
-    return Answer.model_validate({'segments': [
-        {'id': 's1', 'kind': 'fact', 'text': 'The forest is old.', 'evidence_ids': ['atlas:one']},
-        {'id': 's2', 'kind': 'opinion', 'text': 'I would visit.', 'evidence_ids': []},
-    ], 'coverage': 'complete', 'warnings': []})
-
-
 def test_tool_details_distinguish_supplied_uncited_and_budget_excluded_evidence():
     rows = [dict(evidence('atlas', name, name), evidence_id=f'atlas:{name}') for name in ('one','two','excluded')]
-    result = answer().final(rows[:2], [
+    result = build_answer('The forest is old.[[source:1]] I would visit.', rows[:2], [
         {'tool': 'atlas', 'status': 'ok', 'evidence': rows, 'cache_hit': True, 'elapsed_ms': 0},
         {'tool': 'web', 'status': 'timed_out', 'evidence': []},
         {'tool': 'chronicle', 'status': 'empty', 'evidence': []},
@@ -42,7 +35,7 @@ async def test_message_details_are_owner_only_and_legacy_and_user_messages_stay_
         session.add(chat)
         await session.flush()
         source = dict(evidence('atlas','one','The forest is old.'), evidence_id='atlas:one')
-        result = answer().final([source], [{'tool':'atlas','status':'ok','evidence':[source]}])
+        result = build_answer('The forest is old.[[source:1]]', [source], [{'tool':'atlas','status':'ok','evidence':[source]}])
         turn = CompanionTurn(user_id=user.id, character_agent_id='fiona', chat_id=chat.id, request={}, principal={}, status='completed', result=result)
         session.add(turn)
         await session.flush()

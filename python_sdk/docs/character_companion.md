@@ -109,7 +109,15 @@ Completed `turn()` results preserve `result.tool_calls`, `result.evidence` and
 `coverage` and `warnings`; old replies and user messages return null. Match each
 segment's `evidence_ids` to evidence records to inspect excerpts, references and
 structured data, then match tool call `evidence_ids` to see which retrieval supplied
-them. `returned_count` may exceed the supplied IDs when the evidence budget excludes
+them. New answers have one `conversation` segment for the whole answer: its citations
+do not establish claim-level support, and optional source markers may be absent.
+Coverage is `unknown` unless source failure or partial Foundry context makes it
+`partial`; older answers retain their original segment types and coverage.
+`returned_count` may exceed the supplied IDs when the evidence budget excludes
 results. `cache_hit` indicates reuse; a query on such a call is the current request,
 not a fresh search. These are owner-only historical snapshots, not proof of semantic
 grounding or continued source access. See the canonical [API contract](../../Documentation/Agents/Companion/Frontend%20API.md#answer-tool-and-evidence-breakdown).
+
+ShreckWorld tool calls may include `source_coverage` counts and an `unavailable`
+reason of `incompatible_index` or `index_not_ready`. Compatible evidence may
+still be present; reindex affected sources before relying on full coverage.

@@ -46,17 +46,26 @@ The worker pipeline is:
    excerpts become external-web evidence. Its generated summary is not evidence.
    An optional interim model can react concurrently using only
    identity and the question. Its output is provisional and excluded from rapport.
-5. Stage 2 streams one embodied structured synthesis with provider search disabled;
+5. Stage 2 streams one embodied prose answer with provider search disabled;
    image interpretation also disables provider search. Text deltas are provisional.
-   Validate segment types, supplied citation IDs, current source access/revisions,
-   originating session and character availability before committing the final.
+   The backend removes optional inline source markers, builds the response envelope
+   and accepts only markers for supplied evidence. It rechecks current source
+   access/revisions, the originating session and character availability before commit.
 6. Commit the delivered user/assistant exchange, final event and rapport outbox in
    one transaction. Stage 3 evaluates rapport separately with version/generation
    checks and an audit trail.
 
 Prompt contracts live beside the job in `jobs/companion/prompts.py`. Only Stage 2
-produces final public output. Deterministic validators enforce structural citation
-integrity; they do not prove semantic grounding or character fidelity.
+produces final public output. Deterministic marker resolution enforces reference integrity; it does not prove
+semantic grounding, claim classification or character fidelity.
+
+The final result has one `conversation` segment representing the whole answer;
+its cited evidence is model-declared support for the answer, not a verified
+claim-by-claim attribution. Unknown complete source markers are removed and
+reported in `warnings`; missing markers do not fail an answer. `coverage` is
+`unknown` unless a retrieval failure or partial Foundry snapshot makes it
+`partial`. Empty output, provider errors, cancellation and authorization or
+source revalidation failures can still prevent completion.
 
 Atlas uses the shared Elder retrieval executor without Elder synthesis. Character
 memory uses the shared CharacterAgent ranking service and only the selected
@@ -68,6 +77,14 @@ uses a configured JSON HTTP provider; it does not fetch arbitrary result pages.
 Evidence is capped at twenty records and the configured estimated token budget.
 The final context also has a bounded token estimate; model-specific context-window
 fit and image token costs still require deployment validation.
+
+ShreckWorld reports the number of sources searched, not indexed, and requiring
+reindexing for the active embedding fingerprint. The Companion preserves those
+counts and passes partial-search outcomes to synthesis; compatible passages can
+still be used. An incompatible or unready index is not reported as an empty
+search. Reindex affected sources with ShreckWorld's existing indexing workflow.
+Rules evidence is not reused from the prior turn because the active fingerprint
+or source availability may have changed.
 
 ## Recovery, privacy and operations
 

@@ -340,43 +340,25 @@ Shrecknet. Shared extraction must keep Elder's existing context/answer output.
    rapport, conversation/topic, page context and bounded evidence/images. Identity
    affects interpretation, priorities, opinions, disagreement and curiosity as well
    as language. No mandatory follow-up question or extra character renderer.
-7. **Validation and completion, backend only:** validate output shape, evidence IDs,
-   claim categories, source scope/revision and citation associations. Revalidate
-   access before commit. Commit a validated final exchange, citation manifest,
-   terminal events and rapport outbox atomically. Mark unsupported output failed
-   without committing its draft as a factual answer. Ordinary source failures can
-   still produce a valid answer with explicitly limited coverage.
+7. **Validation and completion, backend only:** construct the result from prose,
+   resolve optional source markers against supplied evidence, and revalidate source
+   access/revisions before commit. Commit the final exchange, citation manifest,
+   terminal events and rapport outbox atomically. Ordinary source failures can
+   still produce an answer with explicitly limited coverage.
 8. **Stage 3 — rapport/verify, asynchronous:** evaluate completed exchange through
    the character's identity; apply the ordered bounded contract above. Publish
    `rapport.updated` or a diagnostic failure event through the same user event log.
 
 Prompt modules must list this execution order, inputs/outputs, optional image and
 router branches, concurrent tools, bounded retry paths and backend-only steps.
-Every prompt gets the repository-required maintainer header and full explicit
-input/JSON output contract. Image interpretation/router/rapport have strict local
-Pydantic schemas; synthesis uses a typed streaming answer envelope:
-
-```json
-{
-  "segments": [
-    {"id": "s1", "kind": "fact", "text": "The cited record describes the meeting.", "evidence_ids": ["atlas:node:revision"]},
-    {"id": "s2", "kind": "opinion", "text": "I find that choice troubling.", "evidence_ids": []}
-  ],
-  "coverage": "partial",
-  "warnings": []
-}
-```
-
-Segment kind: `conversation`, `fact`, `subjective_memory`, `opinion`, `speculation`,
-`uncertainty`. Fact/memory segments require supplied evidence IDs and compatible
-categories; opinions/speculation must be explicit and cannot masquerade as sources.
-Only `text` values become provisional response deltas as the structured stream
-arrives; never render JSON scaffolding or provider reasoning. The final manifest
-is constructed from validated segments, never by inventing source links.
-Deterministic validation proves reference integrity, not semantic entailment;
-grounding/personality evaluations remain required. No automatic second synthesis
-or repair call in the normal path; invalid final output produces a recoverable
-failure. Optional bounded repair can be evaluated later as a separately measured path.
+Every prompt gets the repository-required maintainer header and explicit input and
+output contract. Image interpretation/router/rapport retain structured outputs;
+synthesis produces prose and optional `[[source:N]]` markers. The backend strips
+markers from provisional text and builds one `conversation` segment and the
+existing citation envelope from known markers. Unknown markers produce warnings,
+not invented source links. These answer-level links do not establish claim types or
+semantic entailment; grounding/personality evaluations remain required. No second
+synthesis or repair call is made; provider and access failures can still fail a turn.
 
 Source text, images, page selections and past messages are untrusted data. They
 cannot expand tool permissions, issue write commands, override system rules or

@@ -10,7 +10,7 @@ from app.models.user import User
 from app.models.character_companion import CompanionTurn, CompanionMessage
 from app.services.character_companion_service import CharacterCompanionService
 from app.schemas.character_companion import ChatCreate, TurnCreate, VersionWrite
-from app.jobs.companion.contracts import RapportProposal, Answer, provisional_text
+from app.jobs.companion.contracts import RapportProposal, build_answer, provisional_text
 from app.repositories.character_companion_repository import cursor, decode_cursor
 
 
@@ -169,16 +169,56 @@ def test_rapport_rejects_duplicate_dimension_nonfinite_and_coercion():
         RapportProposal.model_validate({'changes':[change]})
 
 
-def test_reference_validation_and_partial_json_projection():
-    raw = json.dumps({'segments':[{'id':'s1','kind':'fact','text':'A fact','evidence_ids':['missing']}],'coverage':'complete','warnings':[]})
-    assert provisional_text(raw) == 'A fact'
-    with pytest.raises(ValueError, match='Unknown evidence'):
-        Answer.model_validate_json(raw).final([],[])
-    assert provisional_text('{"segments":[{"text":"Hel') == 'Hel'
+def test_reference_validation_and_stream_projection():
+    from app.integrations.companion.retrieval import evidence
+    sources = [evidence('atlas', 'one', 'A fact')]
+    raw = 'A fact [[source:1]] and another [[source:99]].'
+    result = build_answer(raw, sources, [])
+    assert result['text'] == 'A fact  and another .'
+    assert result['segments'][0]['evidence_ids'] == [sources[0]['evidence_id']]
+    assert len(result['citations']) == 1
+    assert result['warnings'] == ['The response contained an unknown source marker; it was not cited.']
+    for index in range(len(raw) + 1):
+        assert result['text'].startswith(provisional_text(raw[:index]))
+    assert provisional_text('Hello [[sou') == 'Hello '
+    assert provisional_text('Hello [[source:1', complete=True) == 'Hello [[source:1'
+    assert build_answer('Hello [[source:1', [], [])['warnings']
+    with pytest.raises(ValueError, match='empty_synthesis'):
+        build_answer('[[source:1]]', sources, [])
     value = cursor(4,123)
     assert decode_cursor(value,4) == 123
     with pytest.raises(HTTPException):
         decode_cursor(value,5)
+
+
+def test_plain_answer_sources_are_optional_deduplicated_and_never_invented():
+    from app.integrations.companion.retrieval import evidence
+    sources = [evidence('character_memory', 'one', 'A memory'), evidence('atlas', 'two', 'A record')]
+    result = build_answer('Remembered. [[source:1]][[source:1]] Record. [[source:2]][[source:bad]]', sources, [])
+    assert result['text'] == 'Remembered.  Record. '
+    assert [citation['evidence_id'] for citation in result['citations']] == [row['evidence_id'] for row in sources]
+    assert result['coverage'] == 'unknown'
+    assert result['warnings'] == ['The response contained an unknown source marker; it was not cited.']
+    plain = build_answer('Hello! No structured output is needed.', sources, [])
+    assert plain['segments'] == [{'id': 's1', 'kind': 'conversation', 'text': plain['text'], 'evidence_ids': []}]
+    assert not plain['citations']
+
+
+@pytest.mark.parametrize('raw', [
+    'Hello [[source:1]] friend.',
+    'Unicode café [brackets] [[source:99]]!\n',
+    'Incomplete [[source:1',
+    'A [[source:1]][[source:2]] B',
+    'Text [[[[source:1]]source:1]] after',
+])
+def test_stream_projection_is_append_only_at_every_chunk_boundary(raw):
+    final = provisional_text(raw, complete=True)
+    previous = ''
+    for index in range(len(raw) + 1):
+        projected = provisional_text(raw[:index])
+        assert projected.startswith(previous)
+        assert final.startswith(projected)
+        previous = projected
 
 
 @pytest.mark.asyncio
@@ -223,8 +263,8 @@ async def test_durable_worker_completion_and_duplicate_rapport_delivery(session_
         async def aclose(self):pass
         async def stream_chat(self,**kwargs):
             LLM.calls+=1
-            raw=json.dumps({'segments':[{'id':'s1','kind':'fact' if invalid_answer else 'conversation','text':'Hello, friend.','evidence_ids':[rows[0]['evidence_id']] if retrieved and not invalid_answer else []}],'coverage':'complete','warnings':[]})
-            for part in (raw[:45],raw[45:60],raw[60:]):yield part
+            raw='' if invalid_answer else 'Hello, friend.' + ('[[source:1]]' if retrieved else '')
+            for part in (raw[:15], raw[15:20], raw[20:]):yield part
         async def chat(self,**kwargs):return '{"changes":[]}'
     monkeypatch.setattr(runner,'ShreckLLMClient',LLM)
     async with session_maker() as session:
@@ -242,7 +282,8 @@ async def test_durable_worker_completion_and_duplicate_rapport_delivery(session_
         if invalid_answer:
             assert turn.status=='failed' and turn.result is None
             assert turn.metrics['failure_stage']=='validating'
-            assert turn.metrics['validation_rule']=='Missing evidence'
+            assert turn.metrics['error_type']=='ValueError'
+            assert turn.metrics['validation_rule']=='empty_synthesis'
             assert turn.rapport_status=='not_applicable'
             assert not list((await session.execute(select(CompanionMessage).where(CompanionMessage.turn_id==turn.id,CompanionMessage.role=='assistant'))).scalars())
             assert LLM.calls==1

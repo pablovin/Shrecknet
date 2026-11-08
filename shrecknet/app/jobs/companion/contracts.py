@@ -1,75 +1,69 @@
-"""Strict model outputs and deterministic reference/evidence validation."""
-import json
+"""Deterministic answer construction and strict rapport proposal validation."""
 import re
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from app.schemas.character_companion import DIMENSIONS
 
 
-class Segment(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    id: str = Field(pattern=r"^s(?:[1-9]|[12][0-9]|30)$")
-    kind: Literal["conversation", "fact", "subjective_memory", "opinion", "speculation", "uncertainty"]
-    text: str = Field(min_length=1, max_length=16000)
-    evidence_ids: list[str] = Field(max_length=20)
+MARKER_PREFIX = "[[source:"
+MARKER = re.compile(r"\[\[source:([^\]\r\n]*)\]\]")
 
 
-class Answer(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    segments: list[Segment] = Field(min_length=1, max_length=30)
-    coverage: Literal["complete", "partial", "unknown"]
-    warnings: list[str] = Field(max_length=20)
-
-    @model_validator(mode="after")
-    def unique(self):
-        if len({row.id for row in self.segments}) != len(self.segments):
-            raise ValueError("Duplicate segment IDs")
-        return self
-
-    def final(self, evidence, tool_results, *, query=None):
-        by_id = {item["evidence_id"]: item for item in evidence}
-        citations = []
-        for segment in self.segments:
-            if segment.kind in {"fact", "subjective_memory"} and not segment.evidence_ids:
-                raise ValueError("Missing evidence")
-            for identifier in segment.evidence_ids:
-                if identifier not in by_id:
-                    raise ValueError("Unknown evidence ID")
-                item = by_id[identifier]
-                if segment.kind == "subjective_memory" and item["source_type"] != "character_memory":
-                    raise ValueError("Objective source cannot be a subjective memory")
-                if segment.kind == "fact" and item["source_type"] == "character_memory":
-                    raise ValueError("Subjective memory cannot establish objective fact")
-                citations.append({"citation_id": f"c{len(citations)+1}", "segment_ids": [segment.id], **item})
-        # Persist only the bounded evidence actually supplied to synthesis. Tool
-        # payloads excluded by the budget remain counts, never hidden raw data.
-        supplied = set(by_id)
-        tool_calls = []
-        for row in tool_results:
-            returned = row.get("evidence", [])
-            tool_calls.append({
-                "tool": row["tool"], "status": row["status"], "query": query,
-                "cache_hit": row.get("cache_hit", False), "elapsed_ms": row.get("elapsed_ms"),
-                "returned_count": len(returned),
-                "evidence_ids": [item["evidence_id"] for item in returned if item["evidence_id"] in supplied],
-            })
-        snapshot_partial = any(row["source_type"] == "foundry" and row["coverage"]["status"] != "complete" for row in evidence)
-        partial = snapshot_partial or any(row["status"] not in {"ok", "empty"} for row in tool_results)
-        return {"text": "\n\n".join(row.text for row in self.segments), "segments": [row.model_dump() for row in self.segments],
-                "citations": citations, "evidence": evidence, "tool_calls": tool_calls, "coverage": "partial" if partial else self.coverage,
-                "warnings": self.warnings + (["Foundry snapshot coverage is partial; missing game state remains unknown."] if snapshot_partial else []) + [f"{row['tool']}: {row['status']}" for row in tool_results if row["status"] != "ok"]}
+def provisional_text(raw, *, complete=False):
+    """Hide source markers, including prefixes split across streaming chunks."""
+    if not complete:
+        start = raw.rfind(MARKER_PREFIX)
+        if start != -1 and "]]" not in raw[start:]:
+            raw = raw[:start]
+        else:
+            for size in range(len(MARKER_PREFIX) - 1, 0, -1):
+                if raw.endswith(MARKER_PREFIX[:size]):
+                    raw = raw[:-size]
+                    break
+    return MARKER.sub("", raw)
 
 
-def provisional_text(raw):
-    """Project only complete/partial JSON text strings; never stream scaffolding."""
-    parts = []
-    for match in re.finditer(r'"text"\s*:\s*"((?:[^"\\]|\\.)*)', raw):
-        value = match.group(1)
-        try:
-            parts.append(json.loads('"' + value + '"'))
-        except ValueError:
-            pass  # Split escape/unicode sequence: wait for another provider chunk.
-    return "\n\n".join(parts)
+def build_answer(raw, evidence, tool_results, *, query=None):
+    text = provisional_text(raw, complete=True)
+    if not text.strip():
+        raise ValueError("empty_synthesis")
+    aliases = {str(index): item for index, item in enumerate(evidence, 1)}
+    cited = []
+    invalid_marker = False
+    for match in MARKER.finditer(raw):
+        item = aliases.get(match.group(1))
+        if item is None:
+            invalid_marker = True
+        elif item["evidence_id"] not in {source["evidence_id"] for source in cited}:
+            cited.append(item)
+    citations = [{"citation_id": f"c{index}", "segment_ids": ["s1"], **item}
+                 for index, item in enumerate(cited, 1)]
+    supplied = {item["evidence_id"] for item in evidence}
+    tool_calls = []
+    for row in tool_results:
+        returned = row.get("evidence", [])
+        call = {
+            "tool": row["tool"], "status": row["status"], "query": query,
+            "cache_hit": row.get("cache_hit", False), "elapsed_ms": row.get("elapsed_ms"),
+            "returned_count": len(returned),
+            "evidence_ids": [item["evidence_id"] for item in returned if item["evidence_id"] in supplied],
+        }
+        for key in ("reason", "source_coverage"):
+            if key in row:
+                call[key] = row[key]
+        tool_calls.append(call)
+    snapshot_partial = any(row["source_type"] == "foundry" and row["coverage"]["status"] != "complete" for row in evidence)
+    partial = snapshot_partial or any(row["status"] not in {"ok", "empty"} for row in tool_results)
+    warnings = (["Foundry snapshot coverage is partial; missing game state remains unknown."] if snapshot_partial else [])
+    warnings += [f"{row['tool']}: {row.get('reason', row['status'])}" for row in tool_results if row["status"] != "ok"]
+    if invalid_marker:
+        warnings.append("The response contained an unknown source marker; it was not cited.")
+    if MARKER_PREFIX in text:
+        warnings.append("The response contained an incomplete source marker.")
+    return {"text": text, "segments": [{"id": "s1", "kind": "conversation", "text": text,
+                                       "evidence_ids": [item["evidence_id"] for item in cited]}],
+            "citations": citations, "evidence": evidence, "tool_calls": tool_calls,
+            "coverage": "partial" if partial else "unknown", "warnings": warnings}
 
 
 class RapportEvidence(BaseModel):

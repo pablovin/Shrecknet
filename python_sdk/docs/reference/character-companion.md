@@ -150,5 +150,9 @@ quota enforcement requires a backend rollback. Never delete excess legacy chats.
 
 Answer origins: `turn()` preserves `result.tool_calls`; `messages()` preserves
 nullable `answer_details` with tool calls, supplied evidence and answer segments.
+New answers use one whole-answer `conversation` segment; its citations are not
+verified claim-level attribution.
+ShreckWorld tool calls can additionally include `source_coverage` and a reason
+of `incompatible_index` or `index_not_ready`.
 See [the workflow guide](../character_companion.md#inspect-answer-origins) for
 matching evidence IDs, cache semantics and compatibility.

@@ -23,8 +23,11 @@ Compose's `shreckdoc` additional build context; local installs must install
 
 ## Identity and API
 
-The service lives in `shreckworld/` and Compose exposes port `8121` (container
-`8120`). Shrecknet is the sole identity provider. ShreckWorld validates the
+The service lives in `shreckworld/` and Compose exposes host port `8121` mapped to
+container port `8120`. In-network callers must target the container port, so the
+Compose default for `SHRECKNET_SHRECKWORLD_BASE_URL` is
+`http://shreckworld_api:8120`; use `http://localhost:8121` only for host-side or
+native (non-Compose) access. Shrecknet is the sole identity provider. ShreckWorld validates the
 forwarded bearer token against `/auth/jwks`, including signature, issuer,
 audience, expiry, subject, and role. Every authenticated user can discover worlds,
 read original sources, query evidence, and request conservative rule review.

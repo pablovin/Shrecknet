@@ -121,7 +121,10 @@ only the dedicated web target defaults to `web_search_enabled=true`.
    character, character-memory scope and rapport stay unchanged. A committed
    switch survives later retrieval failure or cancellation.
 4. **Independent parallel retrieval.** Atlas reuses Elder planning/execution
-   without synthesis. ShreckWorld uses its planned evidence pipeline. The dedicated
+   without synthesis; its retrieval plan is always produced by the shared Elder
+   planner (including the deterministic fallback plan) rather than a hand-built
+   plan, so an unavailable or malformed planner never invalidates the source
+   outright. ShreckWorld uses its planned evidence pipeline. The dedicated
    web model uses gateway search and actual provider excerpts; its generated
    summary is not evidence. JSON web search remains an explicitly selected
    alternative. Tool failures/timeouts retain successful siblings. Existing
@@ -168,6 +171,18 @@ is insufficient. No graph migration or re-embedding is required. Rollback to
 legacy must use this compatibility release, whose context/rapport reads exclude
 commentary; older binaries assume one assistant message per turn. Keep additive
 columns and delivered messages intact.
+
+#### Pipeline diagnostics
+
+The companion worker emits bounded, structured `companion.diag` INFO lines to the
+console for troubleshooting: `stage` for every pipeline transition,
+`router_available_tools` (candidate tools after permission/configuration filters,
+plus the submitted web mode), `router_response` (the validated plan),
+`ontology_response`, and per-call `tool_response` (tool, status, reason and
+evidence). Retrieval adapter failures log the exception type and message instead
+of only the class name. Use these lines to distinguish a planner omission from an
+unavailable/unauthorized source; they are console diagnostics and do not change
+the turn snapshot, `pipeline.status` events or stored error details.
 
 See [the design and acceptance plan](Query%20Pipeline%20Plan.md),
 [configuration](Model%20Configuration.md) and [HTTP/SSE additions](Frontend%20API.md#evidence-v2).

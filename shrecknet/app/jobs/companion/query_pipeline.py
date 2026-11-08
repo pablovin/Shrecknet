@@ -8,6 +8,7 @@ verification, followed by source/asset checks and the leased final commit.
 from __future__ import annotations
 import asyncio
 import json
+import logging
 import time
 from uuid import uuid4
 from app.jobs.companion import query_prompts as prompts
@@ -23,6 +24,17 @@ from app.models.character_companion import CompanionTurn, CompanionAttachment
 from app.repositories.character_companion_repository import CompanionRepository
 from app.services.companion_scope_service import CompanionScopeService, scoped_context
 from app.services.companion_foundry_context import foundry_evidence
+
+logger = logging.getLogger(__name__)
+
+
+def _diag(turn_id, event, payload, limit=6000):
+    """Emit bounded, structured companion pipeline diagnostics to the console."""
+    try:
+        text = json.dumps(payload, ensure_ascii=False, default=str)
+    except TypeError:
+        text = repr(payload)
+    logger.info("companion.diag turn=%s event=%s data=%s", turn_id, event, text[:limit])
 
 
 async def request_structured(llm, target, prompt, data, schema, timeout, tag, tokens=2500):
@@ -139,6 +151,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             metrics.setdefault('stages', []).append({'stage':tag, 'elapsed_ms':round((time.monotonic()-before)*1000,2)})
 
     async def progress(stage, *, coarse='routing', **extra):
+        _diag(turn.id, 'stage', {'stage': stage, 'coarse': coarse, **extra}, limit=1000)
         await mutate(turn.id, lease, stage=coarse, event='pipeline.status', payload={'stage': stage, **extra})
 
     async def commentary(text, sequence):
@@ -199,11 +212,15 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
 
     async def plan_for(updates=True):
         available = available_tools(turn, settings, scope)
+        _diag(turn.id, 'router_available_tools', {'available_tools': available,
+              'web_request_mode': turn.request['tools']['web'], 'allowed': turn.request['tools']['allowed'],
+              'web_available': web_available(settings)})
         data = {'query': query, 'recent':recent, 'context':scope, 'ontology':ontology,
                 'available_tools':available, 'allow_ontology_update':updates and bool(ontology), 'pending':pending}
         data['context'] = routing_context(scope, turn.request.get('foundry_context') if not override else None)
         result = await structured(llm, settings.model_companion_routing, prompts.PLANNER, data, QueryPlan,
                                   settings.companion_routing_timeout_s, 'companion.query_planner')
+        _diag(turn.id, 'router_response', result.model_dump())
         return validate_plan(result, available, scope, updates=updates)
 
     if max_messages:
@@ -241,8 +258,10 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             decision = await structured(llm, settings.model_companion_routing, prompts.ONTOLOGY,
                 {'query':query, 'recent':recent, 'context':routing_context(scope,turn.request.get('foundry_context')), 'candidates':candidates, 'pending':pending},
                 OntologyDecision, settings.companion_routing_timeout_s, 'companion.ontology')
-        except Exception:
+        except Exception as exc:
+            _diag(turn.id, 'ontology_error', {'error_type': type(exc).__name__, 'error': str(exc)[:500]})
             return await clarify(['Which ontology (world name) should I use?'], kind='ontology')
+        _diag(turn.id, 'ontology_response', decision.model_dump())
         if decision.ontology_name and decision.status == 'unresolved':
             async with database() as session:
                 matches = await CompanionScopeService(session).exact(decision.ontology_name)
@@ -351,8 +370,15 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             await progress(phase, coarse='retrieving', tool=call.tool, status='started')
             try:
                 item = await retrieval.retrieve(call.tool, call.query)
-            except Exception:
+            except Exception as exc:
+                _diag(turn.id, 'tool_error', {'tool': call.tool, 'query': call.query,
+                      'error_type': type(exc).__name__, 'error': str(exc)[:500]})
                 item = {'tool':call.tool,'status':'unavailable','evidence':[]}
+            _diag(turn.id, 'tool_response', {'call_id': call.id, 'tool': item.get('tool', call.tool),
+                  'status': item.get('status'), 'query': call.query,
+                  'reason': item.get('reason'),
+                  'evidence_count': len(item.get('evidence') or []),
+                  'evidence': item.get('evidence') or []})
             return {**item,'id':call.id,'query':call.query,'need_ids':call.need_ids,'recovery':recovery}
 
         async def collect(row):

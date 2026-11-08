@@ -83,7 +83,7 @@ class CompanionRetrieval:
         except asyncio.TimeoutError:
             return {"tool": tool, "status": "timed_out", "evidence": [], "coverage": "unknown"}
         except Exception as exc:
-            logger.warning("Companion retrieval %s failed: %s", tool, type(exc).__name__)
+            logger.warning("Companion retrieval %s failed: %s: %s", tool, type(exc).__name__, str(exc)[:500])
             return {"tool": tool, "status": "unavailable", "evidence": [], "coverage": "unknown"}
 
     async def character_memory(self, query):
@@ -99,14 +99,12 @@ class CompanionRetrieval:
         if not self.scope.get("ontology_id"):
             return []
         from app.integrations.retrieval.neo4j_retriever import HybridNeo4jGraphRetriever
-        from app.jobs.elder.v2_schemas import RetrievalPlan, RetrievalStep
         from app.services.elder_retrieval_service import retrieve_plan
         @asynccontextmanager
         async def factory():
             async with get_driver().session(database=self.settings.neo4j_database) as graph:
                 yield graph
         retriever = HybridNeo4jGraphRetriever(session_factory=factory)
-        plan = RetrievalPlan(answer_goal=query, steps=[RetrievalStep(id="companion", operation="hybrid_search", query=query, limit=6)])
         from app.jobs.elder.planner import create_retrieval_plan
         from app.integrations.llm.shreckllm_client import ShreckLLMClient
         async with ShreckLLMClient(base_url=self.settings.shreckllm_base_url,

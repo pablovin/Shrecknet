@@ -59,9 +59,9 @@ async def resolve(turn, actor, evidence, settings):
                        'provenance_kind':'entity_image' if ref['node_label']=='EntityInstance' else 'scene_image',
                        'attribution':source['title'][:1000],
                        'delivery_ref':{'kind':'service','service':'shrecknet','path':f'/users/me/character-companion/turns/{turn.id}/assets/{identifier}'}}]
-        elif kind=='shreckworld' and settings.companion_shreckworld_url:
+        elif kind=='shreckworld' and settings.shreckworld_base_url:
             prefix=f"/ontologies/{ref['ontology_id']}" if ref.get('ontology_id') else f"/shreckworlds/{quote(ref['shreckworld_id'],safe='')}"
-            async with httpx.AsyncClient(base_url=settings.companion_shreckworld_url,timeout=settings.companion_rich_response_timeout_s,follow_redirects=False) as client:
+            async with httpx.AsyncClient(base_url=settings.shreckworld_base_url,timeout=settings.companion_rich_response_timeout_s,follow_redirects=False) as client:
                 response=await client.post(prefix+'/companion-media',json={'references':[source['reference']]},headers={'Authorization':f"Bearer {grant(turn,'shreckworld')}"})
                 response.raise_for_status()
                 media=response.json()['items']

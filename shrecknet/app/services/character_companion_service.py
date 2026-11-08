@@ -176,7 +176,7 @@ class CharacterCompanionService:
             ontology = await self.session.get(Ontology, explicit_ontology)
             if not ontology or (context.get("world_id") and ontology.world_id != context["world_id"]):
                 fail(422, "context_scope_mismatch")
-        context = {**context, "ontology_id": explicit_ontology if body.get("foundry_context") is not None or getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else (explicit_ontology or agent.ontology_id),
+        context = {**context, "ontology_id": explicit_ontology,
                    "chronicle_ontology_id": explicit_ontology, "character_ontology_id": agent.ontology_id}
         foundry_sources = []
         if body.get("foundry_context") is not None:
@@ -192,8 +192,8 @@ class CharacterCompanionService:
                 fail(409, "invalid_retry")
         pair = await self.repo.pair(actor.id, agent.id, create=True)
         turn = CompanionTurn(id=str(uuid4()), chat_id=chat.id, user_id=actor.id, character_agent_id=agent.id,
-                             request=submitted_body if getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else body,
-                             execution_context=context if getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" else None,
+                             request=submitted_body,
+                             execution_context=context,
                              principal=principal, generation=pair.generation)
         total_size = 0
         image_sources = []
@@ -216,7 +216,7 @@ class CharacterCompanionService:
         user_message = CompanionMessage(turn_id=turn.id, chat_id=chat.id, role="user", kind="user", content=payload.text, committed=False, manifest=image_sources + foundry_sources)
         self.session.add(user_message)
         await self.session.flush()
-        if getattr(settings, "companion_query_pipeline_version", "legacy") == "evidence_v2" and settings.companion_interim_max_messages:
+        if settings.companion_interim_max_messages:
             acknowledgement = CompanionMessage(turn_id=turn.id, chat_id=chat.id, role="assistant", kind="commentary", sequence=1,
                                                content=COMPANION_ACKNOWLEDGEMENT, manifest=[])
             self.session.add(acknowledgement)

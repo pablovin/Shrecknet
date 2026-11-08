@@ -14,16 +14,38 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 async def _fetch_shrecknet_user(token: str) -> dict[str, Any]:
     settings = get_settings()
     base_url = settings.shrecknet_api_base_url.rstrip("/")
-    async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.get(
-            f"{base_url}/users/me",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-    if response.status_code != 200:
+    try:
+        # Authentication uses the configured service connection, never a proxy
+        # inherited from the process environment or a redirected token target.
+        async with httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False) as client:
+            response = await client.get(
+                f"{base_url}/users/me",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Shrecknet authentication service is unavailable. Please try again.",
+        ) from exc
+    if response.status_code in {401, 403}:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    payload = response.json()
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Shrecknet authentication service is unavailable. Please try again.",
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Shrecknet authentication service returned an invalid response.",
+        ) from exc
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user payload")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Shrecknet authentication service returned an invalid response.",
+        )
     return payload
 
 

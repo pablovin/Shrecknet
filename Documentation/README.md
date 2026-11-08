@@ -5,6 +5,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 ## Shared model configuration
 
 - [Category snapshot backups](Deployment/BACKUPS.md) — categories, API, snapshot layout, restore and deployment
+- [LLM gateway configuration troubleshooting](Deployment/LLM_GATEWAY_TROUBLESHOOTING.md) — identity-service failures, direct Docker connectivity, HTTP status contracts and provider credential errors
 - [Agent web search](Architecture/LLM_WEB_SEARCH.md) — shared model option, gateway capabilities, frontend controls, source contracts, and deployment
 
 ## Authentication

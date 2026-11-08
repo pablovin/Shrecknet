@@ -18,7 +18,6 @@
   "celery_stale_reaper_enabled": true,
   "celery_stale_reaper_interval_seconds": 300,
   "celery_stale_reaper_max_task_age_seconds": 7200,
-  "shreckllm_base_url": "http://shreckllm:8110",
   "llm_prewarm_on_startup": true,
   "llm_prewarm_timeout_s": 300.0,
   "enable_ai_agents": false,
@@ -182,7 +181,6 @@
     "web_search_enabled": false
   },
   "companion_interim_enabled": true,
-  "companion_query_pipeline_version": "evidence_v2",
   "companion_web_images_enabled": false,
   "companion_rich_response_enabled": true,
   "companion_rich_response_timeout_s": 2

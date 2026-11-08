@@ -7,7 +7,7 @@ Standalone LLM gateway service for Shrecknet-compatible chat semantics.
 - Runtime/provider settings are persisted in local SQLite:
   - `shreckLLM/databases/shreckllm_config.db`
 - Config changes are managed via shreckLLM `/config` endpoints.
-- `/config` is authenticated by delegating bearer-token validation to Shrecknet (`/users/me`).
+- `/config` is authenticated by delegating bearer-token validation to Shrecknet (`/users/me`). Identity-service timeouts/unavailability return HTTP 503; invalid tokens return 401. See [gateway authentication troubleshooting](../Documentation/Deployment/LLM_GATEWAY_TROUBLESHOOTING.md#gateway-configuration-authentication-failures).
 
 ## Features
 - FastAPI API (`/health`, `/ready`, `/chat`, `/models`, `/status`, `/config`)

@@ -54,8 +54,8 @@ async def capabilities(actor=Depends(get_current_user)):
     return {"rich_response": {"versions": [1], "block_types": BLOCK_TYPES, "enabled": s.companion_rich_response_active}, "contract_version": 1, "foundry_context": FOUNDRY_CONTEXT_LIMITS, "enabled": s.companion_enabled and s.enable_ai_agents,
             "streaming": bool(s.model_companion_synthesis.name), "images": f"{s.model_companion_synthesis.provider}/{s.model_companion_synthesis.name}" in s.companion_image_models,
             "chat_sessions": {"max_chats": MAX_COMPANION_CHATS, "limit_scope": "user"},
-            "query_pipeline_version": s.companion_query_pipeline_version, "general_knowledge_opt_in": s.companion_general_knowledge_policy == "labeled_opt_in", "event_versions": [1], "tools": {key: {"available": value, "reason": None if value else "not_configured"} for key, value in
-                {"atlas": True, "character_memory": True, "shreckworld": bool(s.companion_shreckworld_url), "chronicle": bool(s.companion_chronicles_url), "web": web_available(s)}.items()},
+            "query_pipeline_version": "evidence_v2", "general_knowledge_opt_in": s.companion_general_knowledge_policy == "labeled_opt_in", "event_versions": [1], "tools": {key: {"available": value, "reason": None if value else "not_configured"} for key, value in
+                {"atlas": True, "character_memory": True, "shreckworld": bool(s.shreckworld_base_url), "chronicle": bool(s.shreckrpg_base_url), "web": web_available(s)}.items()},
             "model_roles": {field: {"configured": bool(getattr(s, field).name), "available": None} for field in COMPANION_MODEL_FIELDS},
             "limits": {"image_bytes": 10485760, "images_per_turn": 4, "turn_image_bytes": 20971520, "text_characters": 8000}}
 

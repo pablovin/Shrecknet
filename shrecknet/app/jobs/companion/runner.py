@@ -13,17 +13,14 @@ from app.core.config_store import get_settings, COMPANION_MODEL_FIELDS
 from app.db.session import AsyncSessionCompat, get_sessionmaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient, LLMProviderUnavailableError
-from app.integrations.companion.retrieval import CompanionRetrieval, web_available
-from app.jobs.companion.prompts import ROUTER, SYNTHESIS, RAPPORT, IMAGE_INTERPRETATION, INTERIM
-from app.jobs.companion.contracts import RapportProposal, build_answer, provisional_text
-from app.jobs.elder.context_budget import estimate_tokens
+from app.jobs.companion.prompts import RAPPORT
+from app.jobs.companion.contracts import RapportProposal
 from app.models.character_companion import CompanionTurn, CompanionOutbox, CompanionChat, CompanionMessage, CompanionRapport, CompanionRapportAudit, CompanionAttachment, utcnow
 from app.repositories.character_companion_repository import CompanionRepository, record, fail
 from app.schemas.character_companion import DIMENSIONS, TERMINAL
 from app.services.character_agent_service import CharacterAgentService
 from app.services.companion_authorization import active_principal
 from app.services.companion_attachment_service import private_root, attachment_evidence
-from app.services.companion_foundry_context import foundry_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -77,53 +74,6 @@ def private_stage_target(target):
     return target
 
 
-async def route(turn, llm, recent):
-    s = get_settings()
-    query = turn.request["text"].lower().strip(" !?.")
-    context = dict(turn.request.get("context") or {})
-    snapshot = turn.request.get("foundry_context")
-    if snapshot:
-        table = snapshot.get("table") or {}
-        context["foundry"] = {"table_title": table.get("title"), "system_title": table.get("system_title"),
-                              "documents": [{"kind": doc["kind"], "name": doc["name"]} for doc in snapshot["documents"]]}
-    allowed = turn.request["tools"]["allowed"]
-    candidates = set(allowed if allowed is not None else ["atlas", "character_memory", "shreckworld", "chronicle", "web"])
-    if turn.request.get("foundry_context") is not None:
-        if not context.get("ontology_id"):
-            candidates.discard("atlas")
-        if not context.get("chronicle_id"):
-            candidates.discard("chronicle")
-    if turn.request["tools"]["web"] == "disabled":
-        candidates.discard("web")
-    if not web_available(s):
-        candidates.discard("web")
-    tools = set()
-    if turn.request["tools"]["web"] != "require" and query in {"hi", "hello", "hey", "thanks", "thank you", "how are you", "good morning", "good night", "bonjour", "ciao", "olá"}:
-        return []
-    if any(word in query for word in ("remember", "your memory", "you feel", "you recall")):
-        tools.add("character_memory")
-    if context.get("shreckworld_id") or context.get("surface") == "shreckworld" or any(word in query for word in ("rule", "book", "mechanic", "dice")):
-        tools.add("shreckworld")
-    if context.get("chronicle_id") or any(word in query for word in ("chronicle", "session notes")):
-        tools.add("chronicle")
-    if any(word in query for word in ("record", "scene", "who ", "when ", "where ", "world", "happened")):
-        tools.add("atlas")
-    if turn.request["tools"]["web"] == "require" or ("web" in candidates and any(word in query for word in ("latest", "today", "internet", "search the web"))):
-        tools.add("web")
-    if not tools and s.companion_model_routing_enabled and s.model_companion_routing.name:
-        try:
-            raw = await asyncio.wait_for(llm.chat(model=private_stage_target(s.model_companion_routing), messages=[{"role": "system", "content": ROUTER}, {"role": "user", "content": json.dumps({"query": query, "context": context, "recent": recent, "available_tools": sorted(candidates)})}], usage_tag="companion.routing"), s.companion_tool_timeout_s)
-            parsed = json.loads(raw)
-            proposed = parsed.get("tools", [])
-            if not isinstance(proposed, list) or any(not isinstance(tool, str) for tool in proposed):
-                raise ValueError("invalid_routing")
-            tools = set(proposed) & candidates
-        except Exception:
-            # Optional routing cannot prevent an uncertainty-aware conversation.
-            tools = set()
-    return sorted(tools & candidates)
-
-
 async def execute_turn(turn, lease):
     started = time.monotonic()
     settings = get_settings()
@@ -137,11 +87,6 @@ async def execute_turn(turn, lease):
         repo = CompanionRepository(session)
         rapport = await repo.scores(await repo.pair(turn.user_id, turn.character_agent_id))
         recent = await repo.conversation_context(turn.chat_id, turn.user_id)
-        previous_turn = (await session.execute(select(CompanionTurn).where(
-            CompanionTurn.chat_id == turn.chat_id, CompanionTurn.status == "completed"
-        ).order_by(CompanionTurn.created_at.desc()).limit(1))).scalars().first()
-        previous = {"query": previous_turn.request.get("text", ""), "scope": previous_turn.request.get("context") or {},
-                    "evidence": (previous_turn.result or {}).get("evidence", []), "created_at": previous_turn.created_at} if previous_turn else None
         images, image_sources = [], []
         for identifier in turn.request["attachment_ids"]:
             attachment = await repo.owned(CompanionAttachment, identifier, turn.user_id)
@@ -149,145 +94,12 @@ async def execute_turn(turn, lease):
                 raise ValueError("attachment_deleted")
             image_sources.append(attachment_evidence(attachment, turn.chat_id))
             images.append({"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode((private_root()/attachment.storage_key).read_bytes()).decode()}})
-    snapshot_sources = foundry_evidence(turn.request.get("foundry_context"))
-    # A different Foundry snapshot cannot reuse retrieval selected for old game data.
-    if turn.request.get("foundry_context") is not None:
-        previous = None
     llm = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.companion_turn_timeout_s, max_retries=0)
     try:
-        if settings.companion_query_pipeline_version == "evidence_v2":
-            from app.jobs.companion.query_pipeline import run
-            return await run(turn, lease, actor=actor, identity=identity, rapport=rapport,
-                recent=recent, images=images, image_sources=image_sources, llm=llm,
-                settings=settings, metrics=metrics, started=started)
-        tools = await route(turn, llm, recent)
-        if not tools and previous and turn.request["text"].casefold().strip().startswith(("what about ", "tell me more", "explain that", "why is that", "and then")):
-            permitted = turn.request["tools"]["allowed"]
-            tools = sorted({row["source_type"] for row in previous["evidence"]
-                            if row["source_type"] in {"atlas","character_memory","shreckworld","chronicle","web"}
-                            and (permitted is None or row["source_type"] in permitted)
-                            and (row["source_type"] != "web" or (turn.request["tools"]["web"] != "disabled" and web_available(settings)))})
-        retrieval_query = turn.request["text"]
-        snapshot = turn.request.get("foundry_context")
-        if snapshot:
-            names = [doc["name"] for doc in snapshot["documents"]]
-            table = snapshot.get("table") or {}
-            if table.get("system_title"):
-                names.append(table["system_title"])
-            if names:
-                retrieval_query = retrieval_query[:3000] + "\nAttached context: " + "; ".join(names)[:900]
-        if images and tools:
-            interpreted = ""
-            async for part in llm.stream_chat(model=settings.model_companion_synthesis.model_copy(update={"web_search_enabled": False}),
-                    messages=[{"role":"system","content":IMAGE_INTERPRETATION}, {"role":"user","content":[{"type":"text","text":json.dumps({"query":retrieval_query,"context":turn.request.get("context")})},*images]}],
-                    max_tokens=1200, usage_tag="companion.image_interpretation"):
-                interpreted += part
-                if len(interpreted)>12000:
-                    raise ValueError("image_interpretation_budget_exceeded")
-            observations=json.loads(interpreted)
-            if set(observations)!={"observations","uncertainties","retrieval_terms"} or any(not isinstance(values,list) or len(values)>10 or any(not isinstance(value,str) or len(value)>300 for value in values) for values in observations.values()):
-                raise ValueError("invalid_image_interpretation")
-            retrieval_query += " " + " ".join(observations["retrieval_terms"])
-        async def interim():
-            try:
-                text=await llm.chat(model=private_stage_target(settings.model_companion_interim),messages=[{"role":"system","content":INTERIM},{"role":"user","content":json.dumps({"identity_description":identity["character_agent"]["identity_description"],"query":turn.request["text"]})}],usage_tag="companion.interim",max_tokens=100)
-                await mutate(turn.id,lease,event="companion.interim",payload={"text":text[:400],"provisional":True})
-            except Exception:
-                pass
-        interim_task = asyncio.create_task(interim()) if tools and settings.companion_interim_enabled and settings.model_companion_interim.name else None
-
-        await mutate(turn.id, lease, stage="retrieving", event="routing.status", payload={"status": "done", "tools": tools, "reason": "bounded_source_routing"})
-        retrieval = CompanionRetrieval(turn, actor)
-        results, evidence = [], image_sources + snapshot_sources
-        if sum(estimate_tokens(json.dumps(e)) for e in evidence) > settings.companion_max_evidence_tokens:
-            raise ValueError("foundry_context_budget_exceeded")
-        for source in evidence:
-            await mutate(turn.id, lease, event="source.discovered", payload=source)
-        async def one(tool):
-            await mutate(turn.id, lease, event="retrieval.status", payload={"tool": tool, "status": "started"})
-            query = turn.request["text"][:500] if tool == "web" else retrieval_query
-            cached = await retrieval.cached(tool, query, previous)
-            item = cached if cached is not None else await retrieval.retrieve(tool, query)
-            return {**item, "query": query}
-        retrieval_started=time.monotonic()
-        tasks = [asyncio.create_task(one(tool)) for tool in tools]
-        try:
-            for task in asyncio.as_completed(tasks, timeout=settings.companion_retrieval_timeout_s):
-                item = await task
-                results.append(item)
-                await mutate(turn.id, lease, event="retrieval.status", payload={key: item[key] for key in ("tool", "status", "reason", "source_coverage") if key in item})
-                for source in item["evidence"]:
-                    if len(evidence) >= 20 or sum(estimate_tokens(json.dumps(e)) for e in evidence) + estimate_tokens(json.dumps(source)) > settings.companion_max_evidence_tokens:
-                        break
-                    evidence.append(source)
-                    await mutate(turn.id, lease, event="source.discovered", payload=source)
-        except asyncio.TimeoutError:
-            completed = {r["tool"] for r in results}
-            results.extend({"tool": tool, "status": "timed_out", "evidence": [],
-                            "query": turn.request["text"][:500] if tool == "web" else retrieval_query}
-                           for tool in tools if tool not in completed)
-        finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            if interim_task:
-                interim_task.cancel()
-                await asyncio.gather(interim_task, return_exceptions=True)
-        metrics["retrieval_ms"]=round((time.monotonic()-retrieval_started)*1000,2)
-        metrics["tool_results"]=[{key:row[key] for key in ("tool","status")} | {"cache_hit": row.get("cache_hit",False)} for row in results]
-        context = {"identity_description": identity["character_agent"]["identity_description"], "personality_context": identity.get("personality_context"),
-                   "rapport": rapport, "query": turn.request["text"], "context": turn.request.get("context"), "recent": recent,
-                   "retrieval_outcomes": [{key: row[key] for key in ("tool", "status", "reason", "source_coverage") if key in row} for row in results],
-                   "evidence": [{**item, "citation_marker": f"[[source:{index}]]"} for index, item in enumerate(evidence, 1)]}
-        serialized = json.dumps(context, ensure_ascii=False)
-        while context["recent"] and estimate_tokens(serialized) + estimate_tokens(SYNTHESIS) > settings.companion_max_evidence_tokens + 12000:
-            # Drop only complete oldest exchanges to reserve the established
-            # identity/evidence/output budget; never truncate a message.
-            context["recent"] = context["recent"][2:]
-            serialized = json.dumps(context, ensure_ascii=False)
-        if estimate_tokens(serialized) + estimate_tokens(SYNTHESIS) > settings.companion_max_evidence_tokens + 12000:
-            raise ValueError("identity_context_budget_exceeded")
-        await mutate(turn.id, lease, stage="synthesizing")
-        content = [{"type": "text", "text": serialized}, *images] if images else serialized
-        raw, delivered, pending = "", "", ""
-        async for chunk in llm.stream_chat(model=settings.model_companion_synthesis.model_copy(update={"web_search_enabled": False}), messages=[{"role": "system", "content": SYNTHESIS}, {"role": "user", "content": content}], max_tokens=settings.companion_output_tokens):
-            if not raw:
-                metrics["synthesis_first_token_ms"]=round((time.monotonic()-started)*1000,2)
-            raw += chunk
-            if len(raw) > 160000:
-                raise ValueError("output_budget_exceeded")
-            projected = provisional_text(raw)
-            if projected.startswith(delivered):
-                pending = projected[len(delivered):]
-                if len(pending) >= 40 or pending.endswith((".", "?", "!", "\n")):
-                    await mutate(turn.id, lease, delta=pending, event="response.delta", payload={"segment_id": "draft", "delta": pending, "provisional": True})
-                    delivered = projected
-                    pending = ""
-        projected = provisional_text(raw, complete=True)
-        if projected.startswith(delivered):
-            pending = projected[len(delivered):]
-        if pending:
-            await mutate(turn.id, lease, delta=pending, event="response.delta", payload={"segment_id": "draft", "delta": pending, "provisional": True})
-        await mutate(turn.id, lease, stage="validating")
-        result = build_answer(raw, evidence, results, query=retrieval_query)
-        result["model_targets"]={field:getattr(settings,field).model_dump() for field in COMPANION_MODEL_FIELDS}
-        result["usage"]=getattr(llm,"last_response_metadata",{}).get("usage")
-        result["cost"]=None
-        # Identity and originating browser access can be revoked while retrieval runs.
-        await load_identity(turn)
-        await retrieval.validate_sources(result['evidence'])
-        async with database() as session:
-            repo = CompanionRepository(session)
-            current = await session.get(CompanionTurn, turn.id)
-            metrics["execution_ms"]=round((time.monotonic()-started)*1000,2)
-            current.metrics=metrics
-            for identifier in turn.request["attachment_ids"]:
-                attachment = await repo.owned(CompanionAttachment, identifier, turn.user_id)
-                if attachment.deleted:
-                    raise ValueError("attachment_deleted")
-            await repo.terminal(current, "completed", result=result, lease=lease)
-            await session.commit()
+        from app.jobs.companion.query_pipeline import run
+        return await run(turn, lease, actor=actor, identity=identity, rapport=rapport,
+            recent=recent, images=images, image_sources=image_sources, llm=llm,
+            settings=settings, metrics=metrics, started=started)
     finally:
         await llm.aclose()
 

@@ -48,9 +48,9 @@ def available_tools(turn, settings, scope):
     candidates = set(allowed if allowed is not None else ['atlas', 'shreckworld', 'web', 'chronicle', 'character_memory'])
     if not scope.get('ontology_id'):
         candidates -= {'atlas', 'shreckworld'}
-    if not settings.companion_shreckworld_url:
+    if not settings.shreckworld_base_url:
         candidates.discard('shreckworld')
-    if not scope.get('chronicle_id') or not settings.companion_chronicles_url:
+    if not scope.get('chronicle_id') or not settings.shreckrpg_base_url:
         candidates.discard('chronicle')
     if turn.request['tools']['web'] == 'disabled' or not web_available(settings):
         candidates.discard('web')

@@ -10,7 +10,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
-from shreckconfig import CORS_FIELDS
+from shreckconfig import CORS_FIELDS, cors_file
+from dotenv import dotenv_values
 from shreckconfig.shreckworld import DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, ShreckWorldRuntimeConfig, publish_runtime_config
 
 from pydantic import BaseModel, Field, model_validator
@@ -24,7 +25,16 @@ CONFIG_DB_FILENAME = "shrecknet_config.db"
 LEGACY_CONFIG_DB_FILENAME = "configs.db"
 CONFIG_TABLE = "config_settings"
 DEFAULT_CONFIG_SEED_FILE = Path("/configs/shrecknet.initial.json")
-BOOTSTRAP_ENV_FIELDS = frozenset(
+SERVICE_CONNECTION_FIELDS = frozenset({
+    'shreckllm_base_url', 'shreckworld_base_url', 'shreckrpg_base_url',
+    'companion_web_search_url', 'companion_web_search_token',
+})
+RETIRED_COMPANION_FIELDS = frozenset({
+    'companion_query_pipeline_version', 'companion_model_routing_enabled',
+    'companion_web_backend', 'companion_web_enabled',
+    'companion_shreckworld_url', 'companion_chronicles_url',
+})
+BOOTSTRAP_ENV_FIELDS = SERVICE_CONNECTION_FIELDS | frozenset(
     {
         "database_url",
         "jobs_database_url",
@@ -264,7 +274,9 @@ class Settings(BaseSettings):
     celery_stale_reaper_interval_seconds: int = 300
     celery_stale_reaper_max_task_age_seconds: int = 7200
 
-    shreckllm_base_url: str = "http://shreckllm:8110"
+    shreckllm_base_url: str = "http://localhost:8111"
+    shreckworld_base_url: str = "http://localhost:8121"
+    shreckrpg_base_url: str = "http://localhost:8200"
     shreckllm_request_timeout_s: float = 60.0
     # End-to-end client-side deadline for an asynchronously submitted shreckLLM
     # job.  This is intentionally separate from the HTTP request timeout.
@@ -355,7 +367,6 @@ class Settings(BaseSettings):
     companion_web_images_enabled: bool = False
     companion_rich_response_enabled: bool = True
     companion_rich_response_timeout_s: float = Field(2, ge=0.1, le=10)
-    companion_query_pipeline_version: Literal["legacy", "evidence_v2"] = "evidence_v2"
     companion_general_knowledge_policy: Literal["disabled", "labeled_opt_in"] = "disabled"
     companion_recovery_max_rounds: int = Field(1, ge=0, le=1)
     companion_recovery_max_calls: int = Field(2, ge=1, le=4)
@@ -365,11 +376,9 @@ class Settings(BaseSettings):
     companion_interim_max_messages: int = Field(2, ge=0, le=3)
     companion_interim_min_interval_s: float = Field(8, ge=1, le=120)
     companion_interim_output_tokens: int = Field(100, ge=32, le=300)
-    companion_web_backend: Literal["model", "json"] = "model"
     model_companion_web_search: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash", web_search_enabled=True))
     model_companion_evidence: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
     companion_enabled: bool = False
-    companion_model_routing_enabled: bool = False
     companion_interim_enabled: bool = False
     model_companion_routing: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
     model_companion_synthesis: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
@@ -382,11 +391,8 @@ class Settings(BaseSettings):
     companion_rapport_max_attempts: int = Field(3, ge=1, le=10)
     companion_max_evidence_tokens: int = Field(10000, ge=100, le=32000)
     companion_output_tokens: int = Field(2000, ge=128, le=16000)
-    companion_shreckworld_url: str = ""
-    companion_chronicles_url: str = ""
     companion_web_search_url: str = ""
     companion_web_search_token: str = ""
-    companion_web_enabled: bool = False
     companion_image_models: list[str] = Field(default_factory=lambda: ["openrouter/deepseek/deepseek-v4.1-flash"])
     companion_agent_trace_enabled: bool = False
     embedding_model_id: str = "intfloat/multilingual-e5-small"
@@ -430,8 +436,8 @@ class Settings(BaseSettings):
 
     @property
     def companion_rich_response_active(self) -> bool:
-        """Presentation configuration never changes legacy pipeline behavior."""
-        return self.companion_rich_response_enabled and self.companion_query_pipeline_version == 'evidence_v2'
+        """Presentation is optional within the sole evidence-first query pipeline."""
+        return self.companion_rich_response_enabled
 
 
 class AppConfig(BaseModel):
@@ -506,7 +512,7 @@ def _load_initial_settings_file() -> dict[str, Any]:
             raise ValueError(f"Invalid Shrecknet config seed file '{path}': expected JSON object")
         payload = migrate_character_agent_model_values(normalize_validation_retry_settings(payload))
         allowed = set(Settings.model_fields)
-        payload = {key: value for key, value in payload.items() if key not in CORS_FIELDS}
+        payload = {key: value for key, value in payload.items() if key not in CORS_FIELDS and key not in RETIRED_COMPANION_FIELDS}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise ValueError(
@@ -530,6 +536,14 @@ def _explicit_env_overrides() -> dict[str, Any]:
         env_key = f"SHRECKNET_{field_name.upper()}"
         if env_key in os.environ:
             overrides[field_name] = getattr(env_backed, field_name)
+    # Service wiring has one source of truth: process env > deployment .env >
+    # native localhost defaults. Compose supplies its internal DNS defaults.
+    path = cors_file()
+    deployment = dotenv_values(path, interpolate=False) if path.is_file() else {}
+    for field_name in SERVICE_CONNECTION_FIELDS:
+        key = f'SHRECKNET_{field_name.upper()}'
+        value = os.environ.get(key, deployment.get(key))
+        overrides[field_name] = value if value is not None else getattr(env_backed, field_name)
     return overrides
 
 
@@ -754,7 +768,7 @@ def load_settings() -> Settings:
     try:
         _ensure_schema(conn)
         with conn:
-            conn.executemany(f"DELETE FROM {CONFIG_TABLE} WHERE key = ?", [(key,) for key in CORS_FIELDS])
+            conn.executemany(f"DELETE FROM {CONFIG_TABLE} WHERE key = ?", [(key,) for key in CORS_FIELDS | RETIRED_COMPANION_FIELDS | SERVICE_CONNECTION_FIELDS])
         _normalize_legacy_database_urls(conn)
         _migrate_character_agent_targets(conn)
         _normalize_legacy_llm_targets(conn)

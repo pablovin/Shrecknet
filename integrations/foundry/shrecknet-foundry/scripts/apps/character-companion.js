@@ -38,7 +38,7 @@ export class CompanionWorkspace {
 
   state() {
     const key = this.chat?.id || "unselected";
-    if (!this.chatStates.has(key)) this.chatStates.set(key, { references: [], includeTable: true, ontologyId: "", libraryId: "", previews: [], webAllowed: true });
+    if (!this.chatStates.has(key)) this.chatStates.set(key, { references: [], includeTable: true, ontologyId: "", libraryId: "", previews: [] });
     return this.chatStates.get(key);
   }
 
@@ -94,7 +94,6 @@ export class CompanionWorkspace {
       tablePreview: this.tablePreview,
       contextNotice: this.contextNotice,
       pendingMessage: Boolean(this.pendingTurn),
-      webAvailable: this.capabilities?.tools?.web?.available === true,
       ontologies: this.ontologies.map((o) => ({ ...o, selected: String(o.id) === String(state.ontologyId) })),
       libraries: this.libraries.map((o) => ({ ...o, selected: String(o.id) === state.libraryId })),
       hasSelection: Boolean(this.selection?.character_agent_id),
@@ -243,9 +242,6 @@ export class CompanionWorkspace {
     root?.querySelectorAll("[data-companion-scope]").forEach((select) => select.addEventListener("change", () => {
       if (!this.pendingTurn) this.state()[select.dataset.companionScope] = select.value;
     }));
-    root?.querySelector("[data-companion-web]")?.addEventListener("change", (event) => {
-      if (!this.pendingTurn) this.state().webAllowed = event.currentTarget.checked;
-    });
     const log = root?.querySelector(".shrecknet-companion-log");
     if (log) {
       const saved = state.scroll;
@@ -389,8 +385,7 @@ export const companionActions = {
     if (!w.pendingTurn) {
       const state = w.state();
       if (state.references.length && !w.foundryReady) throw new Error("Update the backend before sending document context.");
-      const web = state.webAllowed && w.capabilities?.tools?.web?.available === true ? "allow" : "disabled";
-      const body = { text, ...(w.chat?.pending_clarification ? { clarification_id: w.chat.pending_clarification.id } : {}), ...(state.usePageScope ? { use_page_scope: true } : {}), ...(state.generalKnowledge && w.capabilities?.general_knowledge_opt_in ? { general_knowledge_opt_in: true } : {}), selection_version: w.selection.version, context: { surface: "global" }, tools: { web } };
+      const body = { text, ...(w.chat?.pending_clarification ? { clarification_id: w.chat.pending_clarification.id } : {}), ...(state.usePageScope ? { use_page_scope: true } : {}), ...(state.generalKnowledge && w.capabilities?.general_knowledge_opt_in ? { general_knowledge_opt_in: true } : {}), selection_version: w.selection.version, context: { surface: "global" }, tools: { web: "allow" } };
       if (w.foundryReady && (state.includeTable || state.references.length)) {
         const generation = w.generation;
         const snapshot = await buildSnapshot(w.app.connection, state, w.capabilities?.foundry_context?.versions?.includes(2) ? 2 : 1);
@@ -399,7 +394,7 @@ export const companionActions = {
         if (state.includeTable && state.ontologyId) body.context.ontology_id = Number(state.ontologyId);
         if (state.includeTable && state.libraryId) body.context.shreckworld_id = state.libraryId;
         // Do not search unrelated World lore when table context is removed.
-      } else if (w.foundryReady) body.tools.allowed = ["character_memory", ...(web === "allow" ? ["web"] : [])];
+      } else if (w.foundryReady) body.tools.allowed = ["character_memory", "web"];
       w.pendingTurn = { path, body, key: crypto.randomUUID() };
     }
     const pending = w.pendingTurn;

@@ -47,9 +47,11 @@ Chats remain bound to their original character after selection changes.
 
 A minimal turn is `{"text":"Hello","selection_version":1}`. Optional fields are
 `attachment_ids` (up to four), `context`, `foundry_context`, `tools` and `retry_of_turn_id`.
-Tools are `{"allowed":["atlas","character_memory"],"web":"disabled"}`;
-`allowed:null` permits configured sources. Web is `disabled`, `allow` or `require`.
-Unavailable required tools fail admission. Retry uses a new idempotency key and
+Tools are `{"allowed":["atlas","character_memory"]}`; `allowed:null` permits
+configured sources. The legacy `web` field (`disabled`, `allow`, `require`) is
+accepted for backward compatibility but no longer gates retrieval: web search is
+offered on every turn whenever the backend has a provider configured.
+Unavailable sources remain explicit retrieval outcomes. Retry uses a new idempotency key and
 references the prior failed/cancelled/interrupted turn; never resubmit on reconnect.
 Server startup interrupts unfinished turns with retryable error code
 `server_restarted`; their chats become available for a new turn. Outstanding
@@ -105,11 +107,12 @@ Retrieval partial failures appear as diagnostics/coverage, not fabricated citati
 ## Provider web-search option
 
 Model targets include `web_search_enabled`, default `false`. Enabling it on the
-synthesis target permits OpenRouter retrieval without a separate JSON search URL;
-`tools.web` still gates each turn. Provider source excerpts enter the existing
-evidence/source events and final citation validation. Web retrieval receives the
-first 500 characters of the submitted question, without added Foundry names or
-image-derived terms; the question itself is not automatically redacted.
+synthesis target permits OpenRouter retrieval without a separate JSON search URL.
+Web search is available on every turn when a provider is configured; the legacy
+per-turn `tools.web` value is ignored. Provider source excerpts enter the existing
+evidence/source events and final citation validation. Web retrieval receives a bounded, source-specific public query (at most 500
+characters). Automatic recovery uses a prepared public query or the safe public
+query renderer, never a raw failed local query, private history or Foundry content.
 Provider search is disabled on routing, interim, image interpretation, synthesis
 and rapport calls. See
 [shared configuration](../../Architecture/LLM_WEB_SEARCH.md) for capability
@@ -281,18 +284,20 @@ tool-specific retrieval query requested this turn), `cache_hit`, nullable `elaps
 and `evidence_ids`. Cached retrieval uses the current request query; it does not
 claim to have run another search. Missing timing is null, never an invented zero.
 `returned_count` counts the bounded adapter results, not the provider's total hits.
-`evidence_ids` includes only results admitted to the synthesis evidence budget;
+`evidence_ids` includes only results admitted to the turn evidence budget;
 excluded payloads are not published. Empty/failed tools remain visible.
 
-ShreckWorld tool calls may include `source_coverage` with
-`requested_source_count`, `searched_source_count`, `sources_without_ready_index`
-and `sources_requiring_reindex`. If any requested indexes are incompatible,
-`status` is `unavailable` and `reason` is `incompatible_index`; if none are
-incompatible but some are not ready, the reason is `index_not_ready`. Compatible
-sources may still return evidence in either case. The reason and counts also
-appear in the terminal `retrieval.status` event; existing status values are
-unchanged. An older or malformed service response without coverage is
-`unavailable`, not `empty`. Reindex affected sources through ShreckWorld.
+ShreckWorld tool calls retain `source_coverage` with `requested_source_count`,
+`searched_source_count`, `sources_without_ready_index` and `sources_requiring_reindex`.
+Readiness is independent of retrieval success: passages return `status="ok"`,
+no passages return `status="empty"`, and service failures retain `unavailable` or
+`timed_out`. `source_readiness="partial"` and optional `reason` of
+`incompatible_index`/`index_not_ready` identify incomplete index coverage without
+invalidating returned passages. `sources_requiring_attention` lists scoped
+`{library_item_id,title,reason}` entries; reason is `index_not_ready`,
+`incompatible_index` or `empty_index`. An older service may supply counts without
+individual source IDs. A malformed response without required coverage remains an
+unavailable retrieval response. Reindex affected sources through ShreckWorld.
 
 `result.evidence` contains all supplied evidence, including uncited records.
 For new answers, the single segment's `evidence_ids` maps the entire answer to
@@ -334,7 +339,7 @@ can be requested). New independently configurable roles appear in `model_roles`.
   "text": "Use the other world and explain the rule",
   "selection_version": 1,
   "context": {"surface": "global"},
-  "tools": {"web": "allow"},
+  "tools": {"allowed": null},
   "general_knowledge_opt_in": false,
   "use_page_scope": false,
   "clarification_id": null
@@ -461,3 +466,60 @@ server-certified permission. Version 1 rejects a true image flag and its
 normalized request omits the new false default, preserving old idempotency hashes.
 Negotiate version 2 before sending image availability. Other limits, document
 kinds, scope rules and immutable-retry guarantees remain unchanged.
+
+## Retrieval execution and deadlines
+
+Retrieval depth and memory relevance are server-planned internal options; clients
+continue to submit ordinary turns. Atlas reuses executable Companion plans and
+ShreckWorld defaults to single-question evidence retrieval, retaining explicit deep
+retrieval. Identity/traits shape all replies; personal-memory search is conditional.
+
+Configured, permitted Web recovers unavailable/timed-out/empty local searches and
+reviewed evidence gaps without a second source-selection vote. Recovery uses safe
+public queries, shares the configured one-round/call cap, and never promotes public
+facts to private campaign canon. See the [current pipeline](./Companion.md#evidence-first-query-pipeline).
+
+`result.tool_calls[]` and stored answer details add optional `retrieval_depth`
+(`light`/`deep`, default `light` for old records), `timeout_s` (effective call or
+round limit), and `timeout_layer` (`tool`, `http`, `retrieval_round`, or null).
+Existing status values stay unchanged. `result.diagnostics.deadlines` records the
+settings snapshot; recovery diagnostics include `recovery_trigger`,
+`recovery_disabled`, `recovery_deferred_need_ids`, and privacy-blocked needs when
+applicable. These diagnostics do not contain model reasoning or credentials.
+
+Per-call limits now default to ten minutes; sequential turn budgets are longer.
+Admission still returns 202 immediately. Keep using SSE or snapshots, allow
+reconnection, and cancel through the existing cancellation endpoint. Do not give
+an HTTP admission request the entire turn budget. Expired sessions and revoked
+sources remain enforced. Existing clients can ignore the additive diagnostics.
+
+## Assessment recovery and execution diagnostics
+
+An assessment exception preserves valid collected evidence and full citation
+references. One compact retry waits at most 60 seconds (also bounded by the
+configured assessment deadline/remaining turn time), with at most four complete
+records and 3,000 evidence tokens. A successful review continues normal synthesis
+and final verification. If semantic review remains unavailable, the final response
+can contain only backend-rendered, attributed `extractive` segments plus explicit
+limitations: `outcome="limited"`, `coverage="partial"`, `claims=[]`. Attribution
+is not proof of broader claims. Revoked/changed sources and cancellation still
+prevent publication. No unverified model draft is streamed.
+
+`result.diagnostics.evidence_assessment`, turn metrics and final-message
+`answer_details.diagnostics` include an `attempts` array with `stage`,
+`started_at`, `ended_at`, `elapsed_ms`, `input_evidence_count`, `input_source_count`,
+`compact_prompt_characters`, `compact_prompt_bytes`, `compact_prompt_tokens`,
+`model`, `configured_deadline_s`, `effective_deadline_s`,
+`structured_response_status`, `error_type` when failed, `validation_failures`, and
+`fallback_used`. Status is `valid`, `timed_out`, `invalid_structured_output`,
+`invalid_evidence_support`, `failed` or `cancelled` after a completed attempt.
+Summary fields identify fallback mode, retained records/unique sources, and
+counts actually used for synthesis/extraction. Diagnostics never contain raw
+provider error text or the private model draft.
+
+`diagnostics.evidence_omissions` records why a source record did not fit collection,
+assessment retry or extractive output. Full references/geometry/navigation remain
+in retained evidence for source navigation and revalidation, rather than entering
+every model request. Existing status/event enums, source lists and Answer Breakdown
+remain compatible; diagnostics and readiness fields are additive. Only final
+assistant messages expose answer details, under the existing ownership checks.

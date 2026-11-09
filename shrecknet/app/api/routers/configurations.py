@@ -22,6 +22,7 @@ from app.core.config_store import (
     LLMModelTarget,
     ReasoningEffort,
     Settings,
+    companion_required_turn_budget,
     normalize_validation_retry_settings,
     get_settings,
     reload_settings,
@@ -390,9 +391,9 @@ FIELD_UI_META.update({
     "companion_web_search_token": {"type":"string","secret":True,"help":"Write-only credential for the configured web retrieval provider."},
     "companion_enabled": {"type":"boolean","help":"Enable Character Companion after configuring synthesis and rapport models."},
     "companion_interim_enabled": {"type":"boolean","help":"Enable character commentary. V2 persists delivered comments in history."},
-    "companion_tool_timeout_s": {"type":"number","help":"Independent retrieval deadline per source, seconds."},
-    "companion_retrieval_timeout_s": {"type":"number","help":"Overall parallel retrieval deadline, seconds."},
-    "companion_turn_timeout_s": {"type":"integer","help":"Total worker execution deadline, seconds."},
+    "companion_tool_timeout_s": {"type":"number","help":"Per-source and synthesis deadline, seconds; default/maximum 600."},
+    "companion_retrieval_timeout_s": {"type":"number","help":"Parallel retrieval deadline per round; default 615 seconds, including collection overhead."},
+    "companion_turn_timeout_s": {"type":"integer","help":"Total execution deadline; default 10200 seconds covers sequential ten-minute calls, recovery and repair."},
     "companion_event_retention_days": {"type":"integer","help":"Replay-log retention in days; completed snapshots remain."},
     "companion_rapport_max_attempts": {"type":"integer","help":"Attempts before an audited failed evaluation advances the pair cursor."},
     "companion_max_evidence_tokens": {"type":"integer","help":"Evidence context budget estimated with the shared tokenizer and UTF-8 fallback."},
@@ -463,6 +464,11 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
             raise HTTPException(400, detail="Invalid Companion configuration") from exc
         if validated.companion_routing_timeout_s >= validated.companion_turn_timeout_s or validated.companion_evidence_timeout_s >= validated.companion_turn_timeout_s:
             raise HTTPException(400, detail="Companion stage deadlines must be below the turn deadline")
+        if any(key.startswith('companion_') and key.endswith('_timeout_s') for key in payload):
+            if validated.companion_retrieval_timeout_s < max(validated.companion_tool_timeout_s, validated.companion_web_timeout_s):
+                raise HTTPException(400, detail="Companion retrieval deadline must cover tool and web deadlines")
+            if validated.companion_turn_timeout_s < companion_required_turn_budget(validated):
+                raise HTTPException(400, detail="Companion turn deadline must cover sequential stages, recovery and repair; update timeout settings together")
         if not validated.companion_web_search_url and validated.model_companion_web_search.web_search_enabled and validated.model_companion_web_search.provider != "openrouter":
             raise HTTPException(400, detail="Companion model web search requires an OpenRouter target; disable search to make the tool unavailable")
     if "shreckworld_embedding_backend" in payload:

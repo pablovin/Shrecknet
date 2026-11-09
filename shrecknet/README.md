@@ -49,3 +49,13 @@ Configure CORS only in the repository-root `.env`; the API reads its read-only
 container mount directly. CORS settings are unavailable through `/config` and
 process environment overrides. See the [shared CORS guide](../Documentation/Deployment/BROWSER_CORS.md)
 for rollout, restart behavior, and legacy database cleanup.
+
+## Companion retrieval budgets
+
+Companion reuses Atlas plans, retrieves individual book questions through the
+light evidence path, and recovers permitted public information after local failures
+or evidence gaps. Personal memories are retrieved only for relevant needs; identity
+and traits always shape voice. Per-call defaults are ten minutes, with separate
+round/turn budgets and durable progress. A one-time startup configuration migration raises shorter saved timeouts;
+later administrator edits remain authoritative. See the [configuration rollout](../Documentation/Agents/Companion/Model%20Configuration.md#ten-minute-call-rollout)
+for coordinated API, worker, gateway and ShreckWorld settings.

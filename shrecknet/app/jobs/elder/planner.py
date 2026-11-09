@@ -53,6 +53,16 @@ def validate_bounded_cypher(
     return plan
 
 
+def single_query_plan(query: str) -> RetrievalPlan:
+    """Execute an already-planned question without another model planning call."""
+    return RetrievalPlan.model_validate({
+        'answer_goal': query,
+        'steps': [{'id': 'companion_search', 'operation': 'hybrid_search',
+                   'query': query, 'target_data_type': 'mixed', 'limit': 6,
+                   'evidence_type': 'brief_fact'}],
+    })
+
+
 def fallback_plan(query: str, grounding: dict[str, Any] | None = None) -> RetrievalPlan:
     normalized_query = re.sub(r"\s+", " ", query.casefold())
     exact_entities = [

@@ -273,3 +273,90 @@ def test_provider_active_state_migration_maps_legacy_valid_to_active(monkeypatch
     assert rows["provider_states"]["openai"]["active"] is True
     assert "valid" not in rows["provider_states"]["openai"]
     assert rows[MIGRATION_PROVIDER_ACTIVE_STATE_V7_KEY] is True
+
+
+def test_long_call_migration_raises_explicit_saved_deadlines(monkeypatch,tmp_path):
+    _patch_settings(monkeypatch,tmp_path)
+    _seed_runtime_config(tmp_path,RuntimeConfig(request_timeout_seconds=45,
+                                               chat_job_default_hedge_timeout_seconds=30))
+    current=config_store.get_runtime_config()
+    assert current.request_timeout_seconds==600
+    assert current.chat_job_default_hedge_timeout_seconds==600
+    assert _load_runtime_config_rows(tmp_path)[config_store.MIGRATION_COMPANION_TIMEOUTS_V11_KEY] is True
+    assert Settings(data_dir=str(tmp_path)).bootstrap_request_timeout_seconds==600
+
+
+def test_timeout_migration_updates_companion_routes_and_watchdog_only_once(monkeypatch,tmp_path):
+    _patch_settings(monkeypatch,tmp_path)
+    _seed_runtime_config(tmp_path,RuntimeConfig(request_timeout_seconds=45,
+        chat_job_default_hedge_timeout_seconds=30,chat_job_orphan_timeout_seconds=100,
+        chat_job_hedge_routes={
+            'companion.query_planner': {'provider_id':'openrouter','model':'custom','timeout_seconds':20},
+            'elder.query': {'provider_id':'openrouter','model':'other','timeout_seconds':25},
+        }))
+    current=config_store.load_runtime_config()
+    assert current.request_timeout_seconds == current.chat_job_default_hedge_timeout_seconds == 600
+    assert current.chat_job_orphan_timeout_seconds == 900
+    assert current.chat_job_hedge_routes['companion.query_planner'].timeout_seconds == 600
+    assert current.chat_job_hedge_routes['companion.query_planner'].model == 'custom'
+    assert current.chat_job_hedge_routes['elder.query'].timeout_seconds == 25
+    before=_load_runtime_config_rows(tmp_path)
+    config_store.load_runtime_config()
+    assert _load_runtime_config_rows(tmp_path) == before
+    config_store.update_runtime_config({'request_timeout_seconds':45,
+        'chat_job_default_hedge_timeout_seconds':30,'chat_job_orphan_timeout_seconds':100})
+    current=config_store.reload_runtime_config()
+    assert current.request_timeout_seconds == 45
+    assert current.chat_job_default_hedge_timeout_seconds == 30
+    assert current.chat_job_orphan_timeout_seconds == 100
+
+
+def test_timeout_migration_preserves_longer_limits_and_reserves_watchdog_overhead(monkeypatch,tmp_path):
+    _patch_settings(monkeypatch,tmp_path)
+    _seed_runtime_config(tmp_path,RuntimeConfig(request_timeout_seconds=1200,
+        chat_job_default_hedge_timeout_seconds=1800,chat_job_orphan_timeout_seconds=300,
+        chat_job_hedge_routes={'companion.query_planner':{
+            'provider_id':'openrouter','model':'custom','timeout_seconds':2400}}))
+    current=config_store.load_runtime_config()
+    assert current.request_timeout_seconds == 1200
+    assert current.chat_job_default_hedge_timeout_seconds == 1800
+    assert current.chat_job_hedge_routes['companion.query_planner'].timeout_seconds == 2400
+    assert current.chat_job_orphan_timeout_seconds == 2460
+
+
+def test_timeout_migration_applies_to_fresh_bootstrap(monkeypatch,tmp_path):
+    _patch_settings(monkeypatch,tmp_path,bootstrap_request_timeout_seconds=45)
+    current=config_store.load_runtime_config()
+    assert current.request_timeout_seconds == 600
+    assert _load_runtime_config_rows(tmp_path)[config_store.MIGRATION_COMPANION_TIMEOUTS_V11_KEY] is True
+
+
+def test_timeout_migration_failure_rolls_back_values_and_marker(monkeypatch,tmp_path):
+    _patch_settings(monkeypatch,tmp_path)
+    _seed_runtime_config_rows(tmp_path,{'request_timeout_seconds':45,'chat_job_default_hedge_timeout_seconds':30})
+    before=_load_runtime_config_rows(tmp_path)
+    with config_store._connect() as conn:
+        conn.execute(f"""CREATE TRIGGER reject_timeout BEFORE UPDATE ON {CONFIG_TABLE}
+            WHEN NEW.key='chat_job_default_hedge_timeout_seconds'
+            BEGIN SELECT RAISE(ABORT,'injected migration failure'); END""")
+    with pytest.raises(sqlite3.IntegrityError,match='injected migration failure'):
+        config_store.load_runtime_config()
+    assert _load_runtime_config_rows(tmp_path) == before
+    with config_store._connect() as conn:
+        conn.execute('DROP TRIGGER reject_timeout')
+    assert config_store.load_runtime_config().request_timeout_seconds == 600
+
+
+def test_timeout_migration_serializes_concurrent_startup(monkeypatch,tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    settings=_patch_settings(monkeypatch,tmp_path)
+    _seed_runtime_config_rows(tmp_path,{'request_timeout_seconds':45,'chat_job_default_hedge_timeout_seconds':30})
+    defaults=config_store._bootstrap_defaults(settings).model_dump()
+    def upgrade(_):
+        with config_store._connect() as conn:
+            config_store._migrate_companion_timeouts(conn,defaults)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(upgrade,range(2)))
+    values=_load_runtime_config_rows(tmp_path)
+    assert values['request_timeout_seconds']==values['chat_job_default_hedge_timeout_seconds']==600
+    assert values[config_store.MIGRATION_COMPANION_TIMEOUTS_V11_KEY] is True

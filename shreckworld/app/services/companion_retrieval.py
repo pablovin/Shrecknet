@@ -7,7 +7,7 @@ from app.repositories.source_scope import OntologyScope
 
 async def authorize(token, world_id, payload):
     base = get_settings().shrecknet_jwks_url.rsplit('/auth/', 1)[0]
-    async with httpx.AsyncClient(base_url=base, timeout=5, trust_env=False) as client:
+    async with httpx.AsyncClient(base_url=base, timeout=600, trust_env=False) as client:
         try:
             response = await client.get('/internal/companion/authorize', params={'tool': 'shreckworld'}, headers={'Authorization': f'Bearer {token}'})
             if response.status_code in {401, 403}:

@@ -274,3 +274,124 @@ CORS/authorization check or real Foundry v14 GM/player-sheet acceptance was run.
 The [implementation record](Rich%20Response%20Plan.md#verification-and-delivery-gates)
 keeps those production gates explicit. Rich responses default enabled for new/missing settings, preserving saved false values;
 these local checks do not authorize a claim of live deployment acceptance.
+
+## Retrieval execution verification (2026-11-09)
+
+The retrieval execution change adds regression coverage for Atlas plan reuse and
+scope validation, light/deep ShreckWorld payloads, conditional memory contracts,
+automatic operational/evidence-gap Web recovery, public-query privacy, shared
+recovery caps, saved timeout preservation, effective deadlines, cancellation and
+lease heartbeats. Required-model stage windows were tested after a simulated
+300-second elapsed interval, without waiting ten real minutes per unit test.
+Bounded graph reads reject returned parents outside pinned ontology/instance scope.
+
+Local Shrecknet checks used:
+
+```bash
+SHRECKNET_MEDIA_ROOT=/tmp/shrecknet-companion-test-media \
+SHRECKNET_DATA_DIR=/tmp/shrecknet-companion-tests \
+../.venv/bin/python -m pytest <affected test files> -o addopts='' -q
+```
+
+Affected files: `test_companion_atlas_retrieval.py`,
+`test_companion_index_coverage.py`, `test_companion_query_pipeline.py`,
+`test_companion_recovery.py`, `test_elder_query_v2.py`,
+`test_hybrid_neo4j_retriever.py`, `test_companion_answer_details.py`,
+`test_companion_chat_sessions.py`, `test_companion_rich_response.py`,
+`test_companion_foundry_context.py`, `test_character_agent_model_config.py`,
+`test_llm_status_operational.py`, and `test_celery_startup_cleanup.py`.
+The broad run passed 197 checks after deselecting the seven baseline failures
+below. The subsequent shared-retriever/Atlas run passed all ten checks, including
+three additional scope/embedding-deadline regressions (200 distinct passing checks).
+
+These failures also reproduce in an isolated baseline copy, without the retrieval
+execution implementation; they remain outside this change:
+
+- `test_companion_rich_response.py::test_presentation_enablement_cannot_change_legacy_pipeline_behavior`
+- `test_companion_foundry_context.py::test_admission_freezes_snapshot_preserves_identity_and_replays`
+- `test_companion_foundry_context.py::test_router_does_not_search_other_campaigns_when_foundry_scope_missing`
+- `test_companion_foundry_context.py::test_snapshot_reaches_synthesis_and_committed_history`
+- `test_character_agent_model_config.py::test_companion_pipeline_defaults_to_evidence_v2_for_missing_setting`
+- `test_character_agent_model_config.py::test_companion_pipeline_keeps_explicit_legacy_selection`
+- `test_character_agent_model_config.py::test_companion_initial_seed_selects_evidence_v2`
+
+They reference retired legacy routing/pipeline settings or outdated test doubles.
+The baseline admission reproduction retained the pre-existing working-tree web
+rate-limit change. No retired runtime branch was restored to satisfy those tests.
+
+Additional checks passed from their package directories:
+
+- ShreckWorld: `../.venv/bin/python -m pytest tests/test_query_v3.py tests/test_ontology_items.py tests/test_grounded_answer.py -o addopts='' -q` — 29 passed.
+- shreckLLM: `../.venv/bin/python -m pytest tests/test_config_store.py tests/test_streaming.py tests/test_api_integration.py -q` — all 50 selected checks passed; provider migrations preserve saved generation/hedge limits.
+- SDK: `../.venv/bin/python -m pytest tests/test_character_companion_sdk.py -q` — 8 passed; raw turn/history reads preserve additive diagnostics.
+
+Initial local collection failed because deployment media settings pointed into
+`/app`; setting the two `SHRECKNET_*` paths above resolved it. These checks do not
+constitute a full repository test run. Real provider/gateway/proxy ten-minute
+smoke tests, worker-concurrency/load tests, browser journeys and curated semantic
+memory/relevance/grounding evaluation were not run. They remain deployment gates.
+The [startup configuration migrations](./Model%20Configuration.md#ten-minute-call-rollout)
+now upgrade shorter saved timeouts automatically; no schema migration or
+re-embedding is needed.
+
+## Automatic timeout configuration migration verification (2026-11-09)
+
+The one-time startup migrations supersede the original opt-in saved-timeout policy.
+They raise shorter Shrecknet call/round/turn limits and gateway generation/hedge
+limits, retain longer valid budgets, align the watchdog and Companion hedge routes,
+and leave subsequent administrator edits unchanged. Each configuration database
+records its own marker in the same transaction as its changes.
+
+New focused tests exercise legacy partial/full configurations, fresh databases and
+short bootstrap seeds, longer custom limits, idempotency, subsequent edits/reload,
+concurrent migration attempts, rollback after an injected SQLite write failure,
+and retry after that failure. Configuration controls unrelated to timeout upgrades
+remain unchanged. No live deployment database was edited during these tests.
+
+Checks run from each package directory:
+
+- Shrecknet: `../.venv/bin/python -m pytest tests/test_companion_timeout_migration.py tests/test_companion_query_pipeline.py tests/test_character_agent_model_config.py -o addopts='' -q`, with the three previously reproduced retired-pipeline configuration tests listed above deselected — 115 passed, 3 deselected. Use the writable `SHRECKNET_*` test paths above.
+- shreckLLM: `../.venv/bin/python -m pytest tests/test_config_store.py tests/test_api_integration.py tests/test_streaming.py -o addopts='' -q` — 55 passed.
+
+The production startup/reload procedure, external provider behavior, browser tests
+and load benchmarks were not run for this migration. Back up both configuration
+stores, drain turns and restart/reload Shrecknet API/workers and the gateway
+before verifying their configuration endpoints. ShreckWorld's explicit environment
+overrides remain outside the configuration-database migration.
+
+## Compact assessment and evidence preservation verification (2026-11-09)
+
+The assessment recovery checks cover injected timeout/provider/JSON/schema/support
+failures and an actual short asynchronous deadline. Successful compact recovery
+resumes synthesis and final verification. Persistent failures retain full source
+references and render only attributed extracts, with partial coverage and explicit
+limitations. Tests also cover failed reassessment with earlier validated support,
+final-verifier failure after recovery, empty evidence, malicious source markers/
+HTML, output/collection/retry omissions, source revocation, saved owner-only
+Answer Breakdown diagnostics, and unchanged compact evidence budgets.
+
+Readiness checks cover mixed indexed/unindexed/incompatible books, independent
+single/planned source subsets, scoped attention IDs, continued use of active
+indexes during queued/failed replacements, and compatible generations with no
+chunks. Counts do not overlap. The typed SDK retains attention details and raw
+Companion result/history diagnostics. Full navigation geometry/hashes remain
+available in retained evidence but do not enter the model evidence projection.
+
+Commands run from their package directories:
+
+- Shrecknet: `../.venv/bin/python -m pytest tests/test_companion_assessment_recovery.py tests/test_companion_query_pipeline.py tests/test_companion_index_coverage.py tests/test_companion_answer_details.py tests/test_companion_rich_response.py tests/test_companion_chat_sessions.py tests/test_companion_atlas_retrieval.py tests/test_companion_recovery.py tests/test_companion_timeout_migration.py tests/test_character_agent_model_config.py -o addopts='' -q` — 178 passed, with the previously documented legacy presentation/config tests deselected (4). Use the writable `SHRECKNET_*` environment paths above.
+- ShreckWorld: `../.venv/bin/python -m pytest tests/test_structured_retrieval.py tests/test_query_v3.py tests/test_ontology_items.py tests/test_world_reader_api.py tests/test_grounded_answer.py -o addopts='' -q` — 57 passed.
+- SDK: `../.venv/bin/python -m pytest tests/test_shreckworld_reader.py tests/test_character_companion_sdk.py -o addopts='' -q` — 15 passed.
+
+A subsequent focused run of `tests/test_companion_assessment_recovery.py` passed
+all 20 checks, including the additional guard against reusing previously
+`unverified`/contradicted quotes as verified support and a smaller compact-retry
+prompt-size assertion. These are local affected-suite checks, not a full repository run. Live provider/
+gateway latency and ten-minute deadlines, load behavior and browser journeys were
+not exercised. The existing Answer Breakdown is preserved through additive
+schemas, full evidence/navigation references, excerpts and warning/count fields;
+no frontend implementation was changed. Deploy the ShreckWorld publisher and
+Companion workers together for per-book attention details. This change requires
+no SQL schema migration or re-embedding. Existing timeout migration markers and
+600-second primary assessment limits remain; compact retries add at most sixty
+seconds per assessment invocation within the turn budget.

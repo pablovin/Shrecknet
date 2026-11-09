@@ -648,6 +648,7 @@ def run_shreckworld_agent(
     source_trace["synthesis_ms"] = trace.synthesis_ms
     source_trace["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
     stage("completed")
+    attention = source_trace.pop('sources_requiring_attention', [])
     return ShreckWorldQueryResponse(
         shreckworld_id=None if isinstance(shreckworld_id, OntologyScope) else shreckworld_id,
         ontology_id=shreckworld_id.ontology_id if isinstance(shreckworld_id, OntologyScope) else None, query=request.query, answer=answer, citations=citations,
@@ -655,6 +656,7 @@ def run_shreckworld_agent(
         answer_status=answer_status, answer_content=answer_content, claims=claims,
         evidence=evidence, missing_information=missing_information, conflicts=conflicts,
         source_warnings=source_warnings, query_interpretation=interpretation,
+        sources_requiring_attention=attention,
         source_coverage=QuerySourceCoverage(
             requested_source_count=int(source_trace["requested_sources"]),
             searched_source_count=int(source_trace["sources_searched"]),

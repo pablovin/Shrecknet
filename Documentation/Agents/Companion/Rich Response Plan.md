@@ -145,7 +145,7 @@ Existing installations with a saved false value can enable
 `companion_rich_response_enabled` in Administration's Companion group or `/config/`. Preserve the existing six model settings and saved
 pipeline choice. `companion_rich_response_timeout_s` defaults to two seconds;
 `companion_web_images_enabled` defaults false and requires a capable JSON provider.
-These flags never bypass ordinary per-turn web/source permission.
+These flags never bypass ordinary web/source availability.
 
 No new Companion SQL migration, historical rich backfill, graph rewrite or
 re-embedding is needed. The redesign's durable-commentary migration remains a

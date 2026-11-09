@@ -74,7 +74,7 @@ grounded answer mode. Until changed through that API, the legacy
 variables supply the initial target.
 
 `SHRECKWORLD_SHRECKLLM_BASE_URL` defaults to `http://shreckllm:8110`; the
-synthesis deadline defaults to 25 seconds and the evidence budget to 8,000
+synthesis deadline defaults to 600 seconds and the evidence budget to 8,000
 estimated tokens. Set the environment variables to match the configured
 ShreckLLM deployment. The optional
 `SHRECKLLM_INTERNAL_SERVICE_TOKEN` is forwarded for deployments using internal
@@ -99,3 +99,8 @@ Canonical contracts:
 - [Upload/autofill](../Documentation/API/SHRECKWORLD_UPLOAD_API.md)
 - [Indexing/jobs/readiness](../Documentation/API/SHRECKWORLD_INDEXING_API.md)
 - [Reader/query/rule review](../Documentation/API/SHRECKWORLD_READER_API.md)
+
+Companion retrieval uses the existing `single` evidence strategy for an individual
+planned question and reserves `planned` for explicit deep research. Companion
+owns cross-source evidence review and public-Web recovery. See the
+[Companion execution contract](../Documentation/Agents/Companion/Companion.md#evidence-first-query-pipeline).

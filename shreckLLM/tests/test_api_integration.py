@@ -1115,7 +1115,7 @@ def test_unconfigured_usage_tag_uses_same_model_automatic_hedge(tmp_path, monkey
         hedge_request, _delay_s, telemetry, timeout_s = plan
         assert hedge_request.provider_id == request.provider_id
         assert hedge_request.model == request.model
-        assert timeout_s == 120.0
+        assert timeout_s == 600.0
         assert telemetry["route"] == "automatic_same_model"
     finally:
         # No background workers were started by this direct policy test.

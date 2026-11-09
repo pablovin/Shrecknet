@@ -15,7 +15,7 @@ from app.graph.neo4j import get_driver
 from app.services.character_agent_service import CharacterAgentService
 from app.services.character_memory_service import CharacterMemoryService
 from app.services.companion_authorization import grant
-from app.schemas.character_companion import Evidence
+from app.schemas.character_companion import Evidence, SourceReadinessRead
 from app.models.character_companion import utcnow
 
 CATEGORIES = {"foundry": "user_provided", "user_attachment": "user_provided", "atlas": "canonical_world", "shreckworld": "document_evidence", "chronicle": "chronicle_record", "web": "external_web", "character_memory": "subjective_memory"}
@@ -27,6 +27,7 @@ class ScopedEvidence:
     rows: list[dict]
     source_coverage: dict[str, int]
     trace: dict | None = None
+    source_attention: list[dict] | None = None
 
 
 def evidence(tool, identifier, text, *, title="Source", reference=None, scope=None, rank=1, structured=None):
@@ -65,23 +66,34 @@ class CompanionRetrieval:
         self.turn, self.actor, self.settings = turn, actor, get_settings()
         self.scope = getattr(turn, "execution_context", None) if getattr(turn, "execution_context", None) is not None else (turn.request.get("context") or {})
 
-    async def retrieve(self, tool, query):
+    async def retrieve(self, tool, query, *, planned_call=None):
         start = time.monotonic()
         try:
-            result = await asyncio.wait_for(getattr(self, tool)(query), timeout=self.settings.companion_web_timeout_s if tool == "web" else self.settings.companion_tool_timeout_s)
+            options = {'planned_call': planned_call} if tool in {'atlas', 'shreckworld'} else {}
+            timeout = self.settings.companion_web_timeout_s if tool == 'web' else self.settings.companion_tool_timeout_s
+            result = await asyncio.wait_for(getattr(self, tool)(query, **options), timeout=timeout)
             rows = result.rows if isinstance(result, ScopedEvidence) else result
-            response = {"tool": tool, "status": "ok" if rows else "empty", "evidence": rows[:6], "elapsed_ms": round((time.monotonic()-start)*1000), "coverage": "partial"}
+            response = {"tool": tool, "status": "ok" if rows else "empty", "evidence": rows[:6], "elapsed_ms": round((time.monotonic()-start)*1000), "coverage": "partial", "timeout_s": timeout}
             if isinstance(result, ScopedEvidence):
                 response["source_coverage"] = result.source_coverage
+                response['sources_requiring_attention'] = result.source_attention or []
                 if result.trace is not None:
                     response["source_trace"] = result.trace
                 if result.source_coverage["sources_requiring_reindex"]:
-                    response.update(status="unavailable", reason="incompatible_index")
+                    response.update(coverage='partial', source_readiness='partial', reason="incompatible_index")
                 elif result.source_coverage["sources_without_ready_index"]:
-                    response.update(status="unavailable", reason="index_not_ready")
+                    response.update(coverage='partial', source_readiness='partial', reason="index_not_ready")
+                elif result.source_attention:
+                    response.update(coverage='partial', source_readiness='partial')
+                else:
+                    response['source_readiness'] = 'ready'
+            if len(rows) > 6:
+                response['evidence_omissions'] = [{'evidence_id': row['evidence_id'], 'reason':'tool_record_limit'} for row in rows[6:]]
             return response
         except asyncio.TimeoutError:
-            return {"tool": tool, "status": "timed_out", "evidence": [], "coverage": "unknown"}
+            return {"tool": tool, "status": "timed_out", "evidence": [], "coverage": "unknown", "timeout_s": timeout, "timeout_layer": "tool"}
+        except httpx.TimeoutException:
+            return {"tool": tool, "status": "timed_out", "evidence": [], "coverage": "unknown", "timeout_s": timeout, "timeout_layer": "http"}
         except Exception as exc:
             logger.warning("Companion retrieval %s failed: %s: %s", tool, type(exc).__name__, str(exc)[:500])
             return {"tool": tool, "status": "unavailable", "evidence": [], "coverage": "unknown"}
@@ -95,7 +107,7 @@ class CompanionRetrieval:
                          reference={key: row.get(key) for key in ("id", "scene_id", "source_type", "updated_at")}, scope={"character_agent_id": self.turn.character_agent_id, "ontology_id": self.scope.get("character_ontology_id") or self.scope.get("ontology_id")},
                          structured={key: row.get(key, []) for key in ("emotions", "beliefs", "impacts")}) for row in rows]
 
-    async def atlas(self, query):
+    async def atlas(self, query, *, planned_call=None):
         if not self.scope.get("ontology_id"):
             return []
         from app.integrations.retrieval.neo4j_retriever import HybridNeo4jGraphRetriever
@@ -104,16 +116,22 @@ class CompanionRetrieval:
         async def factory():
             async with get_driver().session(database=self.settings.neo4j_database) as graph:
                 yield graph
-        retriever = HybridNeo4jGraphRetriever(session_factory=factory)
-        from app.jobs.elder.planner import create_retrieval_plan
+        retriever = HybridNeo4jGraphRetriever(session_factory=factory, embedding_timeout_s=self.settings.companion_tool_timeout_s)
+        from app.jobs.elder.planner import create_retrieval_plan, single_query_plan, validate_bounded_cypher
         from app.integrations.llm.shreckllm_client import ShreckLLMClient
-        async with ShreckLLMClient(base_url=self.settings.shreckllm_base_url,
+        if planned_call is not None and planned_call.atlas_plan is not None:
+            plan = planned_call.atlas_plan.model_copy(deep=True)
+        elif planned_call is not None and planned_call.retrieval_depth == 'deep':
+            async with ShreckLLMClient(base_url=self.settings.shreckllm_base_url,
                                   timeout=self.settings.companion_tool_timeout_s, max_retries=0) as client:
-            plan = await create_retrieval_plan(llm_client=client,
-                model=self.settings.model_elder_planner.model_copy(update={"web_search_enabled":False}),
-                repair_model=self.settings.model_agents_repair_json.model_copy(update={"web_search_enabled":False}),
-                query=query, grounding={"ontology_ids":[self.scope["ontology_id"]]},
-                usage_tag="companion.elder_planning")
+                plan = await create_retrieval_plan(llm_client=client,
+                    model=self.settings.model_elder_planner.model_copy(update={"web_search_enabled":False}),
+                    repair_model=self.settings.model_agents_repair_json.model_copy(update={"web_search_enabled":False}),
+                    query=query, grounding={"ontology_ids":[self.scope["ontology_id"]]},
+                    usage_tag="companion.elder_planning")
+        else:
+            plan = single_query_plan(query)
+        plan = validate_bounded_cypher(plan, [self.scope['ontology_id']])
         rows, _, _ = await retrieve_plan(retriever, plan=plan, ontology_ids=[self.scope["ontology_id"]], instance_id=None, candidate_limit=30, rerank_limit=6)
         records = list({row.node_id:row for values in rows.values() for row in values}.values())
         fields = {}
@@ -133,16 +151,17 @@ class CompanionRetrieval:
                          scope={"ontology_id": self.scope["ontology_id"]}, structured={'fields':fields[row.node_id]} if fields.get(row.node_id) else None)
                 for row in records]
 
-    async def shreckworld(self, query):
+    async def shreckworld(self, query, *, planned_call=None):
         identifier = self.scope.get("shreckworld_id") or self.scope.get("ontology_id")
         direct = not self.scope.get("shreckworld_id")
         path = f"/ontologies/{identifier}" if direct else f"/shreckworlds/{identifier}"
         if not identifier or not self.settings.shreckworld_base_url:
             return []
-        payload = {"query": query[:4000], "mode": "evidence", "retrieval_strategy": "planned", "top_k": 6}
+        strategy = 'planned' if planned_call is not None and planned_call.retrieval_depth == 'deep' else 'single'
+        payload = {"query": query[:4000], "mode": "evidence", "retrieval_strategy": strategy, "top_k": 6}
         if self.scope.get("library_item_ids"):
             payload["library_item_ids"] = self.scope["library_item_ids"]
-        async with httpx.AsyncClient(base_url=self.settings.shreckworld_base_url, follow_redirects=False) as client:
+        async with httpx.AsyncClient(base_url=self.settings.shreckworld_base_url, timeout=self.settings.companion_tool_timeout_s, follow_redirects=False) as client:
             response = await client.post(f"{path}/companion-evidence", json=payload, headers={"Authorization": f"Bearer {grant(self.turn, 'shreckworld')}"})
             response.raise_for_status()
             data = response.json()
@@ -153,6 +172,9 @@ class CompanionRetrieval:
             text = (row.get("evidence_text") if planned else None) or row.get("excerpt") or row.get("text") or ""
             if planned and len(text) > 8000:
                 trace["omitted_oversized_units"] = trace.get("omitted_oversized_units", 0) + 1
+                trace.setdefault('evidence_omissions', []).append({
+                    'source_id': row.get('source_id'), 'library_item_id': row.get('library_item_id'),
+                    'reason':'oversized_evidence_unit', 'max_characters':8000})
                 continue
             groups = [g for g in data.get("evidence_groups", []) if g["evidence_id"] == row.get("source_id")]
             rows.append(evidence("shreckworld", str(row.get("library_item_id", identifier)) + ":" + str(row.get("chunk_id") or row.get("id") or i),
@@ -163,14 +185,19 @@ class CompanionRetrieval:
         keys = ("requested_source_count", "searched_source_count", "sources_without_ready_index", "sources_requiring_reindex")
         if any(type(coverage[key]) is not int or coverage[key] < 0 for key in keys):
             raise ValueError("invalid_source_coverage")
-        return ScopedEvidence(rows, {key: coverage[key] for key in keys}, trace)
+        if coverage['searched_source_count'] > coverage['requested_source_count'] or any(coverage[key] > coverage['requested_source_count'] for key in keys[2:]):
+            raise ValueError('invalid_source_coverage')
+        attention = []
+        for item in data.get('sources_requiring_attention') or []:
+            attention.append(SourceReadinessRead.model_validate(item).model_dump())
+        return ScopedEvidence(rows, {key: coverage[key] for key in keys}, trace, attention)
 
     async def chronicle(self, query):
         if not self.settings.shreckrpg_base_url:
             return []
         payload = {"query": query[:4000], "ontology_id": self.scope.get("chronicle_ontology_id"), "limit": 6,
                    "chronicle_ids": [self.scope["chronicle_id"]] if self.scope.get("chronicle_id") else None}
-        async with httpx.AsyncClient(base_url=self.settings.shreckrpg_base_url, follow_redirects=False) as client:
+        async with httpx.AsyncClient(base_url=self.settings.shreckrpg_base_url, timeout=self.settings.companion_tool_timeout_s, follow_redirects=False) as client:
             response = await client.post("/chronicles/companion-search", json=payload, headers={"Authorization": f"Bearer {grant(self.turn, 'chronicle')}"})
             response.raise_for_status()
             data = response.json()
@@ -197,7 +224,7 @@ class CompanionRetrieval:
         # Configured retrieval provider must return {results:[{title,url,snippet}]}.
         # No page fetching: unsafe result URLs are discarded, not followed.
         headers = {"Authorization": f"Bearer {self.settings.companion_web_search_token}"} if self.settings.companion_web_search_token else {}
-        async with httpx.AsyncClient(follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=self.settings.companion_web_timeout_s, follow_redirects=False) as client:
             response = await client.post(self.settings.companion_web_search_url, json={"query": query[:500], "limit": 6, **({"include_images": True} if self.settings.companion_rich_response_active and self.settings.companion_web_images_enabled else {})}, headers=headers)
             response.raise_for_status()
             data = response.json()

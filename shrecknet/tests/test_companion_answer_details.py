@@ -51,3 +51,12 @@ async def test_message_details_are_owner_only_and_legacy_and_user_messages_stay_
         assert (await repo.message_records([assistant],user.id+1))[0]['answer_details'] is None
         turn.result = {'text': 'Legacy', 'citations': []}
         assert (await repo.message_records([assistant],user.id))[0]['answer_details'] is None
+
+
+def test_stored_answer_details_keep_additive_deadline_and_depth_diagnostics():
+    from app.schemas.character_companion import AnswerDetailsRead
+    result=build_answer('No verified result.',[],[{
+        'tool':'shreckworld','status':'timed_out','evidence':[],'retrieval_depth':'deep',
+        'timeout_s':600,'timeout_layer':'tool'}])
+    call=AnswerDetailsRead.model_validate(result).tool_calls[0]
+    assert call.retrieval_depth=='deep' and call.timeout_s==600 and call.timeout_layer=='tool'

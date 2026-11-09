@@ -33,3 +33,7 @@ This folder contains release notes by application version.
 - [Contextual Foundry Companion (shipped in 0.4.0)](unreleased-foundry-contextual-companion.md) - Compact chat, table/World grounding, permission-filtered attachments and snapshot evidence.
 
 - [Foundry v0.4.0](./foundry-v0.4.0.md) - Contextual Companion sidecar, safe table/document snapshots, scoped workspaces, guided setup and installable release.
+
+- [Foundry v0.5.0](./foundry-v0.5.0.md) - Rich Companion replies, general-knowledge opt-in, Foundry context v2 and richer progress feedback.
+
+- [Unreleased Companion retrieval execution](./unreleased-companion-retrieval.md) — reusable Atlas plans, light/deep book evidence, relevant memories, automatic public-Web recovery and coordinated ten-minute call budgets.

@@ -1,5 +1,12 @@
 # Companion query pipeline redesign plan
 
+The [retrieval execution record](./Retrieval%20Execution%20Plan.md) refines this
+original design with implemented Atlas plan reuse, light/deep ShreckWorld calls,
+conditional personal memories, automatic Web recovery and ten-minute call limits.
+For current behavior and effective configuration, use [Companion](./Companion.md)
+and [model configuration](./Model%20Configuration.md#ten-minute-call-rollout).
+
+
 Status: implemented behind `companion_query_pipeline_version="evidence_v2"`;
 live provider, production latency and human grounding acceptance remain deployment gates.
 This extends the [Companion backend plan](Companion%20Backend%20Plan.md).
@@ -103,7 +110,7 @@ for character voice with search disabled; use a direct template if it fails.
 Use the existing `model_companion_routing` role for a separate, small structured
 call after resolution. Explicit resolution and reuse do not need another ontology
 LLM call. Inputs include the question/history, validated ontology metadata,
-available sources and their scopes, Foundry context, and tool/web permissions.
+available sources and their scopes, Foundry context, and tool availability.
 
 Proposed validated plan shape:
 
@@ -208,12 +215,12 @@ system/edition, source counts and omitted-budget diagnostics. Cache keys include
 resolved scope, query, source subset and revision; retain current ShreckWorld and
 Foundry cache restrictions.
 
-Provider web search defaults to enabled on its dedicated model target. Existing
-turn-level `tools.web` (`disabled`, `allow`, `require`) still gates execution;
-default model capability does not override user permission. If required web is
-unavailable, report that explicitly. Public query planning must not append private
-Foundry names, chat history or campaign facts to web queries automatically.
-If private details are necessary, ask before submitting them externally.
+Provider web search defaults to enabled on its dedicated model target. Web is
+always offered to the router whenever a provider is configured; there is no
+per-turn client permission. The legacy `tools.web` field is ignored. Public query
+planning must not append private Foundry names, chat history or campaign facts to
+web queries automatically. If private details are necessary, ask before submitting
+them externally.
 
 ## 4. Assess evidence and recover missing information
 
@@ -419,7 +426,7 @@ Pydantic schemas and deterministic validators in the same implementation change.
    idempotent replay, revision races and cancellation before/after update commit.
 3. **Parallel tools.** Wire source-specific queries to Elder, planned ShreckWorld
    and the dedicated web role. Test independent exceptions/timeouts, partial
-   success, grants, index readiness, query privacy, web permission and cache scope.
+   success, grants, index readiness, query privacy, web availability and cache scope.
 4. **Assessment/grounding.** Add coverage, contradictions, one recovery round,
    factual verification and explicit fallback policy. Test invented citations,
    real citation supporting the wrong claim, irrelevant exact quotes, wrong

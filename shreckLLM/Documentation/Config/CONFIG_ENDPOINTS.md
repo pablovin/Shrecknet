@@ -67,6 +67,22 @@ Request body (partial patch supported):
 It applies to each provider attempt for every provider, including `ollama`,
 `ollama_cloud`, `openai`, `anthropic`, `deepinfra`, and `openrouter`.
 Updating it hot-rebuilds the provider adapters; no service restart is required.
+New installations bootstrap at 600 seconds per attempt. The one-time startup
+configuration migration `migration_companion_timeouts_v11_applied` raises shorter
+saved `request_timeout_seconds` and `chat_job_default_hedge_timeout_seconds` values
+to 600 seconds. It raises shorter non-null `timeout_seconds` on explicit
+`companion.*` hedge routes without changing their provider/model, and preserves
+unrelated route limits. The orphan watchdog becomes at least 900 seconds and at
+least the longest configured attempt plus 60 seconds. Longer saved limits remain.
+This shared generation timeout affects all callers, including Companion.
+The migration's writes and marker are atomic in `shreckllm_config.db`; failed
+writes roll back and concurrent startups serialize. After the first successful
+migration, later API edits are preserved on reload/restart. Back up the config DB
+and restart/reload all gateway processes to adopt the migration; no SQL schema
+change is required. See the [coordinated rollout](../../../Documentation/Agents/Companion/Model%20Configuration.md#ten-minute-call-rollout).
+Caller deadlines, queue budgets and the logical-job orphan watchdog still apply.
+Provider-default migrations preserve saved execution, queue and hedge controls;
+installing new provider metadata does not reset these values.
 
 The frontend discovers this field through `GET /config/schema`, where it is
 reported as `frontend_editable: true` and `change_impact: hot`.

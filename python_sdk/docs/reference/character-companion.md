@@ -2,6 +2,15 @@
 
 Private canonical-character conversations; see the Character Companion workflow guide.
 
+Turn results remain raw dictionaries and preserve optional retrieval diagnostics:
+`tool_calls[].retrieval_depth`, `timeout_s`, `timeout_layer`, and
+`result.diagnostics` (including compact assessment attempts/fallback),
+`tool_calls[].source_readiness` and `sources_requiring_attention`. Final message
+`answer_details.diagnostics` preserves the same assessment trace; `extractive`
+segments attribute quotes without asserting verified claims. Existing records may omit these keys. Server-planned light/
+deep retrieval, conditional memory and automatic public-Web recovery do not add
+required SDK arguments. See the [workflow guide](../character_companion.md#retrieval-recovery-and-long-running-turns).
+
 ## Methods
 
 ### `capabilities(self)`

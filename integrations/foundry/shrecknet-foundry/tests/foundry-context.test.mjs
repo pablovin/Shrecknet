@@ -67,7 +67,6 @@ test("ambiguous contextual admissions retry the original snapshot and key despit
   await companionActions.sendCompanionMessage.call(app);
   docs.get("Actor.bao").name = "Changed after admission";
   docs.get("Actor.bao")._stats.modifiedTime = 99;
-  w.state().webAllowed = false;
   await companionActions.sendCompanionMessage.call(app);
   assert.deepEqual(calls[0], calls[1]);
   assert.equal(calls[0].body.foundry_context.documents[0].name, "Bao");
@@ -77,7 +76,7 @@ test("ambiguous contextual admissions retry the original snapshot and key despit
   assert.equal(w.pendingTurn, null);
 });
 
-test("web permission does not broaden detached Foundry searches to unrelated world lore", async () => {
+test("web availability does not broaden detached Foundry searches to unrelated world lore", async () => {
   let body;
   const { app, w } = fixture(async (path, options) => { body = options.body; return { turn_id: "turn" }; });
   w.capabilities = { tools: { web: { available: true } } };

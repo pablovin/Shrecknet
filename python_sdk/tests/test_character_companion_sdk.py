@@ -73,7 +73,8 @@ async def test_foundry_snapshot_forwarded_without_changing_table_identifiers():
 
 @pytest.mark.asyncio
 async def test_answer_breakdown_survives_turn_and_message_reads():
-    details = {'tool_calls': [{'tool':'atlas','status':'ok','query':'forest','cache_hit':False,'elapsed_ms':4,'returned_count':1,'evidence_ids':['e1']}], 'evidence':[{'evidence_id':'e1','excerpt':'Old trees'}], 'segments':[{'id':'s1','text':'Forest','kind':'fact','evidence_ids':['e1']}], 'coverage':'complete','warnings':[]}
+    details = {'tool_calls': [{'tool':'atlas','status':'ok','query':'forest','cache_hit':False,'elapsed_ms':4,'returned_count':1,'evidence_ids':['e1'],'retrieval_depth':'light','timeout_s':600,'timeout_layer':None}], 'evidence':[{'evidence_id':'e1','excerpt':'Old trees'}], 'segments':[{'id':'s1','text':'Forest','kind':'fact','evidence_ids':['e1']}], 'coverage':'complete','warnings':[]}
+    details['diagnostics']={'evidence_assessment':{'fallback_used':True,'retained_evidence_count':1}}
     def handler(request):
         if request.url.path.endswith('/messages'):
             return httpx.Response(200,json={'items':[{'id':'message','answer_details':details}], 'next_cursor':None})

@@ -4,7 +4,7 @@ import logging
 from datetime import timedelta
 from sqlalchemy import select, update, delete
 from app.core.config_store import get_settings
-from app.jobs.companion.runner import database
+from app.jobs.companion.runner import database, OUTBOX_STALE_AFTER_S
 from app.models.character_companion import CompanionOutbox, CompanionTurn, CompanionEvent, CompanionAttachment, CompanionRapportAudit, utcnow
 from app.repositories.character_companion_repository import CompanionRepository
 from app.schemas.character_companion import DIMENSIONS, TERMINAL
@@ -68,7 +68,7 @@ async def dispatch_once():
     from app.tasks.character_companion import process_companion_outbox
     s = get_settings()
     async with database() as session:
-        stale = utcnow() - timedelta(seconds=s.companion_turn_timeout_s + 30)
+        stale = utcnow() - timedelta(seconds=OUTBOX_STALE_AFTER_S)
         rows = list((await session.execute(select(CompanionOutbox).where(CompanionOutbox.status == "running", CompanionOutbox.updated_at < stale))).scalars())
         for row in rows:
             if row.kind == "turn":

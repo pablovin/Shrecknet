@@ -70,18 +70,18 @@ Response includes execution details:
 - Initial model list: empty; the provider remains unavailable until its API key
   and at least one model have both been validated
 - The API key and model list can be managed through the generic provider endpoints.
-- Provider requests use a five-minute timeout.
+- Provider requests default to the shared 600-second runtime timeout; a one-time configuration migration raises shorter saved limits and preserves subsequent edits.
 
 ## OpenRouter defaults
 - Provider id: `openrouter`
 - OpenAI-compatible base URL: `https://openrouter.ai/api/v1`
 - Initial model list: empty; the provider remains unavailable until its API key
   and at least one model have both been validated
-- Provider requests use a five-minute timeout.
+- Provider requests default to the shared 600-second runtime timeout; a one-time configuration migration raises shorter saved limits and preserves subsequent edits.
 - Every OpenRouter chat sends `provider.sort: "latency"` with provider
   fallbacks enabled. Model IDs remain unchanged; this is a routing preference,
   not a latency guarantee.
-- Every model gets an automatic independent same-model hedge (120-second
+- Every model gets an automatic independent same-model hedge (600-second
   attempt timeout by default) when its own latency cohort crosses the tail
   percentile; optional configuration can select an approved alternate model.
 

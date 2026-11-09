@@ -218,3 +218,12 @@ def test_integer_ontology_scopes_read_and_query_without_a_collection():
             with pytest.raises(ValueError):
                 await sdk.shreckworld.sources(0)
     asyncio.run(scenario())
+
+
+def test_source_attention_details_survive_typed_query_response():
+    from shrecknet_client.shreckworld import KnowledgeAnswer
+    response=KnowledgeAnswer(shreckworld_id=None,ontology_id=7,query='Rule',answer='Evidence',
+        citations=[],sources_requiring_attention=[{'library_item_id':'book','title':'Rules',
+        'reason':'incompatible_index'}])
+    assert response.sources_requiring_attention[0].library_item_id=='book'
+    assert response.sources_requiring_attention[0].reason=='incompatible_index'

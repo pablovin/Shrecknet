@@ -151,6 +151,12 @@ class KnowledgeConflict(BaseModel):
     citation_ids: list[str]
 
 
+class KnowledgeSourceReadinessIssue(BaseModel):
+    library_item_id: str
+    title: str
+    reason: Literal['index_not_ready', 'incompatible_index', 'empty_index']
+
+
 class KnowledgeSourceCoverage(BaseModel):
     requested_source_count: int
     searched_source_count: int
@@ -236,6 +242,7 @@ class KnowledgeAnswer(BaseModel):
     conflicts: list[KnowledgeConflict] = Field(default_factory=list)
     source_warnings: list[KnowledgeSourceWarning] = Field(default_factory=list)
     source_coverage: KnowledgeSourceCoverage | None = None
+    sources_requiring_attention: list[KnowledgeSourceReadinessIssue] = Field(default_factory=list)
     retrieval_strategy: Literal["single", "planned"] = "single"
     query_plan: KnowledgeQueryPlan | None = None
     evidence_coverage: KnowledgeEvidenceCoverage | None = None

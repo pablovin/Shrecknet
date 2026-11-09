@@ -159,7 +159,7 @@ class CharacterCompanionService:
         from app.repositories.auth_sessions import AuthSessionRepository
         if not await AuthSessionRepository(self.session).rate_limit(f"companion-turn:{actor.id}", int(time.time()), 60, 20, commit=False):
             fail(429, "turn_limit_exceeded")
-        if payload.tools.web != "disabled" and not await AuthSessionRepository(self.session).rate_limit(f"companion-web:{actor.id}", int(time.time()), 60, 8, commit=False):
+        if web_available(settings) and not await AuthSessionRepository(self.session).rate_limit(f"companion-web:{actor.id}", int(time.time()), 60, 8, commit=False):
             fail(429, "web_rate_limited")
         chat = await self.chat(actor, chat_id)
         if payload.clarification_id and (not chat.pending_clarification or chat.pending_clarification.get("id") != str(payload.clarification_id)):
@@ -184,8 +184,6 @@ class CharacterCompanionService:
             context = await resolve_foundry_scope(self.session, body["foundry_context"], context)
             foundry_sources = validate_foundry_budget(body["foundry_context"], settings)
         body["context"] = context
-        if payload.tools.web == "require" and not web_available(settings):
-            fail(503, "required_tool_unavailable")
         if payload.retry_of_turn_id:
             old = await self.repo.owned(CompanionTurn, str(payload.retry_of_turn_id), actor.id)
             if old.chat_id != chat.id or old.status not in {"failed", "cancelled", "interrupted"}:

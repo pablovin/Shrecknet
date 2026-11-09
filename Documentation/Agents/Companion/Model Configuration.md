@@ -8,8 +8,8 @@ than new provider implementations.
 
 | Setting | Purpose | Required |
 | --- | --- | --- |
-| `model_companion_routing` | Ontology inference, v2 source planning and ontology-update routing | Required in v2; optional in legacy |
-| `model_companion_web_search` | Dedicated v2 web evidence search | When model web backend selected |
+| `model_companion_routing` | Ontology inference, v2 source planning and ontology-update routing | Required |
+| `model_companion_web_search` | Dedicated v2 web evidence search | When no JSON search URL is configured |
 | `model_companion_evidence` | V2 coverage review and factual claim verification | Required in v2 |
 | `model_companion_synthesis` | Embodied streaming answer and optional image interpretation | For conversation |
 | `model_companion_interim` | Provisional reaction during retrieval | When interim enabled |
@@ -19,7 +19,7 @@ All six roles default to provider `openrouter`, model
 `deepseek/deepseek-v4.1-flash`, with reasoning disabled and null effort. The dedicated web target defaults to
 `web_search_enabled=true`; other targets default false. The model
 ID is verified against the [OpenRouter catalog](https://openrouter.ai/deepseek/deepseek-v4.1-flash).
-Routing and interim calls remain disabled until explicitly enabled. Existing role
+Routing is required when Companion is enabled; generated interim calls remain optional. Existing role
 assignments, including deliberate blanks, are preserved on reload; defaults apply
 to absent settings. Existing model roles are not automatically copied. Each supplied target replaces that object; omitted top-level roles retain
 their values. Reasoning settings remain independent for each role. Image support
@@ -62,26 +62,23 @@ Missing roles receive defaults; no gateway credentials are copied into role conf
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `companion_query_pipeline_version` | `evidence_v2` | Automatic for new/missing settings; explicit saved `legacy` remains respected |
 | `companion_general_knowledge_policy` | `disabled` | `labeled_opt_in` additionally requires per-turn opt-in |
-| `companion_web_backend` | `model` | Dedicated model or explicitly configured `json` backend |
-| `companion_routing_timeout_s` | 3 | Deadline for each ontology/planner call |
-| `companion_evidence_timeout_s` | 8 | Deadline for each coverage/verifier call |
-| `companion_web_timeout_s` | 12 | Web call deadline, bounded by overall retrieval/turn budget |
+| `companion_routing_timeout_s` | 600 | Deadline for each ontology/planner call |
+| `companion_evidence_timeout_s` | 600 | Deadline for each coverage/verifier call |
+| `companion_web_timeout_s` | 600 | Web call deadline, bounded by overall retrieval/turn budget |
 | `companion_recovery_max_rounds` | 1 | 0..1 targeted Companion recovery rounds |
 | `companion_recovery_max_calls` | 2 | 1..4 calls per recovery round |
 | `companion_interim_max_messages` | 2 | 0..3 permanent messages including immediate acknowledgement |
 | `companion_interim_min_interval_s` | 8 | Minimum spacing for generated skits |
 | `companion_interim_output_tokens` | 100 | 32..300 generated commentary tokens |
 
-V2 requires valid routing and evidence targets when Companion is enabled; routing
-cannot be disabled by the legacy optional-routing flag. Stage deadlines must fit
+The evidence-first pipeline requires valid routing and evidence targets when
+Companion is enabled. Retired pipeline/optional-routing flags do not select a
+legacy runner and are not accepted by `/config/`. Stage deadlines must fit
 within the turn deadline. Enabled model web search requires an OpenRouter target; disabling its search flag
-makes the tool unavailable. Gateway capability checks still apply at execution. Selecting
-`json` requires the existing external URL/enable settings. Backend failures do not
-silently switch providers. The old synthesis search flag controls only legacy
-retrieval; v2 uses `model_companion_web_search` exclusively. Search is disabled for
-all other v2 calls. Source-specific pipelines keep their existing model owners.
+makes the tool unavailable. Gateway capability checks still apply at execution. A configured `companion_web_search_url` selects the JSON adapter; otherwise the
+dedicated `model_companion_web_search` target controls search availability. Backend
+failures do not silently switch providers. Search is disabled for all other calls. Source-specific pipelines keep their existing model owners.
 
 The seed enables optional generated commentary for new installations; the Settings
 fallback remains false and persisted flags are preserved. Immediate v2
@@ -94,11 +91,10 @@ together after changing their cached runtime configuration.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `companion_enabled` | false | Admission requires this and `enable_ai_agents` |
-| `companion_model_routing_enabled` | false | Optional routing model |
 | `companion_interim_enabled` | false | Optional concurrent reaction |
-| `companion_tool_timeout_s` | 4 | Per-tool deadline, 0.1..60 seconds |
-| `companion_retrieval_timeout_s` | 20 | Overall retrieval deadline, 0.1..120 seconds |
-| `companion_turn_timeout_s` | 180 | Worker execution deadline, 10..1800 seconds |
+| `companion_tool_timeout_s` | 600 | Per-source and synthesis deadline, 0.1..600 seconds |
+| `companion_retrieval_timeout_s` | 615 | Per-round parallel retrieval window, 0.1..660 seconds |
+| `companion_turn_timeout_s` | 10200 | Total sequential execution budget, 10..10800 seconds |
 | `companion_event_retention_days` | 7 | Event replay retention, 1..90 days |
 | `companion_rapport_max_attempts` | 3 | Evaluation retries before audited no-op, 1..10 |
 | `companion_max_evidence_tokens` | 10000 | Estimated evidence tokens, 100..32000 |
@@ -111,8 +107,9 @@ together after changing their cached runtime configuration.
 | `companion_web_search_token` | empty | Private provider token; redacted on reads |
 
 For the legacy pipeline, enable `web_search_enabled` on `model_companion_synthesis` to use OpenRouter
-search through the existing gateway credentials. Turn-level web permission still
-applies; provider citations with excerpts enter the normal evidence validator.
+search through the existing gateway credentials. Web search is offered to the router
+whenever a provider is configured; the legacy per-turn `tools.web` value is ignored.
+Provider citations with excerpts enter the normal evidence validator.
 Search is disabled on routing, interim, image interpretation, final synthesis and
 rapport calls regardless of those roles' saved search flags. See
 [shared agent web search](../../Architecture/LLM_WEB_SEARCH.md) for capabilities,
@@ -152,10 +149,97 @@ Composition is deterministic and adds no model role. The existing
 `model_companion_evidence` verifies narrative and optional block facts in the same
 batched call. The synthesis and evidence prompts receive no independent search
 permission from these controls. Web image discovery requires the JSON provider's
-source-associated image contract and normal `tools.web` permission; leave it off
+source-associated image contract and a configured web provider; leave it off
 for providers without image support. Provider-managed model search continues to
 return factual excerpts only. See [rich responses](Companion.md#verified-rich-responses).
 
 After changing presentation flags/deadlines, refresh the API and turn workers using
 the installation's normal configuration reload/restart procedure. Workers may
 cache settings per process; each turn uses its entry-time settings snapshot.
+
+## Ten-minute call rollout
+
+New/missing settings use 600-second per-call limits (routing, evidence review,
+retrieval and synthesis), a 615-second retrieval-round window, and a 10,200-second
+turn budget. Fast calls return immediately. Startup now runs a one-time saved
+configuration migration: shorter stored limits are raised to these values, while
+longer limits are retained. Manual configuration updates are no longer required
+for a normal upgrade. The target values are also available through `PUT /config/`
+for inspection or later administrator changes:
+
+```json
+{
+  "companion_tool_timeout_s": 600,
+  "companion_web_timeout_s": 600,
+  "companion_routing_timeout_s": 600,
+  "companion_evidence_timeout_s": 600,
+  "companion_retrieval_timeout_s": 615,
+  "companion_turn_timeout_s": 10200
+}
+```
+
+Timeout updates reject a retrieval window shorter than the local/web calls or a
+turn budget shorter than the conservative serial execution path. The minimum is
+`4*routing + (3+rounds)*evidence + 5*tool + rounds*retrieval + rounds*min(evidence,60) + 2*media + 60`
+seconds, where `rounds=1+companion_recovery_max_rounds`. It reserves optional
+inference/replanning, public-query rendering, image interpretation, assessments,
+both drafts/verifications, identity/source checks and orchestration overhead.
+After the migration, explicit administrator changes remain authoritative on later
+reloads/restarts. Choosing shorter limits deliberately reduces the call budgets.
+
+ShreckLLM's shared `request_timeout_seconds` and default hedge attempt timeout
+now bootstrap at 600 seconds. A gateway configuration migration raises shorter
+saved values to 600 seconds and preserves longer ones. Explicit hedge routes whose
+usage tag starts with `companion.` are also raised to at least 600 seconds when
+they have a shorter non-null `timeout_seconds`; their provider/model choices and
+unrelated routes remain unchanged. The orphan watchdog is raised to at least
+900 seconds and at least the longest configured primary/default/route attempt plus
+60 seconds. Review queue/retry behavior under load. These gateway generation
+settings affect other workloads using that shared service as well.
+ShreckWorld's `SHRECKWORLD_SYNTHESIS_TIMEOUT_SECONDS` defaults to 600 in code and
+Compose; explicit environment overrides take precedence. Deep retrieval remains
+bounded by the parent Companion call even when child stages have longer budgets.
+
+Drain active turns and restart API/Companion workers together after configuration
+changes. Coordinate Redis visibility timeout across all workers sharing the
+broker; Shrecknet configures at least `companion_turn_timeout_s+120` seconds.
+Workers heartbeat every fifteen seconds; stale-outbox detection is ninety seconds,
+independent of the maximum turn budget. External proxies and clients must allow
+long-lived SSE; reconnect through the existing cursor/snapshot flow instead of
+resubmitting turns. Provider errors, cancellation, expired authentication and
+insufficient evidence can still prevent a supported answer.
+
+The migrations update configuration data in each service's existing
+`config_settings` table; they do not alter SQL schemas, graph data, models,
+credentials, enable flags, evidence/output token budgets or source selections.
+Shrecknet records `migration_companion_timeouts_v1_applied` in
+`shrecknet_config.db`; the gateway records
+`migration_companion_timeouts_v11_applied` in `shreckllm_config.db`. Each service
+locks its configuration database, checks its marker, and commits its timeout
+changes and marker atomically. Concurrent startups serialize this check. A failed
+migration rolls back and is retried on the next load. The stores migrate
+independently, so deploy/restart both services and every API/worker process.
+
+Back up both configuration databases and drain active turns before deployment.
+After restart, inspect Shrecknet `GET /config/` and gateway `GET /config` to verify
+effective values. Existing cached processes do not acquire the new values until
+reload/restart. ShreckWorld timeouts are environment-owned, not stored in these
+databases: remove any shorter explicit `SHRECKWORLD_SYNTHESIS_TIMEOUT_SECONDS`
+override separately if ten-minute deep calls are required.
+
+No schema migration or re-embedding is required. To roll back, drain active work
+and restore compatible code/configuration backups. To deliberately lower limits
+while keeping the new code, update the configuration APIs after the migration;
+retain the markers so restarts respect those edits. Never delete configuration
+databases or migration markers to adjust budgets.
+
+Assessment recovery adds at most one 60-second compact retry per assessment
+invocation, clipped to `companion_evidence_timeout_s` and remaining turn time.
+Primary assessment and final claim verification still each default to 600 seconds.
+The retry shares the existing evidence model role and does not add a model setting
+or a source-retrieval recovery round. The default total turn budget remains 10,200
+seconds. If review stays unavailable, the backend can return cited extracts with
+explicit limitations, rather than unverified synthesized assertions. The gateway
+still owns submitted jobs and provider-attempt/watchdog lifetimes; the shorter
+Companion retry limit bounds its waiting time. See the
+[recovery contract](./Companion.md#compact-evidence-assessment-and-extractive-recovery).

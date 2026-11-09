@@ -48,14 +48,18 @@ def build_answer(raw, evidence, tool_results, *, query=None):
             "returned_count": len(returned),
             "evidence_ids": [item["evidence_id"] for item in returned if item["evidence_id"] in supplied],
         }
-        for key in ("reason", "source_coverage", "id", "need_ids", "recovery", "source_trace"):
+        for key in ("reason", "source_coverage", "id", "need_ids", "recovery", "source_trace",
+                    "retrieval_depth", "timeout_s", "timeout_layer", 'source_readiness',
+                    'sources_requiring_attention', 'evidence_omissions'):
             if key in row:
                 call[key] = row[key]
         tool_calls.append(call)
     snapshot_partial = any(row["source_type"] == "foundry" and row["coverage"]["status"] != "complete" for row in evidence)
-    partial = snapshot_partial or any(row["status"] not in {"ok", "empty"} for row in tool_results)
+    partial = snapshot_partial or any(row["status"] not in {"ok", "empty"} or row.get('source_readiness')=='partial' for row in tool_results)
     warnings = (["Foundry snapshot coverage is partial; missing game state remains unknown."] if snapshot_partial else [])
-    warnings += [f"{row['tool']}: {row.get('reason', row['status'])}" for row in tool_results if row["status"] != "ok"]
+    warnings += [f"{row['tool']}: {row.get('reason', row['status'])}" for row in tool_results if row["status"] != "ok" or row.get('reason')]
+    warnings += [f"shreckworld: {item['title']} ({item['library_item_id']}): {item['reason']}"
+                 for row in tool_results for item in row.get('sources_requiring_attention', [])]
     if invalid_marker:
         warnings.append("The response contained an unknown source marker; it was not cited.")
     if MARKER_PREFIX in text:

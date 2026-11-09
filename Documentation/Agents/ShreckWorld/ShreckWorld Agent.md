@@ -115,3 +115,14 @@ fields, planned response models, job authorization, errors, and compatibility.
 Python clients can use `ShreckWorldAPI.query(..., retrieval_strategy="planned")`
 for an opt-in synchronous response, or `start_agent_query()` and `agent_job()`
 for the persisted lifecycle. See the [SDK reader workflow](../../../python_sdk/docs/core_workflows/shreckworld-reader.md).
+
+## Companion evidence handoff
+
+Planned responses retain `source_coverage` and add scoped
+`sources_requiring_attention` entries (`library_item_id`, `title`, reason
+`index_not_ready`/`incompatible_index`/`empty_index`). The shared retrieval scope
+uses searchable active generations to classify readiness, preserving an older
+usable generation during a queued/failed replacement. Counts remain separate
+from semantic entailment. The Companion keeps returned passages when other books
+are unindexed and can perform compact assessment recovery or publish labelled
+source excerpts; ShreckWorld does not synthesize that Companion fallback.

@@ -25,3 +25,17 @@ A provider's own 401 (for example Anthropic `/v1/models`) is independent of this
 gateway identity check. Correct or remove that provider's credential in the
 provider configuration; OpenRouter catalog success does not validate an Anthropic
 key or demonstrate that the Shrecknet identity service is reachable.
+
+## Companion ten-minute execution budgets
+
+New gateway installations bootstrap `request_timeout_seconds=600` and
+`chat_job_default_hedge_timeout_seconds=600`. A one-time configuration migration
+raises shorter saved values, Companion-specific hedge route timeouts and any
+shorter orphan watchdog. Longer limits and edits made after migration remain.
+Restart/reload the gateway as well as Shrecknet API/workers. If Companion times
+out earlier, inspect the gateway runtime
+configuration as well as Companion's per-call, retrieval-round and turn budgets.
+Use the [coordinated rollout values](../Agents/Companion/Model%20Configuration.md#ten-minute-call-rollout);
+raising only the outer HTTP timeout does not change a shorter provider attempt.
+These gateway settings affect shared workloads, so validate worker concurrency,
+queue occupancy and provider capacity before rollout.

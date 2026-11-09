@@ -142,20 +142,21 @@ def test_ontology_agent_job_has_no_collection_and_is_owner_scoped(direct, monkey
         assert db.get(ShreckWorldAgentJob, job['id']).status == 'completed'
 
 
-def test_delegated_grant_requires_exact_ontology_and_book_subset(monkeypatch):
+@pytest.mark.parametrize('strategy',['single','planned'])
+def test_delegated_grant_requires_exact_ontology_and_book_subset(monkeypatch,strategy):
     import asyncio
     import httpx
     from fastapi import HTTPException
     from app.schemas.shreckworld import ShreckWorldQueryRequest
     from app.services.companion_retrieval import authorize
     class Identity:
-        def __init__(self, **kwargs): pass
+        def __init__(self, **kwargs): assert kwargs['timeout']==600
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         async def get(self, path, **kwargs):
             return httpx.Response(200, request=httpx.Request('GET','http://identity.test'), json={'scope': {'ontology_id':7,'library_item_ids':['one']}})
     monkeypatch.setattr('app.services.companion_retrieval.httpx.AsyncClient', Identity)
-    request = ShreckWorldQueryRequest(query='Question', library_item_ids=['one'])
+    request = ShreckWorldQueryRequest(query='Question', library_item_ids=['one'],retrieval_strategy=strategy)
     asyncio.run(authorize('grant', OntologyScope(7,'World'), request))
     for scope, payload in [(OntologyScope(8,'Other'), request), (OntologyScope(7,'World'), ShreckWorldQueryRequest(query='Question')), (OntologyScope(7,'World'), request.model_copy(update={'mode':'answer'}))]:
         with pytest.raises(HTTPException) as exc:

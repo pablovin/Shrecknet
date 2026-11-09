@@ -23,6 +23,8 @@ from app.services.companion_authorization import active_principal
 from app.services.companion_attachment_service import private_root, attachment_evidence
 
 logger = logging.getLogger(__name__)
+OUTBOX_HEARTBEAT_INTERVAL_S = 15
+OUTBOX_STALE_AFTER_S = 90
 
 
 @asynccontextmanager
@@ -80,7 +82,7 @@ async def execute_turn(turn, lease):
     metrics = {}
     if not settings.companion_enabled or not settings.enable_ai_agents:
         raise ValueError("companion_disabled")
-    actor, identity = await load_identity(turn)
+    actor, identity = await asyncio.wait_for(load_identity(turn), settings.companion_tool_timeout_s)
     metrics["identity_ms"] = round((time.monotonic()-started)*1000,2)
     await mutate(turn.id, lease, stage="routing", identity=identity)
     async with database() as session:
@@ -94,7 +96,7 @@ async def execute_turn(turn, lease):
                 raise ValueError("attachment_deleted")
             image_sources.append(attachment_evidence(attachment, turn.chat_id))
             images.append({"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode((private_root()/attachment.storage_key).read_bytes()).decode()}})
-    llm = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.companion_turn_timeout_s, max_retries=0)
+    llm = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.companion_tool_timeout_s, max_retries=0)
     try:
         from app.jobs.companion.query_pipeline import run
         return await run(turn, lease, actor=actor, identity=identity, rapport=rapport,
@@ -120,12 +122,12 @@ async def evaluate_rapport(turn, lease=None):
     operational = (turn.result or {}).get("outcome") in {"needs_clarification", "ontology_updated"}
     proposal, error = None, None
     if not old_generation and not deleted_exchange and not operational:
-        llm = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.companion_turn_timeout_s, max_retries=0)
+        llm = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.companion_tool_timeout_s, max_retries=0)
         try:
             data = {"turn_id": turn.id, "generation": generation, "base_version": base_version, "completion_sequence": turn.completion_sequence,
                     "scores": scores, "messages": messages, **(turn.identity or {})}
             data["identity_description"] = data.pop("character_agent", {}).get("identity_description")
-            raw = await llm.chat(model=private_stage_target(settings.model_companion_rapport_update), messages=[{"role": "system", "content": RAPPORT}, {"role": "user", "content": json.dumps(data)}], usage_tag="companion.rapport_update", max_tokens=2000)
+            raw = await asyncio.wait_for(llm.chat(model=private_stage_target(settings.model_companion_rapport_update), messages=[{"role": "system", "content": RAPPORT}, {"role": "user", "content": json.dumps(data)}], usage_tag="companion.rapport_update", max_tokens=2000), settings.companion_tool_timeout_s)
             proposal = RapportProposal.model_validate_json(raw)
         except Exception:
             error = "evaluation_failed"
@@ -164,6 +166,40 @@ async def evaluate_rapport(turn, lease=None):
     return True
 
 
+async def heartbeat_outbox(identifier, lease, turn_id=None):
+    """Keep long network operations leased without retaining a SQL transaction."""
+    while True:
+        await asyncio.sleep(OUTBOX_HEARTBEAT_INTERVAL_S)
+        async with database() as session:
+            if turn_id is not None:
+                current = await session.get(CompanionTurn, turn_id)
+                if current is None or current.lease != lease or current.status in TERMINAL:
+                    return
+            changed = await session.execute(update(CompanionOutbox).where(
+                CompanionOutbox.id == identifier, CompanionOutbox.lease == lease,
+                CompanionOutbox.status == 'running').values(updated_at=utcnow()))
+            await session.commit()
+            if changed.rowcount != 1:
+                return
+
+
+async def with_outbox_heartbeat(work, identifier, lease, turn_id=None):
+    """Stop work promptly after lease loss/cancellation and clean up both tasks."""
+    task = asyncio.create_task(work)
+    heartbeat = asyncio.create_task(heartbeat_outbox(identifier, lease, turn_id))
+    try:
+        done, _ = await asyncio.wait({task, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
+        if task in done:
+            return task.result()
+        heartbeat.result()  # Propagate SQL failures, rather than running unleased.
+        raise asyncio.CancelledError()
+    finally:
+        for pending in (task, heartbeat):
+            if not pending.done():
+                pending.cancel()
+        await asyncio.gather(task, heartbeat, return_exceptions=True)
+
+
 async def process_outbox(identifier):
     lease = str(uuid4())
     async with database() as session:
@@ -183,9 +219,9 @@ async def process_outbox(identifier):
     done = True
     try:
         if kind == "turn" and turn is not None and turn.status not in TERMINAL:
-            await asyncio.wait_for(execute_turn(turn, lease), get_settings().companion_turn_timeout_s)
+            await asyncio.wait_for(with_outbox_heartbeat(execute_turn(turn, lease), identifier, lease, turn.id), get_settings().companion_turn_timeout_s)
         elif kind == "rapport" and turn is not None:
-            done = await evaluate_rapport(turn, lease)
+            done = await with_outbox_heartbeat(evaluate_rapport(turn, lease), identifier, lease)
         elif kind == "purge":
             await purge_chat(aggregate)
         elif kind == "attachment_delete":

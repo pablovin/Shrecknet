@@ -657,6 +657,13 @@ class Neo4jGraphRetriever:
             if node is None:
                 continue
             props = dict(node)
+            # A generated read can mention scope parameters without applying
+            # them correctly. Never admit returned parents outside pinned scope.
+            if props.get('ontology_id') not in (parameters.get('ontology_ids') or []):
+                continue
+            instance = parameters.get('instance_id')
+            if instance is not None and (props.get('instance_id') or props.get('ontology_instance_id')) != instance:
+                continue
             labels = set(getattr(node, "labels", []) or [])
             if contains_excluded_label(labels):
                 continue
@@ -1280,8 +1287,10 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
         graph_session: AsyncNeo4jSession | None = None,
         *,
         session_factory: Callable[[], AsyncIterator[AsyncNeo4jSession]] | None = None,
+        embedding_timeout_s: float | None = None,
     ):
         super().__init__(graph_session, session_factory=session_factory)
+        self._embedding_timeout_s = embedding_timeout_s
         self._official_hybrid_available = self._detect_official_hybrid_retriever()
         self._sync_driver = None
         if self._official_hybrid_available:
@@ -1430,7 +1439,8 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
     ) -> list[RetrievedChunk]:
         try:
             runtime = await get_ready_embedding_runtime()
-            query_embedding = await runtime.embed_query(query, request_id=f"elder-hybrid-{time.monotonic_ns()}")
+            options = {'timeout_s': self._embedding_timeout_s} if self._embedding_timeout_s is not None else {}
+            query_embedding = await runtime.embed_query(query, request_id=f"elder-hybrid-{time.monotonic_ns()}", **options)
         except Exception as exc:
             if isinstance(exc, EmbeddingRuntimeError):
                 raise

@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     bootstrap_memory_ttl_seconds: int = 3600
     bootstrap_memory_max_messages: int = 24
     bootstrap_max_concurrent_requests: int = 8
-    bootstrap_request_timeout_seconds: float = 180.0
+    bootstrap_request_timeout_seconds: float = 600.0
     bootstrap_max_queue_wait_seconds: float = 10.0
     bootstrap_provider_limits: dict[str, dict[str, Any]] = {
         "ollama": {"max_concurrent": 1},

@@ -214,3 +214,33 @@ async def test_timeline_expansion_honors_ascending_direction_and_total_limit() -
     )
 
     assert [chunk.node_id for chunk in chunks] == ["newer-created", "older-edited"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('instance',[None,'inst-1'])
+async def test_bounded_read_filters_returned_parents_against_pinned_scope(instance):
+    from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
+    nodes=[_FakeNode(['EntityInstance'],id='good',ontology_id=4,instance_id='inst-1'),
+           _FakeNode(['EntityInstance'],id='other-world',ontology_id=99,instance_id='inst-1'),
+           _FakeNode(['EntityInstance'],id='unknown-world',instance_id='inst-1'),
+           _FakeNode(['EntityInstance'],id='other-instance',ontology_id=4,instance_id='inst-2')]
+    class Session:
+        async def run(self,*args,**kw):
+            return _FakeResult([{'node':node} for node in nodes])
+    rows=await Neo4jGraphRetriever(Session()).run_bounded_read(
+        'MATCH (node) WHERE $ontology_ids IS NOT NULL RETURN node LIMIT $limit',
+        parameters={'ontology_ids':[4],'instance_id':instance,'limit':6})
+    assert [row.node_id for row in rows]==(['good','other-instance'] if instance is None else ['good'])
+
+
+@pytest.mark.asyncio
+async def test_companion_embedding_deadline_is_forwarded_without_changing_shared_default(monkeypatch):
+    class Runtime(_FakeRuntime):
+        async def embed_query(self,query,*,request_id,timeout_s):
+            assert timeout_s==600
+            return await super().embed_query(query,request_id=request_id)
+    async def runtime(): return Runtime()
+    monkeypatch.setattr('app.integrations.retrieval.neo4j_retriever.get_ready_embedding_runtime',runtime)
+    rows=await HybridNeo4jGraphRetriever(_FakeSession(),embedding_timeout_s=600).search(
+        'old promise',ontology_ids=[4],top_k=3,node_scope='entity',candidate_limit=20,rerank_limit=8)
+    assert rows

@@ -183,5 +183,11 @@
   "companion_interim_enabled": true,
   "companion_web_images_enabled": false,
   "companion_rich_response_enabled": true,
-  "companion_rich_response_timeout_s": 2
+  "companion_rich_response_timeout_s": 2,
+  "companion_tool_timeout_s": 600,
+  "companion_web_timeout_s": 600,
+  "companion_routing_timeout_s": 600,
+  "companion_evidence_timeout_s": 600,
+  "companion_retrieval_timeout_s": 615,
+  "companion_turn_timeout_s": 10200
 }

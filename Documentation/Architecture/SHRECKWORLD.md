@@ -306,3 +306,16 @@ If startup reports new violations, retain the database and logs for diagnosis;
 the rebuild transaction is rolled back and foreign-key enforcement is restored.
 
 Legacy parent references remain aliases for existing links, local reading-progress namespaces and recovery. Legacy world deletion refuses migrated items, preventing cascading data loss. No automatic ontology-deletion purge is introduced: direct operations reject missing/inaccessible ontologies and retained sources require administrative recovery. Snapshot owner data and files together before rollout. Cross-installation restores require verifying ontology identity before applying numeric mappings; an ID match alone cannot prove identity. Full rollback uses coordinated snapshots; older frontends do not discover newly uploaded direct items.
+
+## Readiness diagnostics for evidence consumers
+
+The retrieval scope owner in `app/services/query.py` classifies requested books
+by usable active generation, not solely the latest indexing-job status. A queued
+or failed replacement does not invalidate searchable compatible evidence.
+`source_coverage` counts searched, incompatible/reindex and remaining not-ready
+sources without overlap. `sources_requiring_attention` identifies scoped source
+IDs/titles with `index_not_ready`, `incompatible_index` or `empty_index` reasons.
+Both single and planned query responses expose these details; navigation and
+citation provenance remain unchanged. Companion consumes partial readiness as a
+coverage limitation, retaining passages for compact semantic review and safe
+extractive recovery. See the [reader contract](../API/SHRECKWORLD_READER_API.md).

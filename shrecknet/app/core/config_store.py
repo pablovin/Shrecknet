@@ -24,6 +24,13 @@ DEFAULT_JOBS_DATABASE_FILENAME = "shrecknet_jobs.db"
 CONFIG_DB_FILENAME = "shrecknet_config.db"
 LEGACY_CONFIG_DB_FILENAME = "configs.db"
 CONFIG_TABLE = "config_settings"
+MIGRATION_COMPANION_TIMEOUTS_V1_KEY = "migration_companion_timeouts_v1_applied"
+COMPANION_TIMEOUT_FIELDS = (
+    'companion_tool_timeout_s', 'companion_web_timeout_s',
+    'companion_routing_timeout_s', 'companion_evidence_timeout_s',
+    'companion_retrieval_timeout_s', 'companion_turn_timeout_s',
+)
+COMPANION_ASSESSMENT_RETRY_TIMEOUT_S = 60
 DEFAULT_CONFIG_SEED_FILE = Path("/configs/shrecknet.initial.json")
 SERVICE_CONNECTION_FIELDS = frozenset({
     'shreckllm_base_url', 'shreckworld_base_url', 'shreckrpg_base_url',
@@ -370,9 +377,9 @@ class Settings(BaseSettings):
     companion_general_knowledge_policy: Literal["disabled", "labeled_opt_in"] = "disabled"
     companion_recovery_max_rounds: int = Field(1, ge=0, le=1)
     companion_recovery_max_calls: int = Field(2, ge=1, le=4)
-    companion_routing_timeout_s: float = Field(3, ge=0.1, le=60)
-    companion_evidence_timeout_s: float = Field(8, ge=0.1, le=60)
-    companion_web_timeout_s: float = Field(12, ge=0.1, le=120)
+    companion_routing_timeout_s: float = Field(600, ge=0.1, le=600)
+    companion_evidence_timeout_s: float = Field(600, ge=0.1, le=600)
+    companion_web_timeout_s: float = Field(600, ge=0.1, le=600)
     companion_interim_max_messages: int = Field(2, ge=0, le=3)
     companion_interim_min_interval_s: float = Field(8, ge=1, le=120)
     companion_interim_output_tokens: int = Field(100, ge=32, le=300)
@@ -384,9 +391,9 @@ class Settings(BaseSettings):
     model_companion_synthesis: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
     model_companion_interim: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
     model_companion_rapport_update: LLMModelTarget = Field(default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash"))
-    companion_tool_timeout_s: float = Field(4, ge=0.1, le=60)
-    companion_retrieval_timeout_s: float = Field(20, ge=0.1, le=120)
-    companion_turn_timeout_s: int = Field(180, ge=10, le=1800)
+    companion_tool_timeout_s: float = Field(600, ge=0.1, le=600)
+    companion_retrieval_timeout_s: float = Field(615, ge=0.1, le=660)
+    companion_turn_timeout_s: int = Field(10200, ge=10, le=10800)
     companion_event_retention_days: int = Field(7, ge=1, le=90)
     companion_rapport_max_attempts: int = Field(3, ge=1, le=10)
     companion_max_evidence_tokens: int = Field(10000, ge=100, le=32000)
@@ -438,6 +445,24 @@ class Settings(BaseSettings):
     def companion_rich_response_active(self) -> bool:
         """Presentation is optional within the sole evidence-first query pipeline."""
         return self.companion_rich_response_enabled
+
+
+def companion_required_turn_budget(settings: Settings) -> float:
+    """Conservative longest serial path, including one recovery and draft repair.
+
+    Four routing calls cover inference, two plans and public-query rendering;
+    five evidence calls cover an image, two assessments and two verifications.
+    Five tool windows cover initial/final identity, source checks and two drafts.
+    Concurrent source calls consume one window per retrieval round, not their sum.
+    Each assessment can also use one bounded compact retry.
+    """
+    rounds = 1 + settings.companion_recovery_max_rounds
+    return (4 * settings.companion_routing_timeout_s +
+            (3 + rounds) * settings.companion_evidence_timeout_s +
+            5 * settings.companion_tool_timeout_s +
+            rounds * settings.companion_retrieval_timeout_s +
+            rounds * min(settings.companion_evidence_timeout_s, COMPANION_ASSESSMENT_RETRY_TIMEOUT_S) +
+            2 * settings.companion_rich_response_timeout_s + 60)
 
 
 class AppConfig(BaseModel):
@@ -552,8 +577,32 @@ def _load_settings_from_db(conn: sqlite3.Connection) -> dict[str, Any]:
     return {key: _deserialize_value(value) for key, value in rows}
 
 
-def _seed_defaults_if_needed(conn: sqlite3.Connection) -> dict[str, Any]:
-    defaults = _default_settings_dict()
+def _migrate_companion_timeouts(conn: sqlite3.Connection, defaults: dict[str, Any]) -> None:
+    """Raise saved call/round/turn limits once; later administrator edits win.
+
+    Own the transaction and serialize the marker check with its writes so API
+    and worker startup cannot apply this migration twice concurrently.
+    """
+    with conn:
+        conn.execute('BEGIN IMMEDIATE')
+        current = _load_settings_from_db(conn)
+        if current.get(MIGRATION_COMPANION_TIMEOUTS_V1_KEY):
+            return
+        saved = Settings(**{key: current.get(key, defaults[key]) for key in COMPANION_TIMEOUT_FIELDS})
+        updates = {key: max(getattr(saved, key), Settings.model_fields[key].default)
+                   for key in COMPANION_TIMEOUT_FIELDS}
+        timestamp = _current_timestamp()
+        conn.executemany(
+            f'INSERT INTO {CONFIG_TABLE} (key, value, updated_at) VALUES (?, ?, ?) '
+            'ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at',
+            [(key, _serialize_value(value), timestamp) for key, value in updates.items()
+             if key not in current or current[key] != value] +
+            [(MIGRATION_COMPANION_TIMEOUTS_V1_KEY, _serialize_value(True), timestamp)],
+        )
+
+
+def _seed_defaults_if_needed(conn: sqlite3.Connection, *, defaults: dict[str, Any] | None = None) -> dict[str, Any]:
+    defaults = _default_settings_dict() if defaults is None else defaults
     existing = {
         key: value
         for key, value in _load_settings_from_db(conn).items()
@@ -774,7 +823,10 @@ def load_settings() -> Settings:
         _normalize_legacy_llm_targets(conn)
         _migrate_novelist_v3_targets(conn)
         _migrate_embedding_model(conn)
-        merged = _seed_defaults_if_needed(conn)
+        defaults = _default_settings_dict()
+        conn.commit()
+        _migrate_companion_timeouts(conn, defaults)
+        merged = _seed_defaults_if_needed(conn, defaults=defaults)
     finally:
         conn.close()
     merged.update(_explicit_env_overrides())

@@ -107,18 +107,22 @@ origin as above.
 
 ## Release process
 
-The module version is **0.4.0**, including contextual Companion chat, the four-menu
-workspace and guided World setup. See the [release notes](../../changelogs/foundry-v0.4.0.md)
-for rollout requirements and known limits. The release workflow uses the matching
+The module version is **0.5.0**, adding rich Companion replies (verified source
+cards, images/galleries, property tables and book excerpts), labeled
+general-knowledge opt-in, Foundry context v2 image availability, and richer
+turn-stage/commentary feedback on top of the contextual Companion chat,
+four-menu workspace and guided World setup. See the
+[release notes](../../changelogs/foundry-v0.5.0.md) for rollout requirements and
+known limits. The release workflow uses the matching
 `changelogs/foundry-vX.Y.Z.md` as its GitHub Release notes.
 
 To build an installable archive locally from the repository root:
 
 ```bash
 node --test integrations/foundry/shrecknet-foundry/tests/*.test.mjs
-mkdir -p dist/foundry-v0.4.0
-(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.4.0/shrecknet-foundry-v0.4.0.zip . -x '.DS_Store' -x '__MACOSX/*')
-cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.4.0/module.json
+mkdir -p dist/foundry-v0.5.0
+(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.5.0/shrecknet-foundry-v0.5.0.zip . -x '.DS_Store' -x '__MACOSX/*')
+cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.5.0/module.json
 ```
 
 Use a fresh output directory when rebuilding, so obsolete files cannot remain in
@@ -304,11 +308,9 @@ Completed messages also show when ShreckWorld sources require reindexing or have
 no ready index, including how many requested sources were searched. A partial
 result can still cite passages from compatible sources.
 
-The **Allow web search** control is selected by default when the Companion
-capabilities report a configured provider; clear it to disable web search for
-subsequent questions in that chat. It is disabled when web search is unavailable.
-The choice is kept in memory per chat, not persisted across sign-out. Ambiguous
-admission retries keep the original web permission and payload.
+The Companion always requests web search when the backend advertises a configured
+provider. There is no user-facing web control; the backend decides whether a turn
+actually needs the web tool. Ambiguous admission retries keep the original payload.
 
 The character chooser updates the account's global selection with its current
 optimistic version. Opening a chat for a different character also selects that
@@ -520,7 +522,7 @@ selection. The table binding itself is never edited by conversation.
 Polling reads detailed stages and durable commentary from turn snapshots, merges
 messages by ID, and refreshes changed chat scope. Commentary remains in history
 after completion or failure. General-knowledge fallback is a separate, one-message
-opt-in exposed only when permitted by the backend; ordinary web permission is
+opt-in exposed only when permitted by the backend; web search availability is
 unchanged. Factual drafts remain private during evidence verification.
 Deploy the SQL migration and matching backend/workers with the clients; v2
 defaults on for new/missing configuration, while explicit saved selections persist. Old

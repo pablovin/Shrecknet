@@ -96,3 +96,11 @@ indexes. Use `query(..., include_trace=True)` to diagnose excluded legacy/model
 indexes and retrieval fallbacks. See [indexing/readiness](shreckworld-upload.md)
 for `readiness()`, `start_indexing()`, and `indexing_job()`; reading remains
 available when model readiness fails.
+
+Query results expose typed `answer.sources_requiring_attention` entries with
+`library_item_id`, `title` and `reason` (`index_not_ready`, `incompatible_index`,
+`empty_index`). They are scoped to the requested books, independent of
+`include_trace`, and default to an empty list for older responses. Read them
+alongside `source_coverage`; passages from indexed sources remain useful when
+another source needs attention. A queued replacement does not invalidate a
+searchable active generation. See the [reader contract](../../../Documentation/API/SHRECKWORLD_READER_API.md).

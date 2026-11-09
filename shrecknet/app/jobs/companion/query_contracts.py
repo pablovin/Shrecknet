@@ -1,10 +1,14 @@
 """Strict internal contracts for scope selection, source plans and evidence checks."""
-from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing import Annotated, Literal
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from app.jobs.elder.v2_schemas import RetrievalPlan
 
 
 class Contract(BaseModel):
     model_config = ConfigDict(extra='forbid')
+
+
+PublicQuery = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class OntologyDecision(Contract):
@@ -17,6 +21,7 @@ class OntologyDecision(Contract):
 class Need(Contract):
     id: str = Field(min_length=1, max_length=40)
     question: str = Field(min_length=1, max_length=1000)
+    public_recovery_query: PublicQuery | None = None
 
 
 class PlannedCall(Contract):
@@ -24,6 +29,34 @@ class PlannedCall(Contract):
     tool: Literal['atlas', 'shreckworld', 'web', 'chronicle', 'character_memory']
     query: str = Field(min_length=1, max_length=4000)
     need_ids: list[str] = Field(min_length=1, max_length=6)
+    retrieval_depth: Literal['light', 'deep'] = 'light'
+    depth_reason: str | None = Field(None, min_length=1, max_length=500)
+    atlas_plan: RetrievalPlan | None = None
+    memory_reason: str | None = Field(None, min_length=1, max_length=500)
+
+    @model_validator(mode='after')
+    def tool_options(self):
+        if self.retrieval_depth == 'deep' and (self.tool not in {'atlas', 'shreckworld'} or not self.depth_reason or not self.depth_reason.strip()):
+            raise ValueError('deep_retrieval_requires_reason')
+        if self.retrieval_depth == 'light' and self.depth_reason is not None:
+            raise ValueError('light_retrieval_has_no_depth_reason')
+        if self.atlas_plan is not None and self.tool != 'atlas':
+            raise ValueError('atlas_plan_requires_atlas')
+        if self.tool == 'character_memory':
+            if not self.memory_reason or not self.memory_reason.strip():
+                raise ValueError('memory_retrieval_requires_reason')
+        elif self.memory_reason is not None:
+            raise ValueError('memory_reason_requires_character_memory')
+        return self
+
+
+class PublicRecoveryQuery(Contract):
+    need_id: str = Field(min_length=1, max_length=40)
+    query: PublicQuery | None = None
+
+
+class PublicRecoveryQueries(Contract):
+    queries: list[PublicRecoveryQuery] = Field(max_length=6)
 
 
 class OntologyUpdate(Contract):

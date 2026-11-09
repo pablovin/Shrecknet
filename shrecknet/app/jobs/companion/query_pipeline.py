@@ -11,16 +11,19 @@ import json
 import logging
 import time
 from uuid import uuid4
+from pydantic import ValidationError
 from app.jobs.companion import query_prompts as prompts
 from app.jobs.companion import rich_response
+from app.jobs.companion import recovery as recovery_policy
+from app.jobs.companion import evidence_context
 from app.integrations.companion import media as companion_media
 from app.core.config_store import COMPANION_MODEL_FIELDS
 from app.schemas.character_companion import COMPANION_ACKNOWLEDGEMENT
-from app.jobs.companion.query_contracts import OntologyDecision, QueryPlan, Assessment, Draft, Verification
+from app.jobs.companion.query_contracts import OntologyDecision, QueryPlan, Assessment, Draft, Verification, PublicRecoveryQueries
 from app.jobs.companion.contracts import build_answer
 from app.jobs.elder.context_budget import estimate_tokens
 from app.integrations.companion.retrieval import CompanionRetrieval, web_available
-from app.models.character_companion import CompanionTurn, CompanionAttachment
+from app.models.character_companion import CompanionTurn, CompanionAttachment, utcnow
 from app.repositories.character_companion_repository import CompanionRepository
 from app.services.companion_scope_service import CompanionScopeService, scoped_context
 from app.services.companion_foundry_context import foundry_evidence
@@ -64,7 +67,9 @@ def available_tools(turn, settings, scope):
         candidates.discard('shreckworld')
     if not scope.get('chronicle_id') or not settings.shreckrpg_base_url:
         candidates.discard('chronicle')
-    if turn.request['tools']['web'] == 'disabled' or not web_available(settings):
+    if web_available(settings):
+        candidates.add('web')
+    else:
         candidates.discard('web')
     return sorted(candidates)
 
@@ -88,7 +93,8 @@ def valid_support(support, sources):
     # meaning and provenance; substring membership alone is never sufficient.
     return (support.quote in source['excerpt'] or
             (source.get('structured_evidence') is not None and
-             support.quote in json.dumps(source['structured_evidence'], ensure_ascii=False)))
+             (support.quote in json.dumps(source['structured_evidence'], ensure_ascii=False) or
+              support.quote in json.dumps(evidence_context.compact_structured(source), ensure_ascii=False))))
 
 
 def validate_assessment(review, needs, evidence):
@@ -136,19 +142,43 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
     ontology = None
     resolution_source = 'not_needed'
     evidence, outcomes, assessment = [], [], None
+    evidence_needs = {}
     plan = None
     diagnostics = {'version': 'evidence_v2'}
+    diagnostics['deadlines'] = {name: getattr(settings, name) for name in (
+        'companion_tool_timeout_s', 'companion_web_timeout_s', 'companion_routing_timeout_s',
+        'companion_evidence_timeout_s', 'companion_retrieval_timeout_s', 'companion_turn_timeout_s')}
     skit_task = None
+    finalizing = False
     max_messages = settings.companion_interim_max_messages
     deadline = started + settings.companion_turn_timeout_s
 
     async def structured(llm, target, prompt, data, schema, timeout, tag, tokens=2500):
         before = time.monotonic()
+        stage = {'stage': tag}
         try:
             return await request_structured(llm, target, prompt, data, schema,
                 min(timeout, max(0.01, deadline-time.monotonic())), tag, tokens)
+        except asyncio.CancelledError:
+            stage['error_type'] = 'CancelledError'
+            raise
+        except Exception as exc:
+            stage['error_type'] = type(exc).__name__
+            raise
         finally:
-            metrics.setdefault('stages', []).append({'stage':tag, 'elapsed_ms':round((time.monotonic()-before)*1000,2)})
+            stage['elapsed_ms'] = round((time.monotonic()-before)*1000,2)
+            metrics.setdefault('stages', []).append(stage)
+
+    def model_evidence():
+        return [evidence_context.compact_evidence(row, evidence_needs.get(row['evidence_id'], ())) for row in evidence]
+
+    def source_count(records=None):
+        identifiers = {row['evidence_id'] for row in records} if records is not None else None
+        return len({(row['source_type'], (row.get('reference') or {}).get('library_item_id') or row.get('source_id') or row['evidence_id'])
+                    for row in evidence if identifiers is None or row['evidence_id'] in identifiers})
+
+    def omitted(stage, items):
+        diagnostics.setdefault('evidence_omissions', []).extend({'stage':stage, **item} for item in items)
 
     async def progress(stage, *, coarse='routing', **extra):
         _diag(turn.id, 'stage', {'stage': stage, 'coarse': coarse, **extra}, limit=1000)
@@ -179,20 +209,24 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
         return await finish(text, outcome='needs_clarification', extra={'clarification':pending})
 
     async def finish(text, *, outcome='answered', extra=None):
+        nonlocal finalizing
+        finalizing = True
         await progress('validating', coarse='validating')
         # Source revalidation remains fail-closed; a revoked source is not silently
         # replaced by an otherwise plausible answer.
-        await load_identity(turn)
+        await asyncio.wait_for(load_identity(turn), settings.companion_tool_timeout_s)
         if evidence:
             validator = CompanionRetrieval(turn, actor)
             validator.settings = settings
-            await validator.validate_sources(evidence)
+            await asyncio.wait_for(validator.validate_sources(evidence), settings.companion_tool_timeout_s)
         result = build_answer(text, evidence, outcomes, query=query)
         result['outcome'] = outcome
         result['diagnostics'] = diagnostics
         result['assessment'] = assessment.model_dump() if assessment else None
         result['coverage'] = 'partial' if outcomes or evidence else 'unknown'
         result['model_targets'] = {field:getattr(settings,field).model_dump() for field in COMPANION_MODEL_FIELDS}
+        if diagnostics.get('extractive_fallback'):
+            result['warnings'].append('Verification incomplete: excerpts are attributed to sources, not verified factual conclusions.')
         if extra:
             result.update(extra)
         for citation in result['citations']:
@@ -210,12 +244,27 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             await session.commit()
         return result
 
+    async def extractive_fallback():
+        diagnostics['extractive_fallback'] = True
+        assessment_trace = diagnostics.setdefault('evidence_assessment', {})
+        assessment_trace.update(fallback_used=True, retained_evidence_count=len(evidence),
+                                retained_source_count=source_count(), sources_retained_for_synthesis=0,
+                                evidence_retained_for_synthesis_count=0, fallback_mode='extractive')
+        raw, segments, omissions = evidence_context.extractive_response(evidence, settings.companion_output_tokens,
+                                                                        assessment_available=assessment is not None)
+        omitted('extractive_fallback', omissions)
+        quote_ids = {identifier for segment in segments for identifier in segment['evidence_ids']}
+        assessment_trace['sources_retained_for_extraction'] = source_count([row for row in evidence if row['evidence_id'] in quote_ids])
+        assessment_trace['extractive_evidence_count'] = len(segments)-1
+        return await finish(raw, outcome='limited', extra={
+            'segments':segments, 'coverage':'partial', 'rich_response':None})
+
     async def plan_for(updates=True):
         available = available_tools(turn, settings, scope)
         _diag(turn.id, 'router_available_tools', {'available_tools': available,
-              'web_request_mode': turn.request['tools']['web'], 'allowed': turn.request['tools']['allowed'],
-              'web_available': web_available(settings)})
+              'allowed': turn.request['tools']['allowed'], 'web_available': web_available(settings)})
         data = {'query': query, 'recent':recent, 'context':scope, 'ontology':ontology,
+                'character_identity':identity['character_agent']['identity_description'],
                 'available_tools':available, 'allow_ontology_update':updates and bool(ontology), 'pending':pending}
         data['context'] = routing_context(scope, turn.request.get('foundry_context') if not override else None)
         result = await structured(llm, settings.model_companion_routing, prompts.PLANNER, data, QueryPlan,
@@ -324,9 +373,6 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
     except Exception:
         return await clarify(['Could you clarify the information you want me to find?'])
 
-    if turn.request['tools']['web'] == 'require' and not any(c.tool == 'web' for c in plan.calls):
-        return await finish('I could not plan the required web search. Please clarify what you want searched.', outcome='limited')
-
     retrieval = CompanionRetrieval(turn, actor)
     retrieval.settings = settings
     evidence = list(image_sources)
@@ -334,7 +380,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
     # the newly selected ontology. The immutable snapshot stays in user history.
     if not override:
         evidence += foundry_evidence(turn.request.get('foundry_context'))
-    if sum(estimate_tokens(json.dumps(e)) for e in evidence) > settings.companion_max_evidence_tokens:
+    if estimate_tokens(json.dumps(model_evidence(), ensure_ascii=False)) > settings.companion_max_evidence_tokens:
         raise ValueError('context_budget_exceeded')
     if images and plan.calls:
         from app.jobs.companion.prompts import IMAGE_INTERPRETATION
@@ -369,7 +415,8 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
         async def one(call):
             await progress(phase, coarse='retrieving', tool=call.tool, status='started')
             try:
-                item = await retrieval.retrieve(call.tool, call.query)
+                options = {'planned_call':call} if call.retrieval_depth == 'deep' or call.atlas_plan is not None else {}
+                item = await retrieval.retrieve(call.tool, call.query, **options)
             except Exception as exc:
                 _diag(turn.id, 'tool_error', {'tool': call.tool, 'query': call.query,
                       'error_type': type(exc).__name__, 'error': str(exc)[:500]})
@@ -379,15 +426,24 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                   'reason': item.get('reason'),
                   'evidence_count': len(item.get('evidence') or []),
                   'evidence': item.get('evidence') or []})
-            return {**item,'id':call.id,'query':call.query,'need_ids':call.need_ids,'recovery':recovery}
+            return {**item,'id':call.id,'query':call.query,'need_ids':call.need_ids,
+                    'retrieval_depth':call.retrieval_depth,'recovery':recovery}
 
         async def collect(row):
             outcomes.append(row)
+            omitted('retrieval', row.get('evidence_omissions', []))
+            omitted('retrieval', (row.get('source_trace') or {}).get('evidence_omissions', []))
             for source in row['evidence']:
+                evidence_needs.setdefault(source['evidence_id'], set()).update(row['need_ids'])
                 if source['evidence_id'] in {e['evidence_id'] for e in evidence}:
                     continue
-                if len(evidence) >= 20 or sum(estimate_tokens(json.dumps(e)) for e in evidence)+estimate_tokens(json.dumps(source)) > settings.companion_max_evidence_tokens:
+                compact = evidence_context.compact_evidence(source, evidence_needs[source['evidence_id']])
+                size = estimate_tokens(json.dumps([*model_evidence(), compact], ensure_ascii=False))
+                if len(evidence) >= 20 or size > settings.companion_max_evidence_tokens:
                     diagnostics['evidence_budget_omitted'] = True
+                    omitted('collection', [{'evidence_id':source['evidence_id'], 'need_ids':row['need_ids'],
+                        'reason':'record_limit' if len(evidence)>=20 else 'evidence_token_budget',
+                        'estimated_tokens':size, 'token_budget':settings.companion_max_evidence_tokens}])
                     continue
                 evidence.append(source)
             await progress(phase, coarse='retrieving', tool=row['tool'],status=row['status'])
@@ -404,7 +460,8 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             for call in calls:
                 if call.id not in completed:
                     await collect({'id':call.id,'tool':call.tool,'query':call.query,'need_ids':call.need_ids,
-                                   'status':'timed_out','evidence':[],'recovery':recovery})
+                                   'status':'timed_out','evidence':[],'recovery':recovery,
+                                   'retrieval_depth':call.retrieval_depth,'timeout_layer':'retrieval_round','timeout_s':timeout})
         finally:
             for task in tasks:
                 if not task.done():
@@ -413,40 +470,167 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
 
     async def assess(recovery_allowed):
         await progress('assessing', coarse='retrieving')
-        data={'needs':[n.model_dump() for n in plan.needs], 'evidence':evidence,
-              'outcomes':[{k:v for k,v in row.items() if k!='evidence'} for row in outcomes],
-              'available_tools':available_tools(turn,settings,scope), 'recovery_allowed':recovery_allowed}
-        result=await structured(llm,settings.model_companion_evidence,prompts.ASSESS,data,Assessment,
-                                settings.companion_evidence_timeout_s,'companion.evidence_assessment')
-        return validate_assessment(result,plan.needs,evidence)
+        trace = diagnostics.setdefault('evidence_assessment', {'attempts':[], 'fallback_used':False})
+        metrics['evidence_assessment'] = trace
+        records = model_evidence()
+        for attempt in range(2):
+            if attempt:
+                if not evidence or deadline-time.monotonic() <= 1:
+                    break
+                records, omissions = evidence_context.recovery_records(records, settings.companion_max_evidence_tokens)
+                omitted('assessment_recovery', omissions)
+                if omissions:
+                    diagnostics['assessment_evidence_omitted'] = True
+                if not records:
+                    break
+                trace['fallback_used'] = True
+                trace['fallback_mode'] = 'compact_retry'
+                await progress('assessing', coarse='retrieving', recovery=True)
+            allowed = recovery_allowed and not attempt
+            prompt = prompts.ASSESS_RECOVERY if attempt else prompts.ASSESS
+            tag = 'companion.evidence_assessment_recovery' if attempt else 'companion.evidence_assessment'
+            timeout = min(settings.companion_evidence_timeout_s,
+                          evidence_context.ASSESSMENT_RETRY_TIMEOUT_S) if attempt else settings.companion_evidence_timeout_s
+            timeout = min(timeout, max(0.01, deadline-time.monotonic()-0.5))
+            data = {'needs':[n.model_dump() for n in plan.needs], 'evidence':records,
+                    'outcomes':evidence_context.compact_outcomes(outcomes),
+                    'available_tools':available_tools(turn,settings,scope) if allowed else [],
+                    'recovery_allowed':bool(allowed)}
+            payload = prompt + json.dumps(data, ensure_ascii=False)
+            before = time.monotonic()
+            entry = {'stage':tag, 'started_at':utcnow().isoformat(),
+                'input_evidence_count':len(records), 'input_source_count':source_count(records),
+                'compact_prompt_characters':len(payload), 'compact_prompt_bytes':len(payload.encode('utf-8')),
+                'compact_prompt_tokens':estimate_tokens(payload),
+                'model':settings.model_companion_evidence.model_copy(update={'web_search_enabled':False}).model_dump(),
+                'configured_deadline_s':settings.companion_evidence_timeout_s,
+                'effective_deadline_s':timeout, 'structured_response_status':'pending',
+                'validation_failures':[], 'fallback_used':bool(attempt)}
+            trace['attempts'].append(entry)
+            try:
+                result = await structured(llm,settings.model_companion_evidence,prompt,data,Assessment,timeout,tag)
+                entry['structured_response_status'] = 'received'
+                result = validate_assessment(result,plan.needs,records)
+                if not allowed and result.follow_up_calls:
+                    raise ValueError('assessment_recovery_not_allowed')
+                entry['structured_response_status'] = 'valid'
+                trace.update(retained_evidence_count=len(evidence), retained_source_count=source_count(),
+                             sources_retained_for_synthesis=source_count(), evidence_retained_for_synthesis_count=len(evidence))
+                return result
+            except asyncio.CancelledError:
+                entry.update(error_type='CancelledError', structured_response_status='cancelled')
+                raise
+            except Exception as exc:
+                entry['error_type'] = type(exc).__name__
+                if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+                    entry['structured_response_status'] = 'timed_out'
+                elif isinstance(exc, ValidationError):
+                    entry['structured_response_status'] = 'invalid_structured_output'
+                    entry['validation_failures'] = [{'type':e['type'], 'loc':list(e['loc'])} for e in exc.errors(include_input=False, include_context=False)]
+                elif isinstance(exc, ValueError) and str(exc)=='invalid_structured_response':
+                    entry['structured_response_status'] = 'invalid_structured_output'
+                    entry['validation_failures'] = [{'type':'invalid_structured_response'}]
+                elif isinstance(exc, ValueError) and entry['structured_response_status']=='received':
+                    entry['structured_response_status'] = 'invalid_evidence_support'
+                    entry['validation_failures'] = [{'type':str(exc) if str(exc) in {
+                        'invalid_assessment_support','incomplete_need_assessment','unsupported_assessment',
+                        'assessment_recovery_not_allowed','invalid_structured_response'} else 'value_error'}]
+                else:
+                    entry['structured_response_status'] = 'failed'
+                diagnostics['assessment_error'] = type(exc).__name__
+            finally:
+                entry.update(ended_at=utcnow().isoformat(), elapsed_ms=round((time.monotonic()-before)*1000,2),
+                             retained_evidence_count=len(evidence), retained_source_count=source_count())
+                for stage_record in reversed(metrics.get('stages', [])):
+                    if stage_record['stage']==tag:
+                        stage_record['elapsed_ms'] = entry['elapsed_ms']
+                        if entry.get('error_type'):
+                            stage_record['error_type'] = entry['error_type']
+                        break
+                trace.update(started_at=trace['attempts'][0]['started_at'], ended_at=entry['ended_at'],
+                             elapsed_ms=round(sum(row.get('elapsed_ms',0) for row in trace['attempts']),2))
+                _diag(turn.id, 'evidence_assessment_attempt', entry)
+        trace.update(fallback_used=True, retained_evidence_count=len(evidence), retained_source_count=source_count())
+        diagnostics['assessment_unavailable'] = True
+        if assessment and any(row.status in {'supported','partial'} and row.supports for row in assessment.needs):
+            trace['reused_previous_assessment'] = True
+            trace['fallback_mode'] = 'previous_assessment'
+            trace.update(sources_retained_for_synthesis=source_count(), evidence_retained_for_synthesis_count=len(evidence))
+            return assessment
+        trace['sources_retained_for_synthesis'] = 0
+        trace['evidence_retained_for_synthesis_count'] = 0
+        return None
+
+    public_queries = {need.id: need.public_recovery_query for need in plan.needs}
+    rendered_queries = set()
+
+    async def automatic_web(needs):
+        if not needs or not settings.companion_recovery_max_rounds or 'web' not in available_tools(turn,settings,scope):
+            return []
+        needs = [need for need in needs if not any(row['tool']=='web' and need.id in row['need_ids'] for row in outcomes)]
+        # Prepare missing queries in one batch for the turn. Later review may
+        # uncover other gaps, but must not add another serial rendering deadline.
+        to_render = ([need for need in plan.needs if not public_queries.get(need.id) and need.id not in rendered_queries]
+                     if any(not public_queries.get(need.id) and need.id not in rendered_queries for need in needs) else [])
+        if to_render:
+            rendered_queries.update(need.id for need in to_render)
+            try:
+                rendered = await structured(llm, settings.model_companion_routing, prompts.PUBLIC_RECOVERY,
+                    {'needs':[{'id':need.id,'question':need.question} for need in to_render]},
+                    PublicRecoveryQueries, settings.companion_routing_timeout_s, 'companion.public_recovery_query')
+                if len({row.need_id for row in rendered.queries}) != len(to_render) or {row.need_id for row in rendered.queries} != {need.id for need in to_render}:
+                    raise ValueError('invalid_public_recovery_needs')
+                public_queries.update({row.need_id:row.query for row in rendered.queries})
+            except Exception:
+                diagnostics['public_recovery_query_error'] = True
+        blocked = [need.id for need in needs if not public_queries.get(need.id)]
+        if blocked:
+            diagnostics['web_recovery_blocked'] = {'reason':'privacy_blocked','need_ids':blocked}
+        return recovery_policy.web_candidates(needs, outcomes, public_queries)
 
     try:
         await retrieve(plan.calls)
         if plan.needs:
             try:
-                assessment=await assess(bool(settings.companion_recovery_max_rounds))
-                missing={n.need_id for n in assessment.needs if n.status!='supported'}
-                recovery=[]
-                for call in assessment.follow_up_calls:
-                    if call.tool not in available_tools(turn,settings,scope) or not set(call.need_ids)<=missing:
-                        continue
-                    if any(call.tool==r['tool'] and call.query==r['query'] for r in outcomes):
-                        continue
-                    if call.tool=='web' and len(call.query)>500:
-                        continue
-                    recovery.append(call)
-                if recovery and settings.companion_recovery_max_rounds and deadline-time.monotonic()>settings.companion_evidence_timeout_s:
-                    await retrieve(recovery[:settings.companion_recovery_max_calls],recovery=True)
-                    assessment=await assess(False)
-            except Exception:
-                diagnostics['assessment_error']='unverified'
-                return await finish('I could not verify the available evidence. I cannot give a supported factual answer yet.',outcome='limited')
+                # Operational failure can recover before the reviewer is available.
+                gaps = recovery_policy.recovery_needs(plan.needs, outcomes)
+                automatic = await automatic_web(gaps)
+                recovery = automatic[:settings.companion_recovery_max_calls]
+                recovered = bool(recovery)
+                if recovered:
+                    await retrieve(recovery, recovery=True)
+                    diagnostics['recovery_trigger'] = 'local_source_failure'
+                assessment = await assess(bool(settings.companion_recovery_max_rounds) and not recovered)
+                if assessment is None:
+                    return await extractive_fallback()
+                if not recovered and settings.companion_recovery_max_rounds:
+                    gaps = recovery_policy.recovery_needs(plan.needs, outcomes, assessment)
+                    automatic = await automatic_web(gaps)
+                    recovery = recovery_policy.select_recovery(automatic, assessment.follow_up_calls, outcomes,
+                        {need.id for need in gaps}, available_tools(turn,settings,scope), settings.companion_recovery_max_calls)
+                    if recovery and deadline-time.monotonic()>settings.companion_evidence_timeout_s:
+                        await retrieve(recovery,recovery=True)
+                        diagnostics['recovery_trigger'] = 'evidence_gap'
+                        assessment=await assess(False)
+                        if assessment is None:
+                            return await extractive_fallback()
+                if not settings.companion_recovery_max_rounds:
+                    diagnostics['recovery_disabled'] = True
+                recovered_needs = {need for row in outcomes if row.get('recovery') for need in row['need_ids']}
+                remaining_gaps = recovery_policy.recovery_needs(plan.needs, outcomes, assessment)
+                diagnostics['recovery_deferred_need_ids'] = [need.id for need in remaining_gaps if need.id not in recovered_needs]
+            except Exception as exc:
+                if finalizing:
+                    raise
+                diagnostics['assessment_or_recovery_error'] = type(exc).__name__
+                return await extractive_fallback()
 
         allow_general=(settings.companion_general_knowledge_policy=='labeled_opt_in' and turn.request.get('general_knowledge_opt_in',False))
         data={'query':query,'recent':recent,'context':scope,'identity_description':identity['character_agent']['identity_description'],
-              'personality_context':identity.get('personality_context'),'rapport':rapport,'evidence':evidence,
+              'personality_context':identity.get('personality_context'),'rapport':rapport,'evidence':model_evidence(),
               'assessment':assessment.model_dump() if assessment else None,
-              'outcomes':[{k:v for k,v in r.items() if k!='evidence'} for r in outcomes],
+              'outcomes':evidence_context.compact_outcomes(outcomes),
+              'assessment_unavailable':diagnostics.get('assessment_unavailable',False),
               'general_knowledge_allowed':allow_general,'repair_feedback':None}
         # Keep complete newest exchanges; never slice individual messages.
         while data['recent'] and estimate_tokens(json.dumps(data))>settings.companion_max_evidence_tokens+12000:
@@ -471,7 +655,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
         for attempt in range(2):
             await progress('synthesizing',coarse='synthesizing')
             draft=await structured(llm,settings.model_companion_synthesis,prompts.SYNTHESIZE,data,Draft,
-                                   settings.companion_turn_timeout_s,'companion.grounded_synthesis',settings.companion_output_tokens)
+                                   settings.companion_tool_timeout_s,'companion.grounded_synthesis',settings.companion_output_tokens)
             private_draft = draft
             if rich_enabled:
                 await progress('composing_response', coarse='synthesizing')
@@ -483,7 +667,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                     diagnostics['composition_outcome'] = 'text_only'
             await progress('verifying_claims',coarse='validating')
             verification=await structured(llm,settings.model_companion_evidence,prompts.VERIFY,
-                {'draft':private_draft.model_dump(),'rich_response':{k:v for k,v in proposal.items() if k != 'dependencies'} if proposal else None,'evidence':evidence,'assessment':data['assessment'],'general_knowledge_allowed':allow_general},
+                {'draft':private_draft.model_dump(),'rich_response':evidence_context.compact_rich_response(proposal),'evidence':model_evidence(),'assessment':data['assessment'],'assessment_unavailable':data['assessment_unavailable'],'general_knowledge_allowed':allow_general},
                 Verification,settings.companion_evidence_timeout_s,'companion.claim_verification')
             all_accepted,all_rejected=accepted_segments(private_draft,verification,evidence,allow_general)
             narrative_ids={s.id for s in draft.segments}
@@ -493,6 +677,8 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             if not rejected: break
             data['repair_feedback']=rejected
         if not accepted:
+            if diagnostics.get('evidence_assessment',{}).get('fallback_used'):
+                return await extractive_fallback()
             return await finish('I could not support an answer with the available evidence. Please clarify the question or provide another source.',outcome='limited')
         aliases={e['evidence_id']:i for i,e in enumerate(evidence,1)}
         segments=[]
@@ -504,8 +690,8 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             ids=list(dict.fromkeys(s.evidence_id for s in seg.supports))
             texts.append(text+''.join(f'[[source:{aliases[eid]}]]' for eid in ids))
             segments.append({'id':seg.id,'kind':seg.kind,'text':text,'evidence_ids':ids,'claims':seg.claims})
-        incomplete = bool(rejected or diagnostics.get('evidence_budget_omitted') or
-                          any(r['status'] != 'ok' or (r.get('source_trace') or {}).get('omitted_oversized_units') or
+        incomplete = bool(rejected or diagnostics.get('evidence_budget_omitted') or diagnostics.get('assessment_unavailable') or diagnostics.get('assessment_evidence_omitted') or
+                          any(r['status'] != 'ok' or r.get('source_readiness')=='partial' or (r.get('source_trace') or {}).get('omitted_oversized_units') or
                               ((r.get('source_trace') or {}).get('evidence_coverage') or {}).get('status', 'adequate') != 'adequate' for r in outcomes) or
                           (assessment and any(n.status != 'supported' for n in assessment.needs)))
         if incomplete:
@@ -543,6 +729,10 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
         return await finish(final_text,outcome='ontology_updated' if diagnostics.get('ontology_update') and plan.action=='conversation' else 'answered' if not rejected else 'limited',
                             extra={'segments':segments,'coverage':'complete' if complete else 'partial','rejected_claims':rejected,'rich_response':rich})
     except Exception:
+        if finalizing:
+            raise
+        if diagnostics.get('assessment_unavailable') or diagnostics.get('evidence_assessment',{}).get('fallback_used'):
+            return await extractive_fallback()
         return await finish('I could not verify a supported answer from the available sources. Please try again or narrow the question.',outcome='limited')
     finally:
         if skit_task:

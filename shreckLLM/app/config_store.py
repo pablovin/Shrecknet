@@ -22,6 +22,7 @@ MIGRATION_PROVIDER_ACTIVE_STATE_V7_KEY = "migration_provider_active_state_v7_app
 MIGRATION_PROVIDER_METADATA_V8_KEY = "migration_provider_metadata_v8_applied"
 MIGRATION_DEEPINFRA_LIMITS_V9_KEY = "migration_deepinfra_limits_v9_applied"
 MIGRATION_OPENROUTER_V10_KEY = "migration_openrouter_v10_applied"
+MIGRATION_COMPANION_TIMEOUTS_V11_KEY = "migration_companion_timeouts_v11_applied"
 LEGACY_COMPOSE_OLLAMA_BASE_URL = "http://ollama:11434"
 EXTERNAL_OLLAMA_BASE_URL = "http://host.docker.internal:11434"
 
@@ -94,7 +95,7 @@ class RuntimeConfig(BaseModel):
     memory_ttl_seconds: int = 3600
     memory_max_messages: int = 24
     max_concurrent_requests: int = 8
-    request_timeout_seconds: float = 180.0
+    request_timeout_seconds: float = 600.0
     max_queue_wait_seconds: float = 10.0
     provider_limits: dict[str, dict[str, float | int]] = Field(default_factory=dict)
     chat_job_queue_max_size: int = 256
@@ -106,7 +107,7 @@ class RuntimeConfig(BaseModel):
     chat_job_hedge_percentile: float = Field(default=0.95, ge=0.5, le=0.999)
     chat_job_hedge_min_delay_seconds: float = Field(default=8.0, gt=0)
     chat_job_hedge_max_in_flight: int = Field(default=4, ge=0)
-    chat_job_default_hedge_timeout_seconds: float = Field(default=120.0, gt=0)
+    chat_job_default_hedge_timeout_seconds: float = Field(default=600.0, gt=0)
     chat_job_orphan_timeout_seconds: float = Field(default=900.0, gt=0)
     chat_job_hedge_routes: dict[str, ChatHedgeRoute] = Field(default_factory=dict)
 
@@ -368,6 +369,41 @@ def _has_legacy_provider_valid_state(payload: dict[str, Any]) -> bool:
     return any(isinstance(raw, dict) and "valid" in raw for raw in states.values())
 
 
+def _migrate_companion_timeouts(conn: sqlite3.Connection, defaults: dict[str, Any]) -> None:
+    """Upgrade persisted execution limits once, before other migrations copy them."""
+    with conn:
+        conn.execute('BEGIN IMMEDIATE')
+        current = _load_from_db(conn)
+        if current.get(MIGRATION_COMPANION_TIMEOUTS_V11_KEY):
+            return
+        fields = ('request_timeout_seconds', 'chat_job_default_hedge_timeout_seconds',
+                  'chat_job_orphan_timeout_seconds', 'chat_job_hedge_routes')
+        saved = RuntimeConfig(**{key: current.get(key, defaults[key]) for key in fields})
+        request = max(600.0, saved.request_timeout_seconds)
+        hedge = max(600.0, saved.chat_job_default_hedge_timeout_seconds)
+        routes = {
+            tag: route.model_copy(update={'timeout_seconds': 600.0})
+            if tag.startswith('companion.') and route.timeout_seconds is not None and route.timeout_seconds < 600
+            else route
+            for tag, route in saved.chat_job_hedge_routes.items()
+        }
+        longest_attempt = max([request, hedge, *(route.timeout_seconds or hedge for route in routes.values())])
+        updates = {
+            'request_timeout_seconds': request,
+            'chat_job_default_hedge_timeout_seconds': hedge,
+            'chat_job_orphan_timeout_seconds': max(900.0, saved.chat_job_orphan_timeout_seconds, longest_attempt + 60),
+            'chat_job_hedge_routes': {tag: route.model_dump() for tag, route in routes.items()},
+        }
+        timestamp = _now()
+        conn.executemany(
+            f'INSERT INTO {CONFIG_TABLE} (key, value, updated_at) VALUES (?, ?, ?) '
+            'ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at',
+            [(key, _serialize(value), timestamp) for key, value in updates.items()
+             if key not in current or current[key] != value] +
+            [(MIGRATION_COMPANION_TIMEOUTS_V11_KEY, _serialize(True), timestamp)],
+        )
+
+
 def load_runtime_config() -> RuntimeConfig:
     settings = get_settings()
     defaults = _bootstrap_defaults(settings).model_dump()
@@ -375,6 +411,7 @@ def load_runtime_config() -> RuntimeConfig:
     conn = _connect()
     try:
         _ensure_schema(conn)
+        _migrate_companion_timeouts(conn, defaults)
         current = _load_from_db(conn)
         missing = {k: v for k, v in defaults.items() if k not in current}
         if missing:
@@ -434,16 +471,10 @@ def load_runtime_config() -> RuntimeConfig:
                     )
                     changed = True
 
-            updated_payload = RuntimeConfig(
-                provider_defaults=migrated_providers,
-                provider_states=runtime.provider_states,
-                memory_ttl_seconds=runtime.memory_ttl_seconds,
-                memory_max_messages=runtime.memory_max_messages,
-                max_concurrent_requests=runtime.max_concurrent_requests,
-                request_timeout_seconds=runtime.request_timeout_seconds,
-                max_queue_wait_seconds=runtime.max_queue_wait_seconds,
-                provider_limits=runtime.provider_limits,
-            ).model_dump()
+            # Provider migrations preserve execution/hedge deadlines and queue settings.
+            updated_payload = RuntimeConfig(**{
+                **runtime.model_dump(), "provider_defaults": migrated_providers
+            }).model_dump()
 
             ts = _now()
             if changed:
@@ -494,16 +525,10 @@ def load_runtime_config() -> RuntimeConfig:
                     )
                     changed = True
 
-            updated_payload = RuntimeConfig(
-                provider_defaults=providers,
-                provider_states=runtime.provider_states,
-                memory_ttl_seconds=runtime.memory_ttl_seconds,
-                memory_max_messages=runtime.memory_max_messages,
-                max_concurrent_requests=runtime.max_concurrent_requests,
-                request_timeout_seconds=runtime.request_timeout_seconds,
-                max_queue_wait_seconds=runtime.max_queue_wait_seconds,
-                provider_limits=runtime.provider_limits,
-            ).model_dump()
+            # Provider migrations preserve execution/hedge deadlines and queue settings.
+            updated_payload = RuntimeConfig(**{
+                **runtime.model_dump(), "provider_defaults": providers
+            }).model_dump()
 
             ts = _now()
             if changed:
@@ -560,16 +585,10 @@ def load_runtime_config() -> RuntimeConfig:
                 )
                 changed = True
 
-            updated_payload = RuntimeConfig(
-                provider_defaults=providers,
-                provider_states=runtime.provider_states,
-                memory_ttl_seconds=runtime.memory_ttl_seconds,
-                memory_max_messages=runtime.memory_max_messages,
-                max_concurrent_requests=runtime.max_concurrent_requests,
-                request_timeout_seconds=runtime.request_timeout_seconds,
-                max_queue_wait_seconds=runtime.max_queue_wait_seconds,
-                provider_limits=runtime.provider_limits,
-            ).model_dump()
+            # Provider migrations preserve execution/hedge deadlines and queue settings.
+            updated_payload = RuntimeConfig(**{
+                **runtime.model_dump(), "provider_defaults": providers
+            }).model_dump()
 
             ts = _now()
             if changed:
@@ -621,16 +640,10 @@ def load_runtime_config() -> RuntimeConfig:
                     )
                     changed = True
 
-            updated_payload = RuntimeConfig(
-                provider_defaults=providers,
-                provider_states=runtime.provider_states,
-                memory_ttl_seconds=runtime.memory_ttl_seconds,
-                memory_max_messages=runtime.memory_max_messages,
-                max_concurrent_requests=runtime.max_concurrent_requests,
-                request_timeout_seconds=runtime.request_timeout_seconds,
-                max_queue_wait_seconds=runtime.max_queue_wait_seconds,
-                provider_limits=runtime.provider_limits,
-            ).model_dump()
+            # Provider migrations preserve execution/hedge deadlines and queue settings.
+            updated_payload = RuntimeConfig(**{
+                **runtime.model_dump(), "provider_defaults": providers
+            }).model_dump()
 
             ts = _now()
             if changed:
@@ -675,20 +688,10 @@ def load_runtime_config() -> RuntimeConfig:
                 )
                 changed = True
 
-            updated_payload = RuntimeConfig(
-                provider_defaults=providers,
-                provider_states=runtime.provider_states,
-                memory_ttl_seconds=runtime.memory_ttl_seconds,
-                memory_max_messages=runtime.memory_max_messages,
-                max_concurrent_requests=runtime.max_concurrent_requests,
-                request_timeout_seconds=runtime.request_timeout_seconds,
-                max_queue_wait_seconds=runtime.max_queue_wait_seconds,
-                provider_limits=runtime.provider_limits,
-                chat_job_queue_max_size=runtime.chat_job_queue_max_size,
-                chat_job_result_ttl_seconds=runtime.chat_job_result_ttl_seconds,
-                chat_job_poll_default_interval_ms=runtime.chat_job_poll_default_interval_ms,
-                chat_job_max_retries=runtime.chat_job_max_retries,
-            ).model_dump()
+            # Provider migrations preserve execution/hedge deadlines and queue settings.
+            updated_payload = RuntimeConfig(**{
+                **runtime.model_dump(), "provider_defaults": providers
+            }).model_dump()
 
             ts = _now()
             if changed:

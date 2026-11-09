@@ -71,16 +71,17 @@ No third-party search key or separately configured search-service URL is require
 ## Companion permission and evidence
 
 For Companion, enabling search on `model_companion_synthesis` permits provider web
-retrieval. A turn must also allow it through `tools.web`; `disabled` prevents web
-retrieval. Routing chooses whether an allowed turn needs search. The separate
-retrieval call receives only the first 500 characters of the submitted question;
+retrieval. Web search is offered on every turn whenever a provider is configured;
+the legacy `tools.web` field is accepted but ignored. Routing chooses whether a
+turn needs search. The separate retrieval call receives only the first 500
+characters of the submitted question;
 identity, rapport, chat history, Foundry names, image-derived terms, private
 attachment bytes and canonical source bundles are not appended. The question itself
 is not automatically redacted, so it may still contain private information. Provider URL
 annotations with actual source excerpts become `external_web` evidence; generated
 summaries, citations without excerpts, and unsafe/private URLs are excluded.
 Embodied synthesis and image interpretation explicitly disable provider search so
-search cannot bypass the turn permission or evidence/reference validator.
+search cannot bypass the evidence/reference validator.
 
 The original JSON search integration remains compatible: when provider search is
 not enabled, `companion_web_enabled` plus `companion_web_search_url` use the existing

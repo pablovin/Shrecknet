@@ -173,3 +173,14 @@ Render `answer` as the answer and `sources[]` as provenance. Treat timing keys, 
 Companion supplies a bounded hybrid-search plan and does not run Elder synthesis.
 See [Character Companion](../Companion/Companion.md) for independent tool deadlines,
 normalized evidence and final citation validation.
+
+## Companion plan reuse
+
+Companion can execute an existing `RetrievalPlan` through the shared executor
+without another Elder planning request. An already-planned light question uses
+`single_query_plan`; explicit deep requests may retain Elder planning. Existing
+plan and scope validators remain authoritative. Exceptional `bounded_read_cypher`
+execution also filters returned parent nodes against pinned ontology and optional
+instance IDs before admitting evidence, even if generated Cypher mentions a scope
+parameter without applying its predicate correctly. Companion can supply a scoped
+embedding timeout without changing the default for other Elder callers.

@@ -55,6 +55,8 @@ def test_legacy_and_wrong_model_vectors_require_reindex(api, runtime, monkeypatc
     result = query(api).json()
     assert result["citations"] == []
     assert result["trace"]["sources_requiring_reindex"] == 1
+    assert result["sources_requiring_attention"][0]["library_item_id"] == item_id
+    assert result["sources_requiring_attention"][0]["reason"] == "incompatible_index"
     with session_factory()() as session:
         session.execute(text("UPDATE shreckworld_document_chunks SET document_id = NULL"))
         session.execute(text("UPDATE shreckworld_documents SET is_active = 0"))
@@ -78,14 +80,17 @@ def test_sql_semantic_fallback_is_explicit_and_book_filter_is_enforced(api, runt
     assert result["trace"]["embedding_backend"] == "sentence_transformers"
 
 
-def test_multiple_source_scope_and_query_coverage(api, runtime, monkeypatch):
+@pytest.mark.parametrize('strategy',['single','planned'])
+def test_multiple_source_scope_and_query_coverage(api, runtime, monkeypatch,strategy):
+    monkeypatch.setenv('SHRECKWORLD_QUERY_V3_PLANNING_ENABLED','false')
+    monkeypatch.setenv('SHRECKWORLD_QUERY_V3_COVERAGE_REVIEW_ENABLED','false')
     _, one_id, one_job = queued_job(api, monkeypatch, title="One", content=b"Mounted combat uses Horsemanship.")
     run(one_id, one_job)
     _, two_id, two_job = queued_job(api, monkeypatch, title="Two", content=b"Mounted combat uses Riding.")
     run(two_id, two_job)
     _, third_id, _ = queued_job(api, monkeypatch, title="Not indexed")
 
-    result = query(api, library_item_ids=[one_id, two_id, third_id]).json()
+    result = query(api, library_item_ids=[one_id, two_id, third_id],retrieval_strategy=strategy).json()
     assert {citation["library_item_id"] for citation in result["citations"]} == {one_id, two_id}
     assert result["trace"]["retrieval_ms"] >= 0
     assert result["trace"]["total_ms"] >= result["trace"]["retrieval_ms"]
@@ -96,7 +101,11 @@ def test_multiple_source_scope_and_query_coverage(api, runtime, monkeypatch):
         "sources_requiring_reindex": 0,
     }
 
+    assert result['sources_requiring_attention']==[{
+        'library_item_id':third_id,'title':'Not indexed','reason':'index_not_ready'}]
+    assert 'sources_requiring_attention' not in result['trace']
     one_source = query(api, library_item_ids=[one_id]).json()
+    assert one_source['sources_requiring_attention']==[]
     assert {citation["library_item_id"] for citation in one_source["citations"]} == {one_id}
 
     client, headers, world_id = api
@@ -276,3 +285,43 @@ def test_direct_ontology_retrieval_preserves_old_vectors_and_isolates_items(api,
         assert client.post('/ontologies/7/query', headers=headers, json={"query":"Combat","library_item_id":two_id}).status_code == 404
     finally:
         app.dependency_overrides.pop(authorized_ontology)
+
+
+@pytest.mark.parametrize('index_state',['queued','failed'])
+def test_usable_active_index_is_not_counted_as_unsearched_during_reindex(api,runtime,monkeypatch,index_state):
+    _,item_id,job_id=queued_job(api,monkeypatch)
+    run(item_id,job_id)
+    with session_factory()() as session:
+        session.get(ShreckWorldLibraryItem,item_id).embedding_status=index_state
+        session.commit()
+    result=query(api,library_item_ids=[item_id]).json()
+    assert result['citations']
+    assert result['source_coverage']=={'requested_source_count':1,'searched_source_count':1,
+        'sources_without_ready_index':0,'sources_requiring_reindex':0}
+    assert result['sources_requiring_attention']==[]
+
+
+def test_failed_status_with_incompatible_active_generation_requires_reindex(api,runtime,monkeypatch):
+    _,item_id,job_id=queued_job(api,monkeypatch)
+    run(item_id,job_id)
+    with session_factory()() as session:
+        session.get(ShreckWorldLibraryItem,item_id).embedding_status='failed'
+        session.get(ShreckWorldDocument,job_id).embedding_fingerprint='b'*64
+        session.commit()
+    result=query(api,library_item_ids=[item_id]).json()
+    assert result['source_coverage']=={'requested_source_count':1,'searched_source_count':0,
+        'sources_without_ready_index':0,'sources_requiring_reindex':1}
+    assert result['sources_requiring_attention'][0]['reason']=='incompatible_index'
+
+
+def test_compatible_generation_with_no_chunks_exposes_empty_index(api,runtime,monkeypatch):
+    from sqlalchemy import delete
+    _,item_id,job_id=queued_job(api,monkeypatch)
+    run(item_id,job_id)
+    with session_factory()() as session:
+        session.execute(delete(ShreckWorldDocumentChunk).where(ShreckWorldDocumentChunk.library_item_id==item_id))
+        session.commit()
+    result=query(api,library_item_ids=[item_id]).json()
+    assert result['source_coverage']=={'requested_source_count':1,'searched_source_count':0,
+        'sources_without_ready_index':1,'sources_requiring_reindex':0}
+    assert result['sources_requiring_attention'][0]['reason']=='empty_index'

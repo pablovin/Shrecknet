@@ -176,7 +176,17 @@ The response is `202 Accepted` with `id`, `shreckworld_id`, `status`, `stage`, a
 
 The `shreckworld_agent` Celery queue is consumed by the ShreckWorld worker alongside `shreckworld_embedding` with the worker's existing single-task concurrency bound. Jobs persist in `shreckworld_agent_jobs`; startup creates the table for existing installations. Queue-dispatch failures are marked failed and return `503`; execution failures are logged server-side and exposed as a generic retryable job error. The agent does not call Elder or Librarian runtimes.
 
-`source_coverage` is always returned, including in evidence mode. Its counts distinguish requested sources, sources with retrievable active chunks, sources without a ready index, and ready sources that require reindexing for the active embedding fingerprint. Only indexed compatible sources are searched. A source may be omitted from results because it has no ready index or needs reindexing; `include_trace` adds retrieval diagnostics (`retrieval_ms`, `synthesis_ms` when answer synthesis runs, and `total_ms`) but does not change scope. Timings are request-level observations, not latency guarantees.
+`source_coverage` is always returned, including in evidence mode. Its counts distinguish requested sources, sources with retrievable active chunks, sources without a ready index, and ready sources that require reindexing for the active embedding fingerprint. These counts are disjoint: searchable active generations count as searched,
+even when a newer indexing job is queued/failed; incompatible existing/legacy
+indexes count as requiring reindexing; remaining unsearchable books count as
+without a ready index. Compatible active generations without chunks count as not
+ready. `sources_requiring_attention` is an additive response array of
+`{library_item_id,title,reason}`, scoped to the requested ontology/collection and
+book subset. Reasons are `index_not_ready`, `incompatible_index`, or `empty_index`.
+It is returned for both `single` and `planned` queries, including delegated
+Companion evidence requests, independently of `include_trace`. Older services may
+omit the array; clients must not infer missing source IDs from uncited books.
+Only indexed compatible sources are searched. A source may be omitted from results because it has no ready index or needs reindexing; `include_trace` adds retrieval diagnostics (`retrieval_ms`, `synthesis_ms` when answer synthesis runs, and `total_ms`) but does not change scope. Timings are request-level observations, not latency guarantees.
 
 The response also contains citations with original passages and server-produced provenance. The semantic encoder can reject queries exceeding its actual token budget; do not silently truncate quoted evidence or invent a result.
 
@@ -216,16 +226,16 @@ model target is managed through the settings API below; the legacy
 `SHRECKWORLD_SYNTHESIS_PROVIDER` and `SHRECKWORLD_SYNTHESIS_MODEL` values only
 provide its initial default before a target is saved.
 `SHRECKWORLD_SYNTHESIS_TIMEOUT_SECONDS` controls the ShreckLLM job deadline
-(default 45 seconds),
+(default 600 seconds),
 `SHRECKWORLD_SYNTHESIS_POLL_INTERVAL_SECONDS` controls status polling, and
 `SHRECKWORLD_SYNTHESIS_EVIDENCE_TOKEN_BUDGET` caps complete evidence passages
 supplied to synthesis (estimated at four characters per token). The optional
 `SHRECKLLM_INTERNAL_SERVICE_TOKEN` is forwarded as a bearer token for
 installations that protect internal ShreckLLM calls. Defaults are
-`http://shreckllm:8110`, `openai`, `gpt-5-nano`, 45 seconds, 0.5 seconds, and
+`http://shreckllm:8110`, `openrouter`, `deepseek/deepseek-v4.1-flash`, 600 seconds, 0.5 seconds, and
 8,000 estimated evidence tokens respectively. Grounded answer synthesis allows
 up to 4,000 output tokens. Synchronous SDK callers should configure
-`Shrecknet(timeout=60)` or higher to allow for the ShreckWorld deadline and
+`Shrecknet(timeout=615)` or higher to allow for the ShreckWorld deadline and
 network overhead; use the asynchronous agent-job endpoint when the client
 cannot wait that long. Evidence mode and source reading do not require ShreckLLM availability.
 
@@ -342,3 +352,22 @@ physical pages. Interactive media requests can lazily create the same manifests;
 Companion's optional deadline may omit a slow first-time picture while preserving
 its verified text. Disable Companion rich responses to stop new visual composition;
 retain source media and existing result JSON for compatible rollback.
+
+## Companion retrieval depth
+
+Delegated `/ontologies/{ontology_id}/companion-evidence` and the legacy collection
+route accept the existing `single` and `planned` strategies in evidence mode.
+Companion uses `single` for already-planned individual questions: no book-level
+LLM planner, coverage-review model or answer synthesis runs. Explicit deep requests
+retain `planned` decomposition, coverage, bounded follow-up and provenance.
+Both paths preserve selected-book grants, active-index readiness, citations and
+`source_coverage` and `sources_requiring_attention`. Companion distinguishes
+retrieval success from readiness: useful passages keep `status="ok"` with partial
+readiness diagnostics, no passages are `empty`, and transport/service failures
+are `unavailable`/`timed_out`. Missing indexes never establish factual absence.
+
+Companion owns cross-source relevance review and automatic public-Web recovery.
+ShreckWorld does not perform Web recovery or select external sources. Its internal
+LLM deadline defaults to 600 seconds; the parent Companion tool deadline can end
+a deep request sooner than the sum of its child stages. Standalone callers should
+use asynchronous agent jobs for deep queries that may span several model calls.

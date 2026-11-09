@@ -99,16 +99,11 @@ test("rules index warnings remain visible in historical messages", () => {
   assert.equal(message.indexWarnings[0].source_coverage.searched_source_count, 1);
 });
 
-test("web permission follows provider capability and explicit opt-out", async () => {
-  for (const [available, allowed, expected] of [[true, true, "allow"], [true, false, "disabled"], [false, true, "disabled"]]) {
-    let body;
-    const { app, w } = fixture(async (path, options) => { body = options.body; return { turn_id: "turn" }; });
-    w.capabilities = { tools: { web: { available } } };
-    w.state().webAllowed = allowed;
-    await companionActions.sendCompanionMessage.call(app);
-    assert.equal(body.tools.web, expected);
-    assert.equal(w.context().webAvailable, available);
-  }
+test("Companion turns always request web search", async () => {
+  const calls = [];
+  const { app } = fixture(async (path, options) => { calls.push(options.body); return { turn_id: "turn" }; });
+  await companionActions.sendCompanionMessage.call(app);
+  assert.equal(calls[0].tools.web, "allow");
 });
 
 test("pagination prepends chronological history and keeps the server cursor opaque", async () => {

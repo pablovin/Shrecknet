@@ -62,7 +62,7 @@ class CompanionRepository:
             data = record(row)
             result = results.get(row.turn_id) if row.role == "assistant" and row.kind == "final" else None
             data["answer_details"] = ({key: result.get(key) for key in
-                ("tool_calls", "evidence", "segments", "coverage", "warnings", "rich_response")}
+                ("tool_calls", "evidence", "segments", "coverage", "warnings", "rich_response", "diagnostics")}
                 if result and "tool_calls" in result else None)
             records.append(data)
         return records

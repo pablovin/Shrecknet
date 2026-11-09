@@ -183,8 +183,6 @@ class TurnCreate(StrictModel):
             raise ValueError("Text or images required")
         if len(set(self.attachment_ids)) != len(self.attachment_ids):
             raise ValueError("Duplicate attachment IDs")
-        if self.tools.web == "require" and self.tools.allowed is not None and "web" not in self.tools.allowed:
-            raise ValueError("Required web tool excluded")
         return self
 
 
@@ -274,11 +272,23 @@ class ChatPage(Page[ChatRead]):
     usage: ChatUsage
 
 
+class SourceReadinessRead(BaseModel):
+    library_item_id: str = Field(min_length=1)
+    title: str
+    reason: Literal['index_not_ready', 'incompatible_index', 'empty_index']
+
+
 class ToolCallRead(BaseModel):
     id: str | None = None
     need_ids: list[str] = Field(default_factory=list)
     recovery: bool = False
     source_trace: dict | None = None
+    retrieval_depth: Literal['light', 'deep'] = 'light'
+    timeout_s: float | None = None
+    timeout_layer: Literal['tool', 'http', 'retrieval_round'] | None = None
+    source_readiness: Literal['ready', 'partial'] | None = None
+    sources_requiring_attention: list[SourceReadinessRead] = Field(default_factory=list)
+    evidence_omissions: list[dict] = Field(default_factory=list)
     tool: Literal["atlas", "shreckworld", "chronicle", "web", "character_memory"]
     status: Literal["ok", "empty", "timed_out", "unavailable"]
     query: str | None = None
@@ -302,6 +312,7 @@ from app.schemas.companion_rich_response import RichResponse
 
 class AnswerDetailsRead(BaseModel):
     rich_response: RichResponse | None = None
+    diagnostics: dict | None = None
 
     @field_validator('rich_response', mode='before')
     @classmethod

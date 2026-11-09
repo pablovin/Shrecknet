@@ -125,9 +125,11 @@ Character Companion adds persistent CharacterAgent selection, private conversati
 streaming and per-user rapport. Optional verified rich responses add source-backed
 cards, tables, excerpts and media in ShreckOS and Foundry. It is disabled by default. Its six model roles
 default to OpenRouter `deepseek/deepseek-v4.1-flash` and are independently editable
-in frontend Administration or `/config/`. The evidence-first `evidence_v2` query
-pipeline is the default for new or missing configuration; explicit saved pipeline
-selections are preserved. Configure and activate OpenRouter (or
+in frontend Administration or `/config/`. The evidence-first query pipeline handles
+all turns. Retrieval/model calls default to ten-minute limits; startup migrations
+raise shorter saved timeout values once while preserving longer limits and later
+edits. See the [timeout rollout](Documentation/Agents/Companion/Model%20Configuration.md#ten-minute-call-rollout)
+when upgrading an existing installation. Configure and activate OpenRouter (or
 choose another configured provider), then enable the feature. The standard
 Compose startup includes its isolated turn and rapport workers.
 

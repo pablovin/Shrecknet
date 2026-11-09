@@ -16,6 +16,8 @@ async def run(args):
         if args.world_id:
             answer = await sdk.shreckworld.query(args.world_id, args.question)
             print(answer.answer)
+            for issue in answer.sources_requiring_attention:
+                print('Index attention:', issue.title, issue.library_item_id, issue.reason)
             for citation in answer.citations:
                 print(citation.title, 'page', citation.page_number, citation.excerpt)
 

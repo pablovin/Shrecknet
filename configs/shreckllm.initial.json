@@ -61,7 +61,7 @@
   "bootstrap_memory_ttl_seconds": 3600,
   "bootstrap_memory_max_messages": 24,
   "bootstrap_max_concurrent_requests": 8,
-  "bootstrap_request_timeout_seconds": 180.0,
+  "bootstrap_request_timeout_seconds": 600.0,
   "bootstrap_max_queue_wait_seconds": 10.0,
   "bootstrap_provider_limits": {
     "ollama": {

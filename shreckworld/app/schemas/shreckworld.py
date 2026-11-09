@@ -345,6 +345,12 @@ class GroundedConflict(BaseModel):
     citation_ids: list[str] = Field(min_length=1)
 
 
+class SourceReadinessIssue(BaseModel):
+    library_item_id: str
+    title: str
+    reason: Literal['index_not_ready', 'incompatible_index', 'empty_index']
+
+
 class QuerySourceCoverage(BaseModel):
     requested_source_count: int = Field(ge=0)
     searched_source_count: int = Field(ge=0)
@@ -368,6 +374,7 @@ class ShreckWorldQueryResponse(BaseModel):
     conflicts: list[GroundedConflict] = Field(default_factory=list)
     source_warnings: list[SourceWarning] = Field(default_factory=list)
     source_coverage: QuerySourceCoverage
+    sources_requiring_attention: list[SourceReadinessIssue] = Field(default_factory=list)
     retrieval_strategy: Literal["single", "planned"] = "single"
     query_plan: QueryPlan | None = None
     query_interpretation: QueryInterpretation | None = None

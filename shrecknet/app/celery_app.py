@@ -36,6 +36,12 @@ def configure_celery_app() -> None:
     }
     celery_app.conf.task_always_eager = settings.celery_task_always_eager
     celery_app.conf.task_eager_propagates = True
+    # Redis visibility must outlive long Companion turns; SQL leases still fence
+    # duplicate delivery. A shorter broker timeout repeatedly redelivers live work.
+    visibility = max(3600, settings.companion_turn_timeout_s + 120)
+    celery_app.conf.broker_transport_options = {**celery_app.conf.broker_transport_options, 'visibility_timeout': visibility}
+    celery_app.conf.result_backend_transport_options = {**celery_app.conf.result_backend_transport_options, 'visibility_timeout': visibility}
+    celery_app.conf.visibility_timeout = visibility
     celery_app.conf.timezone = "UTC"
 
 

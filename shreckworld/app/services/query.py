@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from shreckdoc.retrieval import extract_named_terms, reciprocal_rank_fusion, select_diverse
 
-from app.models import ShreckWorldDocumentChunk, ShreckWorldLibraryItem
+from app.models import ShreckWorldDocument, ShreckWorldDocumentChunk, ShreckWorldLibraryItem
 from app.repositories.documents import active_documents, child_rows, citation_provenance, lexical_candidates
 from app.schemas.shreckworld import ShreckWorldCitation
 from app.services.embedding import cosine_similarity, get_embedder
@@ -34,7 +34,7 @@ class RetrievalScope:
     document_ids: list[str]
     rows: list
     by_id: dict[str, tuple[ShreckWorldDocumentChunk, ShreckWorldLibraryItem]]
-    trace: dict[str, int | str | bool | float]
+    trace: dict[str, Any]
 
 
 def resolve_retrieval_scope(session: Session, *, shreckworld_id: str,
@@ -50,27 +50,37 @@ def resolve_retrieval_scope(session: Session, *, shreckworld_id: str,
     rows = child_rows(session, document_ids)
     by_id = {chunk.id: (chunk, item) for chunk, item in rows}
     eligible_items = {document.library_item_id for document in documents}
-    statement = select(ShreckWorldLibraryItem.id).where(item_scope_clause(shreckworld_id))
+    statement = select(ShreckWorldLibraryItem.id, ShreckWorldLibraryItem.title,
+                       ShreckWorldLibraryItem.embedding_status).where(item_scope_clause(shreckworld_id))
     if library_item_id is not None:
         statement = statement.where(ShreckWorldLibraryItem.id == library_item_id)
     elif library_item_ids is not None:
         statement = statement.where(ShreckWorldLibraryItem.id.in_(library_item_ids))
-    scoped_items = set(session.scalars(statement))
-    ready_items = set(session.scalars(
-        select(ShreckWorldLibraryItem.id).where(
-            ShreckWorldLibraryItem.id.in_(scoped_items),
-            ShreckWorldLibraryItem.embedding_status == "ready",
-        )
-    )) if scoped_items else set()
+    source_rows = list(session.execute(statement))
+    scoped_items = {item.id for item in source_rows}
+    ready_items = {item.id for item in source_rows if item.embedding_status == 'ready'}
     searched_items = {item.id for _, item in rows}
-    trace: dict[str, int | str | bool | float] = {
+    indexed_items = set(session.scalars(select(ShreckWorldDocument.library_item_id).where(
+        ShreckWorldDocument.library_item_id.in_(scoped_items), ShreckWorldDocument.is_active.is_(True),
+    ))) if scoped_items else set()
+    # Legacy ready flags can also identify indexes lacking a compatible active
+    # generation. A usable active generation remains searchable during reindexing.
+    reindex_items = (indexed_items | ready_items) - eligible_items
+    without_ready_index = scoped_items - searched_items - reindex_items
+    trace: dict[str, Any] = {
         "embedded_chunks_considered": len(rows), "returned_citations": 0, "web_search": "not_implemented",
         "pipeline": "e5_qdrant_contextual_fts_exact_rrf_cross_encoder_parent_v2",
         "embedding_backend": embedder.backend, "embedding_model": embedder.settings.embedding_model_id,
-        "embedding_fingerprint": fingerprint, "sources_requiring_reindex": len(ready_items - eligible_items),
-        "sources_without_ready_index": len(scoped_items - ready_items), "requested_sources": len(scoped_items),
+        "embedding_fingerprint": fingerprint, "sources_requiring_reindex": len(reindex_items),
+        "sources_without_ready_index": len(without_ready_index), "requested_sources": len(scoped_items),
         "sources_searched": len(searched_items), "qdrant_fallback": False, "reranker_fallback": False,
     }
+    trace['sources_requiring_attention'] = [
+        {'library_item_id': item.id, 'title': item.title,
+         'reason': 'incompatible_index' if item.id in reindex_items else
+                   'empty_index' if item.id in eligible_items else 'index_not_ready'}
+        for item in sorted(source_rows, key=lambda row: row.id) if item.id not in searched_items
+    ]
     return RetrievalScope(session, shreckworld_id, fingerprint, document_ids, rows, by_id, trace)
 
 

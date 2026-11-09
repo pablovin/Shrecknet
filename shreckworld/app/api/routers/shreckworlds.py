@@ -451,12 +451,14 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
                     "The result may be incomplete because " + gap_text + "."
                 )
     trace["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
+    attention = trace.pop('sources_requiring_attention', [])
     return ShreckWorldQueryResponse(
         shreckworld_id=None if isinstance(shreckworld_id, OntologyScope) else shreckworld_id,
         ontology_id=shreckworld_id.ontology_id if isinstance(shreckworld_id, OntologyScope) else None, query=payload.query, answer=answer, citations=citations,
         trace=trace if payload.include_trace else None, mode=payload.mode, answer_status=answer_status,
         claims=claims, missing_information=missing_information, conflicts=conflicts,
         answer_content=answer_content, evidence=evidence, source_warnings=source_warnings,
+        sources_requiring_attention=attention,
         source_coverage=QuerySourceCoverage(
             requested_source_count=int(trace["requested_sources"]),
             searched_source_count=int(trace["sources_searched"]),

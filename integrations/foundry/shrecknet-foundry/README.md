@@ -7,7 +7,7 @@ repository without imports from the Shrecknet backend repository.
 
 ## Install or update
 
-Version **0.5.2** supports Foundry VTT 14. In Foundry Setup → Add-on Modules →
+Version **0.5.3** supports Foundry VTT 14. In Foundry Setup → Add-on Modules →
 Install Module, use this stable manifest URL:
 
 ```text
@@ -15,8 +15,8 @@ https://raw.githubusercontent.com/pablovin/Shrecknet/main/integrations/foundry/s
 ```
 
 For this exact version, use the
-[0.5.2 manifest](https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.5.2/module.json).
-See the [release notes](https://github.com/pablovin/Shrecknet/releases/tag/foundry-v0.5.2).
+[0.5.3 manifest](https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.5.3/module.json).
+See the [release notes](https://github.com/pablovin/Shrecknet/releases/tag/foundry-v0.5.3).
 Deploy the matching backend and Companion workers first for contextual snapshots;
 older servers retain text chat with contextual controls unavailable. Reload the
 Foundry table after updating.

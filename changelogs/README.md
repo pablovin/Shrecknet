@@ -43,3 +43,5 @@ This folder contains release notes by application version.
 - [Foundry v0.5.1](./foundry-v0.5.1.md) - Native-size white launcher with purple branding and safe Companion Markdown.
 
 - [Foundry v0.5.2](./foundry-v0.5.2.md) - Conversation-first Companion layout, composer attachments, compact conversation footer and direct sheet title-bar action.
+
+- [Foundry v0.5.3](./foundry-v0.5.3.md) - Readable composer text, actionable Companion admission errors and corrected CORS deployment configuration.

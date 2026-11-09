@@ -159,7 +159,11 @@ export class ShrecknetClient {
     try {
       response = await fetch(`${base}${path}`, options);
     } catch (_) {
-      throw new ShrecknetApiError(`Unable to reach ${base}. Check the service URL, availability, and CORS permission for this Foundry origin.`, 0);
+      const route = String(path).split("?")[0];
+      const admissionHint = options.headers?.["Idempotency-Key"]
+        ? " Companion chat/message creation requires Idempotency-Key in the server CORS_ALLOW_HEADERS setting; normal browsing can work while this header is blocked."
+        : "";
+      throw new ShrecknetApiError(`Unable to reach ${base} for ${options.method || "GET"} ${route}. Check the service URL, availability, and CORS permission for this Foundry origin.${admissionHint}`, 0);
     }
     return response;
   }

@@ -15,9 +15,17 @@ CORS_ALLOW_ORIGINS=["https://shrecknet.club","https://foundry.shrecknet.club"]
 CORS_ALLOW_ORIGIN_REGEX=
 CORS_ALLOW_CREDENTIALS=true
 CORS_ALLOW_METHODS=["GET","POST","PUT","PATCH","DELETE","OPTIONS","HEAD"]
-CORS_ALLOW_HEADERS=["Authorization","Content-Type","Range","If-Range","X-Shrecknet-Integration-Key"]
+CORS_ALLOW_HEADERS=["Authorization","Content-Type","Range","If-Range","X-Shrecknet-Integration-Key","Idempotency-Key"]
 CORS_MAX_AGE=3600
 ```
+
+`Idempotency-Key` is required for Character Companion chat and turn creation.
+Allow it alongside `Authorization` and `Content-Type`. Atlas browsing, bookshelves
+and Chronicles can load while Companion mutations fail because they use different
+headers or services. A preflight with `Access-Control-Request-Headers:
+authorization,content-type,idempotency-key` must succeed for the Foundry origin.
+After adding the header to an existing deployment, restart the API processes as
+shown below; a Foundry module update alone cannot change the server's allowlist.
 
 Lists, booleans, and numbers use JSON syntax. The optional regex is a plain string;
 an empty value disables regex matching. Origins must be explicit HTTP(S) origins

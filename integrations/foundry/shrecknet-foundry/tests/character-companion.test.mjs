@@ -265,3 +265,32 @@ test("footer selector opens the chosen chat and ignores pending replies", async 
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(opened, ["second"]);
 });
+
+test("New chat retries the same admission after a blocked preflight and clears the old notice", async () => {
+  const admissions = [];
+  let blocked = true;
+  const { app, w, errors } = fixture(async (path, options) => {
+    if (options?.method === "POST") {
+      admissions.push(options);
+      if (blocked) throw new Error("CORS admission blocked");
+      return { id: "created", character_agent_id: "hero" };
+    }
+    if (path === "/selection") return w.selection;
+    if (path.startsWith("/candidates")) return { items: [], next_cursor: null };
+    if (path.startsWith("/chats?")) return { items: [{ id: "created", character_agent_id: "hero" }], usage: { count: 2, limit: 10, remaining: 8 } };
+    if (path === "/chats/created") return { id: "created", character_agent_id: "hero" };
+    return { items: [], next_cursor: null };
+  });
+  await companionActions.createCompanionChat.call(app);
+  assert.match(errors[0], /CORS admission blocked/);
+  assert.equal(w.chat.id, "chat");
+  assert.ok(w.pending);
+  assert.equal(w.context().canCreate, true);
+  app.notice = "CORS admission blocked";
+  blocked = false;
+  await companionActions.createCompanionChat.call(app);
+  assert.equal(w.chat.id, "created");
+  assert.equal(app.notice, null);
+  assert.equal(w.pending, null);
+  assert.deepEqual(admissions[0], admissions[1]);
+});

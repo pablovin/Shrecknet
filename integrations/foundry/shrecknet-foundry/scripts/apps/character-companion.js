@@ -192,6 +192,7 @@ export class CompanionWorkspace {
     this.locked = true;
     clearTimeout(this.timer);
     try {
+      this.app.notice = null;
       await action();
     } catch (error) {
       if (generation === this.generation && session === this.app.session) {

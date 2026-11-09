@@ -107,11 +107,11 @@ origin as above.
 
 ## Release process
 
-The module version is **0.5.2**. The Shrecknet scene-control launcher uses native
+The module version is **0.5.3**. The Shrecknet scene-control launcher uses native
 Foundry control dimensions with a white background and a purple logo. Companion
 replies render safe Markdown in both workspace and compact layouts, including the
 fallback when rich replies are disabled or unavailable. See the
-[release notes](../../changelogs/foundry-v0.5.2.md) for compatibility and rollback.
+[release notes](../../changelogs/foundry-v0.5.3.md) for compatibility and rollback.
 The release workflow uses the matching
 `changelogs/foundry-vX.Y.Z.md` as its GitHub Release notes.
 
@@ -119,9 +119,9 @@ To build an installable archive locally from the repository root:
 
 ```bash
 node --test integrations/foundry/shrecknet-foundry/tests/*.test.mjs
-mkdir -p dist/foundry-v0.5.2
-(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.5.2/shrecknet-foundry-v0.5.2.zip . -x '.DS_Store' -x '__MACOSX/*')
-cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.5.2/module.json
+mkdir -p dist/foundry-v0.5.3
+(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.5.3/shrecknet-foundry-v0.5.3.zip . -x '.DS_Store' -x '__MACOSX/*')
+cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.5.3/module.json
 ```
 
 Use a fresh output directory when rebuilding, so obsolete files cannot remain in
@@ -329,6 +329,14 @@ The HTTP namespace is `/users/me/character-companion`. The module reads
 Chat/turn creation retains its UUID `Idempotency-Key` and exact payload across
 ambiguous retries. Configure the Shrecknet browser CORS policy to permit
 `PATCH`, `PUT`, `DELETE`, and the `Idempotency-Key` header as well as bearer auth.
+
+Normal Atlas/World browsing does not test the admission header. If New chat or Send
+fails while browsing works, verify the server's root `.env` includes
+`Idempotency-Key` in `CORS_ALLOW_HEADERS` and restart its APIs; see the
+[shared CORS guide](BROWSER_CORS.md). Admission network errors identify the method,
+route and required header. Successful Companion actions clear the previous error
+notice. The composer explicitly uses the light theme text/caret color and a muted
+placeholder even when Foundry's application theme supplies dark textarea text.
 See the [canonical HTTP contract](../Agents/Companion/Frontend%20API.md).
 
 Replies use durable admission and two-second snapshot polling while the workspace

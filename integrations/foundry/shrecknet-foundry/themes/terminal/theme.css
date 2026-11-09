@@ -97,3 +97,13 @@
   border-color: var(--shrecknet-border);
   color: var(--shrecknet-accent);
 }
+
+/* Foundry's application theme must not make the dark composer text black. */
+.shrecknet.theme-terminal .shrecknet-companion-composer textarea {
+  color: var(--shrecknet-text);
+  caret-color: var(--shrecknet-text);
+}
+.shrecknet.theme-terminal .shrecknet-companion-composer textarea::placeholder {
+  color: var(--shrecknet-muted);
+  opacity: 1;
+}

@@ -191,3 +191,19 @@ test("setup health probes check each service without sending player or setup cre
     await assert.rejects(client.checkServiceHealth(), /Service offline/);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test("Companion admission failures identify the blocked header and action without credentials", async () => {
+  const client = new ShrecknetClient({ serverUrl: "https://example.test/backend_api", accessToken: "private-token" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+  try {
+    await assert.rejects(client.companion("/chats", { method: "POST", body: {}, idempotencyKey: "private-key" }), (error) => {
+      assert.equal(error.status, 0);
+      assert.match(error.message, /POST \/users\/me\/character-companion\/chats/);
+      assert.match(error.message, /Idempotency-Key.*CORS_ALLOW_HEADERS/);
+      assert.ok(!error.message.includes("private-token"));
+      assert.ok(!error.message.includes("private-key"));
+      return true;
+    });
+  } finally { globalThis.fetch = originalFetch; }
+});

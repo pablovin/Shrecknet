@@ -36,3 +36,31 @@ def test_media_regex_uses_full_origin_matching():
     pattern = r"https://table\.example"
     assert _origin_matches("https://table.example", [], pattern)
     assert not _origin_matches("https://table.example.attacker.test", [], pattern)
+
+
+def test_example_policy_allows_companion_admission_preflight():
+    from pathlib import Path
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.testclient import TestClient
+    from shreckconfig import load_cors_policy
+
+    policy = load_cors_policy(Path(__file__).resolve().parents[2] / "shrecknet.env.example")
+    app = FastAPI()
+    app.add_middleware(CORSMiddleware, **policy.model_dump())
+    client = TestClient(app)
+    response = client.options("/users/me/character-companion/chats", headers={
+        "Origin": "https://foundry.shrecknet.club",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type,idempotency-key",
+    })
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://foundry.shrecknet.club"
+    assert "idempotency-key" in response.headers["access-control-allow-headers"].lower()
+    denied = client.options("/users/me/character-companion/chats", headers={
+        "Origin": "https://untrusted.example",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type,idempotency-key",
+    })
+    assert denied.status_code == 400
+    assert "access-control-allow-origin" not in denied.headers

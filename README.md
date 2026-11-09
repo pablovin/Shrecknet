@@ -69,6 +69,17 @@ Narrative generation agent for converting notes/session material into polished s
 
 Initial configuration lives in the root `configs/` folder. Shrecknet and ShreckOS use separate Compose projects and separate environment files. Copy this repository's `shrecknet.env.example` to its root `.env` for the backend. It defaults to `http://localhost`; set its own `SHRECKNET_PUBLIC_ORIGIN` to the public HTTPS origin when deploying. ShreckOS has its own `.env.shreckos` in ShrecknetFrontend. For browser authentication to work, both files must name the same website origin, but neither Compose command loads the other repository's env file.
 
+The backend environment template is [shrecknet.env.example](shrecknet.env.example)
+at the repository root. For a **new deployment**, copy it before starting Compose:
+
+```bash
+cp shrecknet.env.example .env
+```
+
+For an existing deployment, edit its `.env` rather than replacing it. Foundry
+Companion requires `Idempotency-Key` in `CORS_ALLOW_HEADERS`; restart the APIs
+after changing the policy. See the [browser CORS guide](Documentation/Deployment/BROWSER_CORS.md).
+
 The root Compose stack generates and persists browser-auth secrets, derives the allowed origin and secure-cookie mode from this address, and enables browser authentication automatically. Use no path or trailing slash. Initial service configuration lives in:
 
 - [configs/shrecknet.initial.json](configs/shrecknet.initial.json): Shrecknet first-start settings.

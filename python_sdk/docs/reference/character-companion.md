@@ -4,12 +4,17 @@ Private canonical-character conversations; see the Character Companion workflow 
 
 Turn results remain raw dictionaries and preserve optional retrieval diagnostics:
 `tool_calls[].retrieval_depth`, `timeout_s`, `timeout_layer`, and
-`result.diagnostics` (including compact assessment attempts/fallback),
+`result.diagnostics` (including same-context assessment attempts/fallback),
 `tool_calls[].source_readiness` and `sources_requiring_attention`. Final message
 `answer_details.diagnostics` preserves the same assessment trace; `extractive`
 segments attribute quotes without asserting verified claims. Existing records may omit these keys. Server-planned light/
-deep retrieval, conditional memory and automatic public-Web recovery do not add
+deep retrieval, conditional memory and assessed public-Web recovery do not add
 required SDK arguments. See the [workflow guide](../character_companion.md#retrieval-recovery-and-long-running-turns).
+
+New `result.assessment` is null or `{sufficient: bool, web_queries: list[str]}`;
+`diagnostics.assessment_contract_version="sufficiency_v1"` identifies this shape.
+Raw historical per-need assessment dictionaries remain unchanged. Recovery and
+assessment-outage results conservatively retain partial coverage.
 
 ## Methods
 
@@ -191,3 +196,8 @@ metadata. Event names/payloads remain unmodified. See the
 No existing turn, message or event method loses additive fields. Source access and
 revisions may change after a reply is saved. See the
 [workflow guide](../character_companion.md#rich-responses) for rollout and examples.
+
+
+Simple research planning keeps the SDK request/response models unchanged; optional
+`research_plan` and `planning` diagnostics describe semantic tasks and compilation.
+See [Companion usage](../character_companion.md) for safe optional-field reads.

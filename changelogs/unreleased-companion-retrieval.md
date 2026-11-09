@@ -35,3 +35,10 @@ See the [canonical contract](../Documentation/Agents/Companion/Companion.md) and
   server-side. Audit omitted evidence and expose assessment timings, input size,
   exception/validation outcomes and retained-source counts in owner-only diagnostics
   and saved Answer Breakdown data. No SQL schema migration is required.
+
+- Replace model-facing executable plans with search/chat research tasks. Compile
+  IDs, permitted calls and light/deep strategies in the backend; separate scope,
+  continuation, memory relevance and safe public-query decisions. Recover invalid
+  planning with original-goal local search, permit nine initial calls and allocate
+  retained evidence fairly across needs. Assessment proposes semantic follow-ups.
+  Keep API payloads, saved answers, timeout migrations and evidence safeguards.

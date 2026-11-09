@@ -72,19 +72,26 @@ async def test_foundry_snapshot_forwarded_without_changing_table_identifiers():
         await client.aclose()
 
 @pytest.mark.asyncio
-async def test_answer_breakdown_survives_turn_and_message_reads():
+@pytest.mark.parametrize('assessment',[None, {'needs':[], 'follow_up_calls':[]},
+    {'sufficient':False,'web_queries':[]}, {'sufficient':True,'web_queries':[]}])
+async def test_answer_breakdown_survives_turn_and_message_reads(assessment):
     details = {'tool_calls': [{'tool':'atlas','status':'ok','query':'forest','cache_hit':False,'elapsed_ms':4,'returned_count':1,'evidence_ids':['e1'],'retrieval_depth':'light','timeout_s':600,'timeout_layer':None}], 'evidence':[{'evidence_id':'e1','excerpt':'Old trees'}], 'segments':[{'id':'s1','text':'Forest','kind':'fact','evidence_ids':['e1']}], 'coverage':'complete','warnings':[]}
     details['diagnostics']={'evidence_assessment':{'fallback_used':True,'retained_evidence_count':1}}
+    if assessment is not None and 'sufficient' in assessment:
+        details['diagnostics']['assessment_contract_version']='sufficiency_v1'
     def handler(request):
         if request.url.path.endswith('/messages'):
             return httpx.Response(200,json={'items':[{'id':'message','answer_details':details}], 'next_cursor':None})
-        return httpx.Response(200,json={'id':'turn','chat_id':'chat','status':'completed','result':{'text':'Forest',**details}})
+        return httpx.Response(200,json={'id':'turn','chat_id':'chat','status':'completed','result':{'text':'Forest','assessment':assessment,**details}})
     client=AsyncShrecknetClient('http://test',token='private-token')
     await client._client.aclose()
     client._client=httpx.AsyncClient(base_url='http://test',transport=httpx.MockTransport(handler))
     try:
         api=CharacterCompanionAPI(client)
-        assert (await api.turn('turn')).result['tool_calls']==details['tool_calls']
+        result=(await api.turn('turn')).result
+        assert result['tool_calls']==details['tool_calls']
+        assert result['assessment']==assessment
+        assert result['diagnostics']==details['diagnostics']
         assert (await api.messages('chat'))['items'][0]['answer_details']==details
     finally:
         await client.aclose()

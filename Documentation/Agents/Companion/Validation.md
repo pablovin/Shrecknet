@@ -395,3 +395,33 @@ Companion workers together for per-book attention details. This change requires
 no SQL schema migration or re-embedding. Existing timeout migration markers and
 600-second primary assessment limits remain; compact retries add at most sixty
 seconds per assessment invocation within the turn budget.
+
+## Simple research planner regression checks
+
+Run from `shrecknet/` with the isolated writable directories described above:
+
+```bash
+../.venv/bin/python -m pytest tests/test_companion_planning.py tests/test_companion_query_pipeline.py tests/test_companion_assessment_recovery.py tests/test_companion_recovery.py -o addopts='' -q
+../.venv/bin/python -m pytest tests/test_companion*.py -o addopts='' -q \
+  --deselect=tests/test_companion_foundry_context.py::test_admission_freezes_snapshot_preserves_identity_and_replays \
+  --deselect=tests/test_companion_foundry_context.py::test_router_does_not_search_other_campaigns_when_foundry_scope_missing \
+  --deselect=tests/test_companion_foundry_context.py::test_snapshot_reaches_synthesis_and_committed_history \
+  --deselect=tests/test_companion_rich_response.py::test_presentation_enablement_cannot_change_legacy_pipeline_behavior
+```
+
+Checks cover the tiny schema, nine-call compilation, duplicate normalization,
+authorization filtering, original-goal technical fallback and long-query splitting,
+memory relevance/failure handling, safe initial Web queries, pending continuation,
+round-robin need coverage and backend assessment-follow-up escalation. Existing
+compact assessment retry, source revocation, citations, rich output, timeout
+migration, partial indexes and cancellation regressions remain included.
+
+The Companion suite passed 139 tests with the four baseline failures above
+excluded. The SDK package suite passed 71 tests. A broader Companion/config/import
+run reported 18 failures; all 18 reproduce on unchanged HEAD in an isolated source
+archive. They concern retired legacy runner/configuration selectors and old test
+settings fixtures, including eleven `test_character_companion.py` cases and three
+model-configuration cases. The four excluded cases belong to that same baseline
+set. These checks use provider doubles; no live-model latency/quality acceptance,
+service deployment or database mutation is claimed. No new migration is required;
+drain active turns and restart the API and workers with matching schemas/prompts.

@@ -53,8 +53,8 @@ for rollout, restart behavior, and legacy database cleanup.
 ## Companion retrieval budgets
 
 Companion reuses Atlas plans, retrieves individual book questions through the
-light evidence path, and recovers permitted public information after local failures
-or evidence gaps. Personal memories are retrieved only for relevant needs; identity
+light evidence path, and assesses internal evidence before recovering permitted public information
+in one bounded Web batch. Missing private campaign canon never requires Web. Personal memories are retrieved only for relevant needs; identity
 and traits always shape voice. Per-call defaults are ten minutes, with separate
 round/turn budgets and durable progress. A one-time startup configuration migration raises shorter saved timeouts;
 later administrator edits remain authoritative. See the [configuration rollout](../Documentation/Agents/Companion/Model%20Configuration.md#ten-minute-call-rollout)

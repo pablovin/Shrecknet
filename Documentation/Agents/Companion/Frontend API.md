@@ -474,18 +474,18 @@ continue to submit ordinary turns. Atlas reuses executable Companion plans and
 ShreckWorld defaults to single-question evidence retrieval, retaining explicit deep
 retrieval. Identity/traits shape all replies; personal-memory search is conditional.
 
-Configured, permitted Web recovers unavailable/timed-out/empty local searches and
-reviewed evidence gaps without a second source-selection vote. Recovery uses safe
-public queries, shares the configured one-round/call cap, and never promotes public
-facts to private campaign canon. See the [current pipeline](./Companion.md#evidence-first-query-pipeline).
+Configured Web runs only after a valid insufficient internal assessment.
+There is one optional batch (at most two queries/five total Web results), no
+pre-assessment Web and no post-Web reassessment. Private-only gaps can return no
+public queries. See the [current pipeline](./Companion.md#evidence-first-query-pipeline).
 
 `result.tool_calls[]` and stored answer details add optional `retrieval_depth`
 (`light`/`deep`, default `light` for old records), `timeout_s` (effective call or
 round limit), and `timeout_layer` (`tool`, `http`, `retrieval_round`, or null).
 Existing status values stay unchanged. `result.diagnostics.deadlines` records the
 settings snapshot; recovery diagnostics include `recovery_trigger`,
-`recovery_disabled`, `recovery_deferred_need_ids`, and privacy-blocked needs when
-applicable. These diagnostics do not contain model reasoning or credentials.
+`recovery_disabled`, and `web_recovery_blocked` (`privacy_blocked` with a
+count, or `no_public_queries`). The active trigger is `assessed_evidence_gap`. These diagnostics do not contain model reasoning or credentials.
 
 Per-call limits now default to ten minutes; sequential turn budgets are longer.
 Admission still returns 202 immediately. Keep using SSE or snapshots, allow
@@ -495,15 +495,30 @@ sources remain enforced. Existing clients can ignore the additive diagnostics.
 
 ## Assessment recovery and execution diagnostics
 
-An assessment exception preserves valid collected evidence and full citation
-references. One compact retry waits at most 60 seconds (also bounded by the
-configured assessment deadline/remaining turn time), with at most four complete
-records and 3,000 evidence tokens. A successful review continues normal synthesis
-and final verification. If semantic review remains unavailable, the final response
-can contain only backend-rendered, attributed `extractive` segments plus explicit
-limitations: `outcome="limited"`, `coverage="partial"`, `claims=[]`. Attribution
-is not proof of broader claims. Revoked/changed sources and cancellation still
-prevent publication. No unverified model draft is streamed.
+Assessment preserves full admitted source references while selecting at most
+eight compact excerpts. One retry uses identical evidence, needs and outcomes,
+waiting at most 60 seconds within the assessment/turn deadlines. If both attempts
+fail, no Web search runs: grounded synthesis still attempts a supported answer
+with explicit uncertainty, followed by normal claim verification. If that fails,
+backend-rendered `extractive` segments quote sources with `claims=[]`,
+`outcome="limited"` and `coverage="partial"`. Revocation/cancellation still prevent
+publication. No unverified draft is streamed.
+
+New results expose `diagnostics.assessment_contract_version="sufficiency_v1"`.
+`result.assessment` is null or exactly:
+
+```json
+{"sufficient": false, "web_queries": ["RuneQuest Telmori published rules"]}
+```
+
+Queries are at most two trimmed, nonblank strings of 1–500 characters. A sufficient
+decision discards queries. `false` with `[]` is valid. This is the pre-Web decision;
+Web success does not change it. Recovery/outage answers remain `coverage="partial"`.
+Complete coverage additionally requires a sufficient assessment, selected evidence,
+verified final claims and no limitations/readiness/omission failures. Historical
+per-need assessment dictionaries are preserved as stored; clients reading raw turn
+results must handle both shapes, using the diagnostic version for new records.
+Endpoint paths, requests and typed Answer Breakdown fields are unchanged.
 
 `result.diagnostics.evidence_assessment`, turn metrics and final-message
 `answer_details.diagnostics` include an `attempts` array with `stage`,
@@ -512,14 +527,37 @@ prevent publication. No unverified model draft is streamed.
 `model`, `configured_deadline_s`, `effective_deadline_s`,
 `structured_response_status`, `error_type` when failed, `validation_failures`, and
 `fallback_used`. Status is `valid`, `timed_out`, `invalid_structured_output`,
-`invalid_evidence_support`, `failed` or `cancelled` after a completed attempt.
+`failed` or `cancelled` after a completed attempt.
 Summary fields identify fallback mode, retained records/unique sources, and
 counts actually used for synthesis/extraction. Diagnostics never contain raw
 provider error text or the private model draft.
 
 `diagnostics.evidence_omissions` records why a source record did not fit collection,
-assessment retry or extractive output. Full references/geometry/navigation remain
+assessment/synthesis projection or extractive output. Full references/geometry/navigation remain
 in retained evidence for source navigation and revalidation, rather than entering
 every model request. Existing status/event enums, source lists and Answer Breakdown
 remain compatible; diagnostics and readiness fields are additive. Only final
 assistant messages expose answer details, under the existing ownership checks.
+
+
+## Simple research planning compatibility
+
+Routes and turn admission payloads are unchanged. Research-planning failures now
+execute a minimal authorized search instead of returning a technical clarification.
+World switches resolve before research planning; page conflicts still require
+confirmation and `clarification_id` retains its stale-request checks.
+
+Additive owner-only diagnostics include `research_plan` (`mode`, semantic `tasks`),
+`planning.contract_version="simple_research_v1"`, rejected sources with reasons,
+merged task count, fallback/error type and long-query segment/defer counts.
+`diagnostics.plan` remains the compiled internal plan with generated IDs and call
+options; clients must not submit it as a planning-model contract. Initial calls
+can number nine, all internal. Existing `tool_calls`, source references, segments
+and Answer Breakdown remain compatible. The assessment payload transition is
+described above; new assessments do not include `follow_up_tasks` or
+`follow_up_calls`. Memory-gate failure and unsafe public-query decisions remain
+observable without exposing model reasoning.
+
+No database schema change or additional timeout migration is needed. Drain active
+turns and restart API/workers together with matching prompts, schemas and compiler.
+Rollback those components together; previously saved answers remain readable.

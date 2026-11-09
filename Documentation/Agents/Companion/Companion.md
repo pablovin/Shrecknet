@@ -109,18 +109,26 @@ only the dedicated web target defaults to `web_search_enabled=true`.
    inferred using the routing model and bounded authenticated ontology discovery.
    Unresolved scope produces a direct question by world name. The character's
    ontology is never substituted for an unresolved conversational world.
-2. **LLM source planning.** The routing model declares bounded needs and separate
-   queries for available Atlas, ShreckWorld, Web, Chronicle and character-memory
-   sources. Clarification ends the turn and releases the chat; its pending
-   question is resumed on the next relevant message. New topics abandon pending
-   clarification. Malformed planning never silently becomes a factual answer.
-3. **Ontology update before retrieval.** A router-requested world switch is
-   validated and saved before any retrieval. It clears incompatible source/page
-   bindings, updates grant scope and replans once. A conflicting explicit page
-   selection requires clarification. A confirmed conversational override persists
-   across subsequent page snapshots until `use_page_scope=true`. The selected
-   character, character-memory scope and rapport stay unchanged. A committed
-   switch survives later retrieval failure or cancellation.
+2. **Scope and continuation decisions.** For an existing world, the routing
+   model's separate `SCOPE_INTENT` stage distinguishes a requested switch from a
+   comparison and a pending clarification answer from a new topic. Missing-world
+   resolution carries the same continuation decision. Only relevant answers resume
+   the saved goal; new topics abandon it. The backend validates world names,
+   clarifies page conflicts, clears incompatible source bindings and persists an
+   authorized override before research planning. Identity and rapport do not change.
+3. **Simple research planning and compilation.** `SimpleCompanionPlan` exposes only
+   `mode` (`search`/`chat`) and up to three `tasks`, each with a nonblank question
+   of at most 500 characters and one to three available internal `sources`. Web
+   is excluded from the planner schema and rejected by the compiler. Search requires
+   tasks; chat requires an empty list. `planning.py` merges repeated questions and
+   sources, generates stable need/call IDs, filters unavailable sources and assigns
+   light retrieval. Up to nine initial calls honor all three-by-three requests.
+   Tasks losing their sources use permitted local alternatives. Technical planning
+   failures search the original resolved goal using authorized ShreckWorld/Atlas;
+   they never manufacture clarification or factual chat. Long fallback questions
+   retain their full goal and split into deterministic 4,000-character queries,
+   with deferred segments audited. Without local tools, the unmet research goal
+   still reaches assessment; Web cannot run before a valid insufficient decision.
 4. **Independent parallel retrieval.** Atlas executes a supplied, scoped Elder
    `RetrievalPlan` or deterministically converts the Companion's individual query
    into one `hybrid_search` step. Ordinary calls make no second planning-model
@@ -133,23 +141,18 @@ only the dedicated web target defaults to `web_search_enabled=true`.
    evidence. JSON web search remains an explicitly configured alternative.
    Failures/timeouts preserve successful siblings. Source scope, revision checks,
    grants and evidence budgets remain enforced; earlier-turn evidence is not reused.
-5. **Assessment and recovery.** The backend automatically requests permitted Web
-   recovery after unavailable, timed-out or empty local retrieval when no successful
-   sibling has evidence for that need. This can run before the reviewer. Otherwise,
-   the evidence reviewer checks coverage, contradictions and relevant supporting
-   quotations. Partial, missing, contradictory or non-answering evidence also
-   triggers Web recovery without requiring `follow_up_calls` to select Web.
-   Automatic Web and reviewer follow-ups share one configurable recovery batch
-   (default two calls). A reviewer-triggered batch is assessed once more;
-   operational recovery is assessed after its evidence arrives. Empty searches
-   never prove absence, and failed review never authorizes unverified factual text.
-   Assessment timeouts/provider errors/invalid structured support trigger one compact
-   review retry (at most 60 seconds, four whole records and 3,000 evidence tokens).
-   A successful retry resumes normal synthesis and final verification. If a later
-   reassessment fails, prior validated support can be reused with partial coverage
-   and fresh final claim verification. If semantic review remains unavailable,
-   publish only deterministic, cited source excerpts with explicit limitations;
-   do not infer a general factual answer from those excerpts.
+5. **Assessment and recovery.** One assessment reasons over at most eight
+   need-balanced internal excerpts. `EvidenceAssessment` returns exactly
+   `{"sufficient":false,"web_queries":[]}`: a strict Boolean and at most two
+   nonblank queries of 1–500 characters. A sufficient response discards queries;
+   an insufficient response with no queries is valid for private-only gaps or
+   information no safe public lookup could verify. Invalid output/provider failure
+   gets one retry with identical evidence/needs/outcomes, bounded to 60 seconds.
+   A valid insufficient response may trigger one Web batch, at most two queries
+   and five unique Web records total. Local failures alone never trigger Web.
+   Merge Web snippets with internal evidence and synthesize without reassessment.
+   If both assessment attempts fail, skip Web and attempt grounded synthesis with
+   explicit uncertainty. If synthesis/verification fails, use attributed extracts.
 6. **Private synthesis and claim verification.** Synthesis uses identity, traits,
    subjective memories, rapport and evidence to produce typed segments. Every
    segment is reviewed, including reactions that might disguise factual claims.
@@ -162,33 +165,45 @@ only the dedicated web target defaults to `web_search_enabled=true`.
    revisions before committing the final answer and rapport outbox. Operational
    clarification/switch-only turns settle rapport in order without score changes.
 
-Personal memory is not an automatic retrieval prerequisite. The planner must give
-`memory_reason` for a selected-character history, remembered experience, relationship,
-learned belief or experience-based perspective need. Generic rule explanations,
+Personal memory is not an automatic retrieval prerequisite. A proposed memory task triggers
+a separate `MEMORY_RELEVANCE` check against the original resolved user intent, not
+the model-generated subquestion. Only a positive decision permits retrieval; gate
+failures skip memory. The compiler supplies the internal `memory_reason`. Generic rule explanations,
 public facts, greetings and style requests normally skip memory. Canonical identity,
 effective traits and rapport still shape every answer. Memory retains selected-character
 and public/private access restrictions and remains subjective evidence.
 
-Recovery uses each need's safe `public_recovery_query`. If none was prepared, the
-routing model's `PUBLIC_RECOVERY` stage renders a public formulation; it does not
-choose sources. Unsafe or purely private questions produce a null query and
-`web_recovery_blocked.reason="privacy_blocked"`. Failed local queries, private
-history and Foundry snapshots are never automatically forwarded as web queries.
-Configured Web availability remains the permission authority; legacy `tools.web`
-is ignored. A public analogue cannot prove campaign canon, private history or an
-unavailable book's exact rule. Deduplicate searches, retain local evidence, and
-record gaps deferred by the recovery cap. `companion_recovery_max_rounds=0`
-explicitly disables both automatic and reviewer recovery.
+Safe public-query generation belongs to `ASSESS`, with the former
+`PUBLIC_RECOVERY` privacy rules included in its self-contained contract. There is
+no separate public-query rendering call. Only public system/edition, published
+rules/lore and public facts may enter Web queries. Private campaign canon cannot
+be repaired with Web. Backend bounds, normalization/deduplication and known private
+name/ID checks provide additional controls; string matching is not proof of semantic
+privacy. Known private identifiers are rejected without a raw-question fallback.
+`web_recovery_blocked` records `privacy_blocked` or `no_public_queries` when
+applicable. Configured Web availability remains the permission authority; legacy
+`tools.web` and the initial internal-tool allowlist do not disable configured Web
+recovery. `companion_recovery_max_rounds=0` disables Web recovery.
 
-The internal `PlannedCall` adds `retrieval_depth` (`light`/`deep`), `depth_reason`,
-nullable `atlas_plan` and nullable `memory_reason`; deep requests require a reason.
-Prompts and schemas live in `jobs/companion/query_prompts.py` and
-`query_contracts.py`. Ordered flow is ontology inference → Companion planning
-(and one world-switch replan) → optional image interpretation → parallel retrieval
-and optional commentary → backend Web recovery/public-query rendering and batched
-assessment → optional shared recovery and reassessment → private synthesis →
-verification/one repair → backend source checks and final commit. Rapport follows
-asynchronously. Only verified synthesis or clarification becomes a final answer.
+`PlannedCall` retains `retrieval_depth`, `depth_reason`, nullable `atlas_plan` and
+nullable `memory_reason` for internal execution and adapters. The assessment has
+no source IDs, support objects, per-need statuses, confidence or follow-up tasks.
+The backend generates recovery call IDs and associates queries with planned needs
+as retrieval intent, never as proof of support. No deep local recovery is selected
+by assessment. Prompt contracts live beside the job in `query_prompts.py` and
+`query_contracts.py`.
+
+Ordered flow: scope resolution/continuation → backend scope update → internal
+research planning → optional memory relevance → deterministic compilation →
+optional image interpretation → parallel internal retrieval/commentary →
+eight-excerpt assessment → optional identical-context retry → optional single Web
+batch → grounded synthesis → verification/one repair → backend source checks and
+final commit. Rapport follows asynchronously. See the
+[assessment design](./Assessment%20Recovery%20Plan.md) for ownership and regression
+acceptance. `sufficient` is a pre-Web decision, not final verification. Recovery
+and assessment-outage answers retain `coverage="partial"`; completion alone never
+upgrades coverage. Uncertainty/clarification/general-knowledge segments in research
+answers also prevent complete coverage.
 
 Per-call retrieval, routing, evidence review and synthesis limits default to
 600 seconds. Retrieval rounds default to 615 seconds and the total turn to
@@ -209,7 +224,7 @@ cannot represent verified canon or exact rule text. Web search availability depe
 on backend provider configuration, not on a per-turn client permission.
 
 An acknowledgement is persisted during admission. `pipeline.status` events report
-resolution, planning, update/replanning, retrieval, assessment/recovery, synthesis
+resolution/continuation, scope updates, research planning/compilation, retrieval, assessment/recovery, synthesis
 and factual verification. Optional character commentary runs concurrently; delivered
 commentary remains ordinary owner-only transcript history after finalization,
 failure, cancellation, reload and event-log expiry. Commentary is excluded from
@@ -493,26 +508,37 @@ visible block claims and compact provenance while delivery/navigation stays
 server-side. Full evidence references remain in the turn/Answer Breakdown and
 are used for final access/revision checks.
 
-The collection limit remains twenty records and
-`companion_max_evidence_tokens` (default 10,000 estimated tokens), accounted using
-compact evidence rather than unused navigation metadata. Whole evidence records
-are omitted when the budget cannot fit them; `diagnostics.evidence_omissions`
-records evidence/source IDs, stage, reason and relevant limits. A compact retry
-has its own smaller subset budget; omitted retry records remain retained in the
-turn. Model excerpts are not silently shortened during compaction.
+The backend admits at most five unique records per retrieval tool across all
+its calls, allocating across information needs before filling remaining capacity.
+Atlas, ShreckWorld and memory contribute at most fifteen records; Web contributes
+five more. Chronicle retains a separate five-record cap. Bounded Foundry snapshots
+and image evidence are additional inputs, not silently discarded to fit a universal
+twenty-record limit. Stable within-source ranks, query overlap and source diversity
+make selection independent of completion speed.
 
-Primary assessment still allows `companion_evidence_timeout_s` (default 600
-seconds). Each assessment invocation has at most one additional 60-second retry,
-clipped to the configured assessment timeout and remaining turn time. It does
-not create an extra retrieval recovery round. The serial turn-budget validator
-reserves these bounded retries; the default 10,200-second turn limit is unchanged.
-`ASSESS_RECOVERY` sits beside `ASSESS` and returns the same validated `Assessment`
-contract, with no retrieval follow-ups of its own. The canonical prompt order is
-planning → parallel retrieval → compact assessment → optional compact assessment
-retry → bounded source recovery/reassessment → synthesis → final verification.
-At the failed-review branch, backend extraction replaces factual synthesis when
-no prior validated support can safely proceed. Normal source checks still precede
-public commit. No new public-output LLM prompt is introduced.
+Assessment receives at most eight whole compact excerpts, also bounded by
+`companion_max_evidence_tokens` (default 10,000). Synthesis receives a separately
+budgeted projection of the retained combined pool; final verification receives the
+same selected passages. Projection omissions never erase admitted source records
+or navigation metadata. `diagnostics.evidence_omissions` records collection,
+assessment, synthesis and extractive omissions. Whole records are omitted from
+model context if oversized; other candidates may still fit.
+
+Primary assessment allows `companion_evidence_timeout_s` (default 600 seconds).
+There is at most one additional 60-second retry, clipped to the configured timeout
+and remaining turn time. `ASSESS_RECOVERY` uses the same `EvidenceAssessment`
+contract and identical input, including the Web availability decision. Persistent
+failure sets `assessment_unavailable`; grounded synthesis and claim verification
+still run if time permits, with explicit limitations. Extraction is the final
+fallback if supported synthesis cannot be delivered. Default total turn limits
+and saved timeout migrations are unchanged.
+
+New turn results use `diagnostics.assessment_contract_version="sufficiency_v1"` and
+`result.assessment` is the two-field decision or null. Historical raw per-need
+assessment objects remain unchanged/readable. There is no fabricated compatibility
+mapping from a Boolean to legacy support statuses. No SQL migration, graph rewrite
+or re-embedding is required. Drain active turns and deploy/restart API and workers
+with matching prompts/contracts; roll back the bundle without rewriting history.
 
 Extractive responses have `outcome="limited"`, `coverage="partial"`, an explicit
 uncertainty segment and backend-only `extractive` segments. These segments contain
@@ -530,7 +556,7 @@ Source revocation, revision changes, cancellation and lease loss remain fail-clo
 attempt: stage, UTC start/end, elapsed milliseconds, input record/source counts,
 compact prompt characters/UTF-8 bytes/estimated tokens, model target, configured
 and effective deadlines, structured-response status, exception class and safe
-validation rule paths. They record compact retry/extractive/prior-assessment mode,
+validation rule paths. They record same-context retry/grounded-synthesis/extractive mode,
 retained evidence and unique-source counts, and counts used for synthesis or
 extraction. Provider exception text and raw model output are not copied into these
 diagnostics. Existing stage metrics/events remain available; saved final-message

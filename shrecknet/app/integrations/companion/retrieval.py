@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 import httpx
-from app.core.config_store import get_settings
+from app.core.config_store import get_settings, COMPANION_TOOL_EVIDENCE_LIMIT
 from app.graph.neo4j import get_driver
 from app.services.character_agent_service import CharacterAgentService
 from app.services.character_memory_service import CharacterMemoryService
@@ -73,7 +73,7 @@ class CompanionRetrieval:
             timeout = self.settings.companion_web_timeout_s if tool == 'web' else self.settings.companion_tool_timeout_s
             result = await asyncio.wait_for(getattr(self, tool)(query, **options), timeout=timeout)
             rows = result.rows if isinstance(result, ScopedEvidence) else result
-            response = {"tool": tool, "status": "ok" if rows else "empty", "evidence": rows[:6], "elapsed_ms": round((time.monotonic()-start)*1000), "coverage": "partial", "timeout_s": timeout}
+            response = {"tool": tool, "status": "ok" if rows else "empty", "evidence": rows[:COMPANION_TOOL_EVIDENCE_LIMIT], "elapsed_ms": round((time.monotonic()-start)*1000), "coverage": "partial", "timeout_s": timeout}
             if isinstance(result, ScopedEvidence):
                 response["source_coverage"] = result.source_coverage
                 response['sources_requiring_attention'] = result.source_attention or []
@@ -87,8 +87,8 @@ class CompanionRetrieval:
                     response.update(coverage='partial', source_readiness='partial')
                 else:
                     response['source_readiness'] = 'ready'
-            if len(rows) > 6:
-                response['evidence_omissions'] = [{'evidence_id': row['evidence_id'], 'reason':'tool_record_limit'} for row in rows[6:]]
+            if len(rows) > COMPANION_TOOL_EVIDENCE_LIMIT:
+                response['evidence_omissions'] = [{'evidence_id': row['evidence_id'], 'reason':'tool_record_limit'} for row in rows[COMPANION_TOOL_EVIDENCE_LIMIT:]]
             return response
         except asyncio.TimeoutError:
             return {"tool": tool, "status": "timed_out", "evidence": [], "coverage": "unknown", "timeout_s": timeout, "timeout_layer": "tool"}
@@ -132,7 +132,7 @@ class CompanionRetrieval:
         else:
             plan = single_query_plan(query)
         plan = validate_bounded_cypher(plan, [self.scope['ontology_id']])
-        rows, _, _ = await retrieve_plan(retriever, plan=plan, ontology_ids=[self.scope["ontology_id"]], instance_id=None, candidate_limit=30, rerank_limit=6)
+        rows, _, _ = await retrieve_plan(retriever, plan=plan, ontology_ids=[self.scope["ontology_id"]], instance_id=None, candidate_limit=30, rerank_limit=COMPANION_TOOL_EVIDENCE_LIMIT)
         records = list({row.node_id:row for values in rows.values() for row in values}.values())
         fields = {}
         if self.settings.companion_rich_response_active:
@@ -158,7 +158,7 @@ class CompanionRetrieval:
         if not identifier or not self.settings.shreckworld_base_url:
             return []
         strategy = 'planned' if planned_call is not None and planned_call.retrieval_depth == 'deep' else 'single'
-        payload = {"query": query[:4000], "mode": "evidence", "retrieval_strategy": strategy, "top_k": 6}
+        payload = {"query": query[:4000], "mode": "evidence", "retrieval_strategy": strategy, "top_k": COMPANION_TOOL_EVIDENCE_LIMIT}
         if self.scope.get("library_item_ids"):
             payload["library_item_ids"] = self.scope["library_item_ids"]
         async with httpx.AsyncClient(base_url=self.settings.shreckworld_base_url, timeout=self.settings.companion_tool_timeout_s, follow_redirects=False) as client:
@@ -195,7 +195,7 @@ class CompanionRetrieval:
     async def chronicle(self, query):
         if not self.settings.shreckrpg_base_url:
             return []
-        payload = {"query": query[:4000], "ontology_id": self.scope.get("chronicle_ontology_id"), "limit": 6,
+        payload = {"query": query[:4000], "ontology_id": self.scope.get("chronicle_ontology_id"), "limit": COMPANION_TOOL_EVIDENCE_LIMIT,
                    "chronicle_ids": [self.scope["chronicle_id"]] if self.scope.get("chronicle_id") else None}
         async with httpx.AsyncClient(base_url=self.settings.shreckrpg_base_url, timeout=self.settings.companion_tool_timeout_s, follow_redirects=False) as client:
             response = await client.post("/chronicles/companion-search", json=payload, headers={"Authorization": f"Bearer {grant(self.turn, 'chronicle')}"})
@@ -216,7 +216,7 @@ class CompanionRetrieval:
                     usage_tag="companion.web_retrieval", max_tokens=1000, return_metadata=True)
             results = [row["url_citation"] for row in data.get("annotations", []) if row.get("type") == "url_citation"]
             rows = []
-            for row in results[:6]:
+            for row in results[:COMPANION_TOOL_EVIDENCE_LIMIT]:
                 # Only actual provider excerpts are evidence; generated summaries are never sources.
                 if row.get("content") and await safe_web_url(row.get("url", "")):
                     rows.append(evidence("web", row["url"], row["content"][:4000], title=row.get("title", "Web result"), reference={"url": row["url"]}))
@@ -225,11 +225,11 @@ class CompanionRetrieval:
         # No page fetching: unsafe result URLs are discarded, not followed.
         headers = {"Authorization": f"Bearer {self.settings.companion_web_search_token}"} if self.settings.companion_web_search_token else {}
         async with httpx.AsyncClient(timeout=self.settings.companion_web_timeout_s, follow_redirects=False) as client:
-            response = await client.post(self.settings.companion_web_search_url, json={"query": query[:500], "limit": 6, **({"include_images": True} if self.settings.companion_rich_response_active and self.settings.companion_web_images_enabled else {})}, headers=headers)
+            response = await client.post(self.settings.companion_web_search_url, json={"query": query[:500], "limit": COMPANION_TOOL_EVIDENCE_LIMIT, **({"include_images": True} if self.settings.companion_rich_response_active and self.settings.companion_web_images_enabled else {})}, headers=headers)
             response.raise_for_status()
             data = response.json()
         rows = []
-        for row in data.get("results", [])[:6]:
+        for row in data.get("results", [])[:COMPANION_TOOL_EVIDENCE_LIMIT]:
             if await safe_web_url(row.get("url", "")):
                 images = []
                 if self.settings.companion_rich_response_active and self.settings.companion_web_images_enabled:

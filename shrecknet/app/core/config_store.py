@@ -31,6 +31,9 @@ COMPANION_TIMEOUT_FIELDS = (
     'companion_retrieval_timeout_s', 'companion_turn_timeout_s',
 )
 COMPANION_ASSESSMENT_RETRY_TIMEOUT_S = 60
+COMPANION_TOOL_EVIDENCE_LIMIT = 5
+COMPANION_ASSESSMENT_RECORD_LIMIT = 8
+COMPANION_WEB_QUERY_LIMIT = 2
 DEFAULT_CONFIG_SEED_FILE = Path("/configs/shrecknet.initial.json")
 SERVICE_CONNECTION_FIELDS = frozenset({
     'shreckllm_base_url', 'shreckworld_base_url', 'shreckrpg_base_url',
@@ -450,18 +453,18 @@ class Settings(BaseSettings):
 def companion_required_turn_budget(settings: Settings) -> float:
     """Conservative longest serial path, including one recovery and draft repair.
 
-    Four routing calls cover inference, two plans and public-query rendering;
-    five evidence calls cover an image, two assessments and two verifications.
+    Four routing calls reserve scope/continuation, planning and memory relevance;
+    four evidence calls cover an image, one assessment and two verifications.
     Five tool windows cover initial/final identity, source checks and two drafts.
     Concurrent source calls consume one window per retrieval round, not their sum.
-    Each assessment can also use one bounded compact retry.
+    The assessment can also use one bounded retry with identical evidence.
     """
     rounds = 1 + settings.companion_recovery_max_rounds
     return (4 * settings.companion_routing_timeout_s +
-            (3 + rounds) * settings.companion_evidence_timeout_s +
+            4 * settings.companion_evidence_timeout_s +
             5 * settings.companion_tool_timeout_s +
             rounds * settings.companion_retrieval_timeout_s +
-            rounds * min(settings.companion_evidence_timeout_s, COMPANION_ASSESSMENT_RETRY_TIMEOUT_S) +
+            min(settings.companion_evidence_timeout_s, COMPANION_ASSESSMENT_RETRY_TIMEOUT_S) +
             2 * settings.companion_rich_response_timeout_s + 60)
 
 

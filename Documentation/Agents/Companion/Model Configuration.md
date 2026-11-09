@@ -8,7 +8,7 @@ than new provider implementations.
 
 | Setting | Purpose | Required |
 | --- | --- | --- |
-| `model_companion_routing` | Ontology inference, v2 source planning and ontology-update routing | Required |
+| `model_companion_routing` | Scope/continuation decisions, simple research planning, memory relevance and public-query preparation | Required |
 | `model_companion_web_search` | Dedicated v2 web evidence search | When no JSON search URL is configured |
 | `model_companion_evidence` | V2 coverage review and factual claim verification | Required in v2 |
 | `model_companion_synthesis` | Embodied streaming answer and optional image interpretation | For conversation |
@@ -63,11 +63,11 @@ Missing roles receive defaults; no gateway credentials are copied into role conf
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `companion_general_knowledge_policy` | `disabled` | `labeled_opt_in` additionally requires per-turn opt-in |
-| `companion_routing_timeout_s` | 600 | Deadline for each ontology/planner call |
+| `companion_routing_timeout_s` | 600 | Deadline for each scope/planner/relevance/public-query call |
 | `companion_evidence_timeout_s` | 600 | Deadline for each coverage/verifier call |
 | `companion_web_timeout_s` | 600 | Web call deadline, bounded by overall retrieval/turn budget |
-| `companion_recovery_max_rounds` | 1 | 0..1 targeted Companion recovery rounds |
-| `companion_recovery_max_calls` | 2 | 1..4 calls per recovery round |
+| `companion_recovery_max_rounds` | 1 | 0 disables Web recovery; 1 permits one assessed Web batch |
+| `companion_recovery_max_calls` | 2 | Saved range 1..4; Web execution uses at most min(value, 2) queries |
 | `companion_interim_max_messages` | 2 | 0..3 permanent messages including immediate acknowledgement |
 | `companion_interim_min_interval_s` | 8 | Minimum spacing for generated skits |
 | `companion_interim_output_tokens` | 100 | 32..300 generated commentary tokens |
@@ -97,7 +97,7 @@ together after changing their cached runtime configuration.
 | `companion_turn_timeout_s` | 10200 | Total sequential execution budget, 10..10800 seconds |
 | `companion_event_retention_days` | 7 | Event replay retention, 1..90 days |
 | `companion_rapport_max_attempts` | 3 | Evaluation retries before audited no-op, 1..10 |
-| `companion_max_evidence_tokens` | 10000 | Estimated evidence tokens, 100..32000 |
+| `companion_max_evidence_tokens` | 10000 | Model evidence projection tokens, 100..32000; full admitted records remain retained |
 | `companion_output_tokens` | 2000 | Output tokens, 128..16000 |
 | `companion_image_models` | [`openrouter/deepseek/deepseek-v4.1-flash`] | Explicit image-capable `provider/name` targets |
 | `companion_shreckworld_url` | empty | Trusted ShreckWorld internal origin |
@@ -107,7 +107,7 @@ together after changing their cached runtime configuration.
 | `companion_web_search_token` | empty | Private provider token; redacted on reads |
 
 For the legacy pipeline, enable `web_search_enabled` on `model_companion_synthesis` to use OpenRouter
-search through the existing gateway credentials. Web search is offered to the router
+search through the existing gateway credentials. Web recovery is available after a valid insufficient assessment
 whenever a provider is configured; the legacy per-turn `tools.web` value is ignored.
 Provider citations with excerpts enter the normal evidence validator.
 Search is disabled on routing, interim, image interpretation, final synthesis and
@@ -180,9 +180,10 @@ for inspection or later administrator changes:
 
 Timeout updates reject a retrieval window shorter than the local/web calls or a
 turn budget shorter than the conservative serial execution path. The minimum is
-`4*routing + (3+rounds)*evidence + 5*tool + rounds*retrieval + rounds*min(evidence,60) + 2*media + 60`
+`4*routing + 4*evidence + 5*tool + rounds*retrieval + min(evidence,60) + 2*media + 60`
 seconds, where `rounds=1+companion_recovery_max_rounds`. It reserves optional
-inference/replanning, public-query rendering, image interpretation, assessments,
+scope/continuation work, research planning, optional memory relevance,
+image interpretation, one assessment plus one identical-context retry,
 both drafts/verifications, identity/source checks and orchestration overhead.
 After the migration, explicit administrator changes remain authoritative on later
 reloads/restarts. Choosing shorter limits deliberately reduces the call budgets.
@@ -233,13 +234,15 @@ while keeping the new code, update the configuration APIs after the migration;
 retain the markers so restarts respect those edits. Never delete configuration
 databases or migration markers to adjust budgets.
 
-Assessment recovery adds at most one 60-second compact retry per assessment
-invocation, clipped to `companion_evidence_timeout_s` and remaining turn time.
-Primary assessment and final claim verification still each default to 600 seconds.
-The retry shares the existing evidence model role and does not add a model setting
-or a source-retrieval recovery round. The default total turn budget remains 10,200
-seconds. If review stays unavailable, the backend can return cited extracts with
-explicit limitations, rather than unverified synthesized assertions. The gateway
-still owns submitted jobs and provider-attempt/watchdog lifetimes; the shorter
-Companion retry limit bounds its waiting time. See the
-[recovery contract](./Companion.md#compact-evidence-assessment-and-extractive-recovery).
+Assessment recovery adds at most one 60-second retry with the same evidence,
+clipped to `companion_evidence_timeout_s` and remaining turn time. Primary
+assessment and final verification each default to 600 seconds. The retry uses the
+existing evidence model role, with no new setting, startup migration or source
+recovery round. The default turn limit stays 10,200 seconds; saved limits are not
+lowered by the reduced minimum-budget calculation. A valid insufficient assessment
+can produce one Web batch of at most two queries and five total records. No
+post-Web reassessment or separate public-query rendering call is made. Persistent
+assessment failure skips Web and attempts grounded synthesis/verification with
+limitations, then attributed extracts if necessary. Gateway jobs retain their
+provider-attempt/watchdog lifetimes; the retry deadline bounds Companion waiting.
+See the [recovery contract](./Companion.md#compact-evidence-assessment-and-extractive-recovery).

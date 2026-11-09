@@ -14,8 +14,6 @@ from app.jobs.elder.context_budget import estimate_tokens
 from app.core.config_store import COMPANION_ASSESSMENT_RETRY_TIMEOUT_S
 
 ASSESSMENT_RETRY_TIMEOUT_S = COMPANION_ASSESSMENT_RETRY_TIMEOUT_S
-ASSESSMENT_RETRY_EVIDENCE_TOKENS = 3000
-ASSESSMENT_RETRY_RECORDS = 4
 SOURCE_LABELS = {
     'canonical_world': 'world source', 'document_evidence': 'document excerpt',
     'external_web': 'public web source', 'chronicle_record': 'chronicle note',
@@ -99,24 +97,65 @@ def compact_rich_response(proposal):
                        for row in proposal['targets']]}
 
 
-def recovery_records(records, token_budget):
-    """Retain complete records, preferring representation of distinct needs."""
-    remaining = list(records)
-    selected, omitted, covered = [], [], set()
-    budget = min(token_budget, ASSESSMENT_RETRY_EVIDENCE_TOKENS)
-    while remaining:
-        row = max(remaining, key=lambda r: len(set(r['need_ids']) - covered))
-        remaining.remove(row)
-        if len(selected) >= ASSESSMENT_RETRY_RECORDS:
-            reason = 'assessment_retry_record_limit'
-        elif estimate_tokens(json.dumps([*selected, row], ensure_ascii=False)) > budget:
-            reason = 'assessment_retry_token_budget'
+def select_records(records, needs, *, limit, token_budget=None, ranks=None):
+    """Reserve need coverage, then balance relevance and source diversity.
+
+    Associations describe retrieval intent only. Token omissions affect this
+    projection, never the stored evidence. Input order is not a ranking signal.
+    """
+    ranks = ranks or {}
+    unique = {}
+    for record in records:
+        identifier = record['evidence_id']
+        if identifier in unique:
+            unique[identifier]['need_ids'] = sorted(set(unique[identifier]['need_ids']) | set(record.get('need_ids', [])))
         else:
-            selected.append(row)
-            covered.update(row['need_ids'])
+            unique[identifier] = {**record, 'need_ids': list(record.get('need_ids', []))}
+    remaining = list(unique.values())
+    selected, omissions, covered, counts, need_counts = [], [], set(), {}, {}
+    stop = {'the', 'a', 'an', 'is', 'are', 'of', 'in', 'to', 'and', 'what', 'who', 'how', 'does'}
+    def words(value):
+        return set(re.findall(r"\w+", value.casefold())) - stop
+    questions = {need.id: words(need.question) for need in needs}
+    passages = {r['evidence_id']: words(r.get('title', '') + ' ' + r.get('excerpt', '') + ' ' +
+                json.dumps(r.get('structured_evidence'), ensure_ascii=False)) for r in remaining}
+    def relevance(record, need_id):
+        return (len(questions[need_id] & passages[record['evidence_id']]),
+                int(need_id in record['need_ids']))
+    def score(record, need_id=None):
+        related = relevance(record, need_id) if need_id else max(
+            (relevance(record, n) for n in questions), default=(0, 0))
+        stable = (ranks.get(record['evidence_id'], 1), record['evidence_id'])
+        if need_id:
+            return (-related[0], -related[1], counts.get(record['source_type'], 0), *stable)
+        associated = [n for n in questions if any(relevance(record, n))]
+        represented = min((need_counts.get(n, 0) for n in associated), default=len(selected))
+        return (represented, counts.get(record['source_type'], 0), -related[0], -related[1], *stable)
+    def admit(record):
+        remaining.remove(record)
+        if token_budget is not None and estimate_tokens(json.dumps([*selected, record], ensure_ascii=False)) > token_budget:
+            omissions.append({'evidence_id': record['evidence_id'], 'reason': 'evidence_token_budget'})
+            return False
+        selected.append(record)
+        covered.update(record['need_ids'])
+        for n in questions:
+            if any(relevance(record, n)):
+                need_counts[n] = need_counts.get(n, 0) + 1
+        counts[record['source_type']] = counts.get(record['source_type'], 0) + 1
+        return True
+    for need in needs:
+        if need.id in covered or len(selected) >= limit:
             continue
-        omitted.append({'evidence_id': row['evidence_id'], 'reason': reason})
-    return selected, omitted
+        candidates = sorted((r for r in remaining if any(relevance(r, need.id))),
+                            key=lambda r: score(r, need.id))
+        for record in candidates:
+            if admit(record):
+                covered.add(need.id)
+                break
+    while remaining and len(selected) < limit:
+        admit(min(remaining, key=score))
+    omissions.extend({'evidence_id': r['evidence_id'], 'reason': 'record_limit'} for r in remaining)
+    return selected, omissions
 
 
 def quoted_text(value):

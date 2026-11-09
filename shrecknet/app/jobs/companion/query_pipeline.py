@@ -1,6 +1,6 @@
 """Evidence-first Companion orchestration; all durable writes use existing leases.
 
-Explicit/saved scope bypasses inference. The planner may update scope once before
+Explicit/saved scope bypasses inference. A separate scope decision runs before
 parallel retrieval; coverage/recovery precede private synthesis. Optional media
 resolution/composition stays private and its block claims share narrative
 verification, followed by source/asset checks and the leased final commit.
@@ -15,11 +15,15 @@ from pydantic import ValidationError
 from app.jobs.companion import query_prompts as prompts
 from app.jobs.companion import rich_response
 from app.jobs.companion import recovery as recovery_policy
-from app.jobs.companion import evidence_context
+from app.jobs.companion import evidence_context, planning
 from app.integrations.companion import media as companion_media
-from app.core.config_store import COMPANION_MODEL_FIELDS
+from app.core.config_store import (COMPANION_MODEL_FIELDS, COMPANION_TOOL_EVIDENCE_LIMIT,
+                                   COMPANION_ASSESSMENT_RECORD_LIMIT)
 from app.schemas.character_companion import COMPANION_ACKNOWLEDGEMENT
-from app.jobs.companion.query_contracts import OntologyDecision, QueryPlan, Assessment, Draft, Verification, PublicRecoveryQueries
+from app.jobs.companion.query_contracts import (
+    OntologyDecision, EvidenceAssessment, SimpleCompanionPlan, ScopeIntent,
+    MemoryRelevance, Draft, Verification,
+)
 from app.jobs.companion.contracts import build_answer
 from app.jobs.elder.context_budget import estimate_tokens
 from app.integrations.companion.retrieval import CompanionRetrieval, web_available
@@ -74,16 +78,6 @@ def available_tools(turn, settings, scope):
     return sorted(candidates)
 
 
-def validate_plan(plan, available, scope, *, updates=True):
-    if any(c.tool not in available for c in plan.calls):
-        raise ValueError('unavailable_planned_tool')
-    if any(c.tool == 'web' and len(c.query) > 500 for c in plan.calls):
-        raise ValueError('web_query_too_long')
-    if plan.action == 'ontology_update' and (not updates or not scope.get('ontology_id')):
-        raise ValueError('ontology_update_unavailable')
-    return plan
-
-
 def valid_support(support, sources):
     source = sources.get(support.evidence_id)
     if source is None:
@@ -95,19 +89,6 @@ def valid_support(support, sources):
             (source.get('structured_evidence') is not None and
              (support.quote in json.dumps(source['structured_evidence'], ensure_ascii=False) or
               support.quote in json.dumps(evidence_context.compact_structured(source), ensure_ascii=False))))
-
-
-def validate_assessment(review, needs, evidence):
-    wanted = {n.id for n in needs}
-    if len(review.needs) != len(wanted) or {n.need_id for n in review.needs} != wanted:
-        raise ValueError('incomplete_need_assessment')
-    sources = {e['evidence_id']: e for e in evidence}
-    for need in review.needs:
-        if any(not valid_support(s, sources) for s in need.supports):
-            raise ValueError('invalid_assessment_support')
-        if not set(need.conflicting_evidence_ids) <= sources.keys() or (need.status == 'supported' and not need.supports):
-            raise ValueError('unsupported_assessment')
-    return review
 
 
 def accepted_segments(draft, verification, evidence, allow_general):
@@ -143,8 +124,9 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
     resolution_source = 'not_needed'
     evidence, outcomes, assessment = [], [], None
     evidence_needs = {}
+    evidence_ranks = {}
     plan = None
-    diagnostics = {'version': 'evidence_v2'}
+    diagnostics = {'version': 'evidence_v2', 'assessment_contract_version': 'sufficiency_v1'}
     diagnostics['deadlines'] = {name: getattr(settings, name) for name in (
         'companion_tool_timeout_s', 'companion_web_timeout_s', 'companion_routing_timeout_s',
         'companion_evidence_timeout_s', 'companion_retrieval_timeout_s', 'companion_turn_timeout_s')}
@@ -259,18 +241,37 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
         return await finish(raw, outcome='limited', extra={
             'segments':segments, 'coverage':'partial', 'rich_response':None})
 
-    async def plan_for(updates=True):
-        available = available_tools(turn, settings, scope)
-        _diag(turn.id, 'router_available_tools', {'available_tools': available,
-              'allowed': turn.request['tools']['allowed'], 'web_available': web_available(settings)})
-        data = {'query': query, 'recent':recent, 'context':scope, 'ontology':ontology,
-                'character_identity':identity['character_agent']['identity_description'],
-                'available_tools':available, 'allow_ontology_update':updates and bool(ontology), 'pending':pending}
-        data['context'] = routing_context(scope, turn.request.get('foundry_context') if not override else None)
-        result = await structured(llm, settings.model_companion_routing, prompts.PLANNER, data, QueryPlan,
-                                  settings.companion_routing_timeout_s, 'companion.query_planner')
-        _diag(turn.id, 'router_response', result.model_dump())
-        return validate_plan(result, available, scope, updates=updates)
+    memory_relevant = False
+
+    async def plan_for():
+        nonlocal memory_relevant
+        available = [tool for tool in available_tools(turn, settings, scope) if tool != 'web']
+        _diag(turn.id,'router_available_tools',{'available_tools':available,
+            'allowed':turn.request['tools']['allowed'],'web_available':web_available(settings)})
+        data = {'query':query, 'recent':recent,
+                'context':routing_context(scope,turn.request.get('foundry_context') if not override else None),
+                'ontology':ontology, 'character_identity':identity['character_agent']['identity_description'],
+                'available_tools':available}
+        try:
+            proposal = await structured(llm,settings.model_companion_routing,prompts.PLANNER,data,
+                SimpleCompanionPlan,settings.companion_routing_timeout_s,'companion.query_planner')
+            diagnostics['research_plan'] = proposal.model_dump()
+            _diag(turn.id,'router_response',proposal.model_dump())
+            if any('character_memory' in task.sources for task in proposal.tasks):
+                try:
+                    relevance = await structured(llm,settings.model_companion_routing,prompts.MEMORY_RELEVANCE,
+                        {'query':query,'identity':data['character_identity'],'recent':recent},MemoryRelevance,
+                        settings.companion_routing_timeout_s,'companion.memory_relevance')
+                    memory_relevant = relevance.relevant
+                except Exception as exc:
+                    diagnostics['memory_relevance_error'] = type(exc).__name__
+                diagnostics['memory_relevant'] = memory_relevant
+            compiled, trace = planning.compile_plan(proposal,available,memory_relevant=memory_relevant)
+        except Exception as exc:
+            compiled, trace = planning.fallback_plan(query,available)
+            trace['error_type'] = type(exc).__name__
+        diagnostics['planning'] = trace
+        return compiled
 
     if max_messages:
         await commentary(COMPANION_ACKNOWLEDGEMENT, 1)
@@ -302,6 +303,40 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
         if pending and pending['kind'] in {'ontology', 'scope_conflict'}:
             ontology = None
 
+    # Scope intent is separate from research planning, including on saved scope.
+    if ontology is not None:
+        try:
+            intent = await structured(llm,settings.model_companion_routing,prompts.SCOPE_INTENT,
+                {'query':query,'recent':recent,'ontology':ontology,'pending':pending,'context':scope},
+                ScopeIntent,settings.companion_routing_timeout_s,'companion.scope_intent')
+        except Exception as exc:
+            diagnostics['scope_intent_error'] = type(exc).__name__
+            if pending:
+                return await clarify(['Are you continuing the previous request, or starting a new question?'])
+            intent = ScopeIntent(action='keep',ontology_name=None,resume_pending=False)
+        diagnostics['scope_intent'] = intent.model_dump()
+        if intent.action == 'clarify':
+            return await clarify(['Which ontology (world name) should I use?'],kind='ontology')
+        if pending and (intent.resume_pending or turn.request.get('clarification_id')):
+            query = pending['query'] + '\nClarification: ' + original_query
+        if intent.action == 'switch':
+            await progress('ontology_update')
+            async with database() as session:
+                matches = await CompanionScopeService(session).exact(intent.ontology_name)
+            if len(matches) != 1:
+                return await clarify([f'What is the exact world name for {intent.ontology_name}?'],kind='ontology')
+            target = {**matches[0],'source':'scope_intent'}
+            if explicit and explicit != target['id'] and not override:
+                return await clarify([f'Your page uses {ontology["name"]}. Switch this chat to {target["name"]}, or keep the page ontology?'],kind='scope_conflict',target_id=target['id'])
+            old = ontology
+            ontology = target
+            scope = scoped_context(scope,ontology,changed=True)
+            override = True
+            resolution_source = 'scope_intent'
+            await save_scope(ontology=ontology,context=scope,pending=None,override=True,
+                event=('ontology.updated',{'previous':old,'ontology':ontology}))
+            diagnostics['ontology_update'] = {'previous':old,'ontology':ontology}
+
     if ontology is None:
         try:
             decision = await structured(llm, settings.model_companion_routing, prompts.ONTOLOGY,
@@ -327,7 +362,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             changed = bool(scope.get('ontology_id') and scope['ontology_id'] != ontology['id'])
             override = bool(pending and pending['kind'] == 'scope_conflict' and ontology['id'] == pending.get('target_id'))
             scope = scoped_context(scope, ontology, changed=changed or override)
-            if pending:
+            if pending and (decision.resume_pending or turn.request.get('clarification_id')):
                 query = pending['query'] + '\nClarification: ' + original_query
         elif decision.status != 'not_needed':
             names = ', '.join(o['name'] for o in candidates[:6])
@@ -338,40 +373,10 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
         ontology = {**ontology, 'source':resolution_source}
     diagnostics['scope_resolution'] = {'source':resolution_source, 'ontology':ontology}
     await save_scope(ontology=ontology, context=scope, pending=pending, override=override)
-    try:
-        await progress('planning')
-        plan = await plan_for()
-        if plan.resume_pending and pending:
-            query = pending['query'] + '\nClarification: ' + original_query
-        if plan.action == 'ontology_update':
-            await progress('ontology_update')
-            async with database() as session:
-                matches = await CompanionScopeService(session).exact(plan.ontology_update.ontology_name)
-            if len(matches) != 1:
-                if matches:
-                    options = '; '.join(f"{index}. {o['name']} — {o['description'] or o['rpg_system'] or 'no description'}" for index,o in enumerate(matches[:6],1))
-                    question = f'Which ontology do you mean? {options}'
-                else:
-                    question = f'I could not identify an ontology named {plan.ontology_update.ontology_name}. What is its exact world name?'
-                return await clarify([question], kind='ontology')
-            target = {**matches[0], 'source':'router_update'}
-            if explicit and explicit != target['id'] and not override:
-                return await clarify([f'Your page uses {ontology["name"]}. Switch this chat to {target["name"]}, or keep the page ontology?'], kind='scope_conflict', target_id=target['id'])
-            old = ontology
-            ontology = target
-            scope = scoped_context(scope, ontology, changed=True)
-            await save_scope(ontology=ontology, context=scope, pending=None, override=True,
-                event=('ontology.updated', {'previous':old, 'ontology':ontology}))
-            diagnostics['ontology_update'] = {'previous':old, 'ontology':ontology}
-            pending = None
-            await progress('replanning', ontology_name=ontology['name'])
-            plan = await plan_for(updates=False)
-        diagnostics['plan'] = plan.model_dump()
-        if plan.action == 'clarify':
-            return await clarify(plan.clarification_questions)
-        await save_scope(context=scope, pending=None)
-    except Exception:
-        return await clarify(['Could you clarify the information you want me to find?'])
+    await progress('planning')
+    plan = await plan_for()
+    diagnostics['plan'] = plan.model_dump()
+    await save_scope(context=scope, pending=None)
 
     retrieval = CompanionRetrieval(turn, actor)
     retrieval.settings = settings
@@ -380,8 +385,6 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
     # the newly selected ontology. The immutable snapshot stays in user history.
     if not override:
         evidence += foundry_evidence(turn.request.get('foundry_context'))
-    if estimate_tokens(json.dumps(model_evidence(), ensure_ascii=False)) > settings.companion_max_evidence_tokens:
-        raise ValueError('context_budget_exceeded')
     if images and plan.calls:
         from app.jobs.companion.prompts import IMAGE_INTERPRETATION
         raw = await asyncio.wait_for(llm.chat(model=settings.model_companion_synthesis.model_copy(update={'web_search_enabled':False}),
@@ -433,19 +436,6 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             outcomes.append(row)
             omitted('retrieval', row.get('evidence_omissions', []))
             omitted('retrieval', (row.get('source_trace') or {}).get('evidence_omissions', []))
-            for source in row['evidence']:
-                evidence_needs.setdefault(source['evidence_id'], set()).update(row['need_ids'])
-                if source['evidence_id'] in {e['evidence_id'] for e in evidence}:
-                    continue
-                compact = evidence_context.compact_evidence(source, evidence_needs[source['evidence_id']])
-                size = estimate_tokens(json.dumps([*model_evidence(), compact], ensure_ascii=False))
-                if len(evidence) >= 20 or size > settings.companion_max_evidence_tokens:
-                    diagnostics['evidence_budget_omitted'] = True
-                    omitted('collection', [{'evidence_id':source['evidence_id'], 'need_ids':row['need_ids'],
-                        'reason':'record_limit' if len(evidence)>=20 else 'evidence_token_budget',
-                        'estimated_tokens':size, 'token_budget':settings.companion_max_evidence_tokens}])
-                    continue
-                evidence.append(source)
             await progress(phase, coarse='retrieving', tool=row['tool'],status=row['status'])
 
         tasks = [asyncio.create_task(one(call)) for call in calls]
@@ -468,34 +458,60 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                     task.cancel()
             await asyncio.gather(*tasks,return_exceptions=True)
 
-    async def assess(recovery_allowed):
+        # Completion order must not decide which needs/sources receive capacity.
+        rows = {row['id']: row for row in outcomes}
+        by_tool = {}
+        ranks = {}
+        for call in calls:
+            row = rows.get(call.id)
+            if not row:
+                continue
+            for index, source in enumerate(row['evidence'], 1):
+                identifier = source['evidence_id']
+                evidence_needs.setdefault(identifier, set()).update(call.need_ids)
+                ranks[identifier] = min(ranks.get(identifier, index), index)
+                evidence_ranks[identifier] = min(evidence_ranks.get(identifier, index), index)
+                by_tool.setdefault(call.tool, {})[identifier] = source
+        retained_ids = {row['evidence_id'] for row in evidence}
+        for tool, sources in by_tool.items():
+            candidates = [evidence_context.compact_evidence(source, evidence_needs[identifier])
+                          for identifier, source in sources.items() if identifier not in retained_ids]
+            capacity = max(0, COMPANION_TOOL_EVIDENCE_LIMIT - sum(row['source_type'] == tool for row in evidence))
+            selected, exclusions = evidence_context.select_records(candidates, plan.needs, limit=capacity, ranks=ranks)
+            omitted('collection', exclusions)
+            if exclusions:
+                diagnostics['evidence_budget_omitted'] = True
+            evidence.extend(sources[row['evidence_id']] for row in selected)
+            retained_ids.update(row['evidence_id'] for row in selected)
+
+    async def assess():
         await progress('assessing', coarse='retrieving')
         trace = diagnostics.setdefault('evidence_assessment', {'attempts':[], 'fallback_used':False})
         metrics['evidence_assessment'] = trace
-        records = model_evidence()
+        records, exclusions = evidence_context.select_records(model_evidence(), plan.needs,
+            limit=COMPANION_ASSESSMENT_RECORD_LIMIT, token_budget=settings.companion_max_evidence_tokens,
+            ranks=evidence_ranks)
+        omitted('assessment', exclusions)
+        if exclusions:
+            diagnostics['assessment_evidence_omitted'] = True
+        trace['unrepresented_need_ids'] = [n.id for n in plan.needs if not any(n.id in r['need_ids'] for r in records)]
+        data = {'query': query, 'needs': [{'id': n.id, 'question': n.question} for n in plan.needs],
+                'context': scope, 'rpg_system': (ontology or {}).get('rpg_system'),
+                'evidence': records, 'outcomes': evidence_context.compact_outcomes(outcomes),
+                'web_available': bool(settings.companion_recovery_max_rounds and
+                                      'web' in available_tools(turn, settings, scope))}
         for attempt in range(2):
             if attempt:
-                if not evidence or deadline-time.monotonic() <= 1:
-                    break
-                records, omissions = evidence_context.recovery_records(records, settings.companion_max_evidence_tokens)
-                omitted('assessment_recovery', omissions)
-                if omissions:
-                    diagnostics['assessment_evidence_omitted'] = True
-                if not records:
+                if deadline-time.monotonic() <= 1:
                     break
                 trace['fallback_used'] = True
-                trace['fallback_mode'] = 'compact_retry'
+                trace['fallback_mode'] = 'same_context_retry'
                 await progress('assessing', coarse='retrieving', recovery=True)
-            allowed = recovery_allowed and not attempt
             prompt = prompts.ASSESS_RECOVERY if attempt else prompts.ASSESS
             tag = 'companion.evidence_assessment_recovery' if attempt else 'companion.evidence_assessment'
             timeout = min(settings.companion_evidence_timeout_s,
                           evidence_context.ASSESSMENT_RETRY_TIMEOUT_S) if attempt else settings.companion_evidence_timeout_s
             timeout = min(timeout, max(0.01, deadline-time.monotonic()-0.5))
-            data = {'needs':[n.model_dump() for n in plan.needs], 'evidence':records,
-                    'outcomes':evidence_context.compact_outcomes(outcomes),
-                    'available_tools':available_tools(turn,settings,scope) if allowed else [],
-                    'recovery_allowed':bool(allowed)}
             payload = prompt + json.dumps(data, ensure_ascii=False)
             before = time.monotonic()
             entry = {'stage':tag, 'started_at':utcnow().isoformat(),
@@ -508,11 +524,8 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                 'validation_failures':[], 'fallback_used':bool(attempt)}
             trace['attempts'].append(entry)
             try:
-                result = await structured(llm,settings.model_companion_evidence,prompt,data,Assessment,timeout,tag)
-                entry['structured_response_status'] = 'received'
-                result = validate_assessment(result,plan.needs,records)
-                if not allowed and result.follow_up_calls:
-                    raise ValueError('assessment_recovery_not_allowed')
+                result = await structured(llm, settings.model_companion_evidence, prompt, data,
+                                          EvidenceAssessment, timeout, tag)
                 entry['structured_response_status'] = 'valid'
                 trace.update(retained_evidence_count=len(evidence), retained_source_count=source_count(),
                              sources_retained_for_synthesis=source_count(), evidence_retained_for_synthesis_count=len(evidence))
@@ -530,11 +543,6 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                 elif isinstance(exc, ValueError) and str(exc)=='invalid_structured_response':
                     entry['structured_response_status'] = 'invalid_structured_output'
                     entry['validation_failures'] = [{'type':'invalid_structured_response'}]
-                elif isinstance(exc, ValueError) and entry['structured_response_status']=='received':
-                    entry['structured_response_status'] = 'invalid_evidence_support'
-                    entry['validation_failures'] = [{'type':str(exc) if str(exc) in {
-                        'invalid_assessment_support','incomplete_need_assessment','unsupported_assessment',
-                        'assessment_recovery_not_allowed','invalid_structured_response'} else 'value_error'}]
                 else:
                     entry['structured_response_status'] = 'failed'
                 diagnostics['assessment_error'] = type(exc).__name__
@@ -552,82 +560,60 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                 _diag(turn.id, 'evidence_assessment_attempt', entry)
         trace.update(fallback_used=True, retained_evidence_count=len(evidence), retained_source_count=source_count())
         diagnostics['assessment_unavailable'] = True
-        if assessment and any(row.status in {'supported','partial'} and row.supports for row in assessment.needs):
-            trace['reused_previous_assessment'] = True
-            trace['fallback_mode'] = 'previous_assessment'
-            trace.update(sources_retained_for_synthesis=source_count(), evidence_retained_for_synthesis_count=len(evidence))
-            return assessment
-        trace['sources_retained_for_synthesis'] = 0
-        trace['evidence_retained_for_synthesis_count'] = 0
+        trace['fallback_mode'] = 'grounded_synthesis'
+        trace['sources_retained_for_synthesis'] = source_count()
+        trace['evidence_retained_for_synthesis_count'] = len(evidence)
         return None
 
-    public_queries = {need.id: need.public_recovery_query for need in plan.needs}
-    rendered_queries = set()
-
-    async def automatic_web(needs):
-        if not needs or not settings.companion_recovery_max_rounds or 'web' not in available_tools(turn,settings,scope):
-            return []
-        needs = [need for need in needs if not any(row['tool']=='web' and need.id in row['need_ids'] for row in outcomes)]
-        # Prepare missing queries in one batch for the turn. Later review may
-        # uncover other gaps, but must not add another serial rendering deadline.
-        to_render = ([need for need in plan.needs if not public_queries.get(need.id) and need.id not in rendered_queries]
-                     if any(not public_queries.get(need.id) and need.id not in rendered_queries for need in needs) else [])
-        if to_render:
-            rendered_queries.update(need.id for need in to_render)
-            try:
-                rendered = await structured(llm, settings.model_companion_routing, prompts.PUBLIC_RECOVERY,
-                    {'needs':[{'id':need.id,'question':need.question} for need in to_render]},
-                    PublicRecoveryQueries, settings.companion_routing_timeout_s, 'companion.public_recovery_query')
-                if len({row.need_id for row in rendered.queries}) != len(to_render) or {row.need_id for row in rendered.queries} != {need.id for need in to_render}:
-                    raise ValueError('invalid_public_recovery_needs')
-                public_queries.update({row.need_id:row.query for row in rendered.queries})
-            except Exception:
-                diagnostics['public_recovery_query_error'] = True
-        blocked = [need.id for need in needs if not public_queries.get(need.id)]
-        if blocked:
-            diagnostics['web_recovery_blocked'] = {'reason':'privacy_blocked','need_ids':blocked}
-        return recovery_policy.web_candidates(needs, outcomes, public_queries)
+    def private_terms():
+        # Known private names/IDs are an additional guard, not a semantic classifier.
+        terms = [(ontology or {}).get('name'), identity['character_agent'].get('name')]
+        terms.extend(scope.get(key) for key in ('chronicle_id', 'character_agent_id', 'foundry_world_id'))
+        snapshot = turn.request.get('foundry_context') or {}
+        terms.append((snapshot.get('table') or {}).get('title'))
+        for document in snapshot.get('documents', []):
+            terms.extend([document.get('name'), document.get('uuid')])
+        for source in evidence:
+            if source['source_type'] in {'atlas', 'chronicle'}:
+                if source['title'] not in {'Atlas record', 'Chronicle', 'Source'}:
+                    terms.append(source['title'])
+            if source['source_type'] in {'atlas', 'chronicle', 'character_memory', 'foundry'}:
+                terms.append(source.get('source_id'))
+        return terms
 
     try:
         await retrieve(plan.calls)
         if plan.needs:
-            try:
-                # Operational failure can recover before the reviewer is available.
-                gaps = recovery_policy.recovery_needs(plan.needs, outcomes)
-                automatic = await automatic_web(gaps)
-                recovery = automatic[:settings.companion_recovery_max_calls]
-                recovered = bool(recovery)
-                if recovered:
-                    await retrieve(recovery, recovery=True)
-                    diagnostics['recovery_trigger'] = 'local_source_failure'
-                assessment = await assess(bool(settings.companion_recovery_max_rounds) and not recovered)
-                if assessment is None:
-                    return await extractive_fallback()
-                if not recovered and settings.companion_recovery_max_rounds:
-                    gaps = recovery_policy.recovery_needs(plan.needs, outcomes, assessment)
-                    automatic = await automatic_web(gaps)
-                    recovery = recovery_policy.select_recovery(automatic, assessment.follow_up_calls, outcomes,
-                        {need.id for need in gaps}, available_tools(turn,settings,scope), settings.companion_recovery_max_calls)
-                    if recovery and deadline-time.monotonic()>settings.companion_evidence_timeout_s:
-                        await retrieve(recovery,recovery=True)
-                        diagnostics['recovery_trigger'] = 'evidence_gap'
-                        assessment=await assess(False)
-                        if assessment is None:
-                            return await extractive_fallback()
-                if not settings.companion_recovery_max_rounds:
-                    diagnostics['recovery_disabled'] = True
-                recovered_needs = {need for row in outcomes if row.get('recovery') for need in row['need_ids']}
-                remaining_gaps = recovery_policy.recovery_needs(plan.needs, outcomes, assessment)
-                diagnostics['recovery_deferred_need_ids'] = [need.id for need in remaining_gaps if need.id not in recovered_needs]
-            except Exception as exc:
-                if finalizing:
-                    raise
-                diagnostics['assessment_or_recovery_error'] = type(exc).__name__
-                return await extractive_fallback()
+            assessment = await assess()
+            if not settings.companion_recovery_max_rounds:
+                diagnostics['recovery_disabled'] = True
+            if assessment and not assessment.sufficient:
+                if settings.companion_recovery_max_rounds and 'web' in available_tools(turn, settings, scope):
+                    calls, blocked = recovery_policy.web_calls(assessment, plan.needs,
+                        limit=settings.companion_recovery_max_calls, private_terms=private_terms())
+                    if blocked:
+                        diagnostics['web_recovery_blocked'] = {'reason': 'privacy_blocked', 'count': len(blocked)}
+                    if calls and deadline-time.monotonic() > 1:
+                        diagnostics['recovery_trigger'] = 'assessed_evidence_gap'
+                        await retrieve(calls, recovery=True)
+                if not assessment.web_queries:
+                    diagnostics['web_recovery_blocked'] = {'reason': 'no_public_queries'}
 
+        synthesis_records, exclusions = evidence_context.select_records(model_evidence(), plan.needs,
+            limit=len(evidence), token_budget=settings.companion_max_evidence_tokens, ranks=evidence_ranks)
+        omitted('synthesis', exclusions)
+        if exclusions:
+            diagnostics['evidence_budget_omitted'] = True
+        projected_ids = {row['evidence_id'] for row in synthesis_records}
+        synthesis_evidence = [row for row in evidence if row['evidence_id'] in projected_ids]
+        trace = diagnostics.get('evidence_assessment')
+        if trace is not None:
+            trace.update(sources_retained_for_synthesis=source_count(synthesis_evidence),
+                         evidence_retained_for_synthesis_count=len(synthesis_evidence))
         allow_general=(settings.companion_general_knowledge_policy=='labeled_opt_in' and turn.request.get('general_knowledge_opt_in',False))
         data={'query':query,'recent':recent,'context':scope,'identity_description':identity['character_agent']['identity_description'],
-              'personality_context':identity.get('personality_context'),'rapport':rapport,'evidence':model_evidence(),
+              'personality_context':identity.get('personality_context'),'rapport':rapport,'evidence':synthesis_records,
+              'needs':[{'id': n.id, 'question': n.question} for n in plan.needs],
               'assessment':assessment.model_dump() if assessment else None,
               'outcomes':evidence_context.compact_outcomes(outcomes),
               'assessment_unavailable':diagnostics.get('assessment_unavailable',False),
@@ -644,7 +630,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             await progress('resolving_media', coarse='synthesizing')
             media_started = time.monotonic()
             try:
-                catalog = await asyncio.wait_for(companion_media.resolve(turn, actor, evidence, settings),
+                catalog = await asyncio.wait_for(companion_media.resolve(turn, actor, synthesis_evidence, settings),
                     min(settings.companion_rich_response_timeout_s, max(0.01, deadline-time.monotonic())))
             except Exception:
                 diagnostics['media_outcome'] = 'unavailable'
@@ -660,16 +646,16 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             if rich_enabled:
                 await progress('composing_response', coarse='synthesizing')
                 try:
-                    proposal, block_checks = rich_response.compose(draft, evidence, catalog)
+                    proposal, block_checks = rich_response.compose(draft, synthesis_evidence, catalog)
                     private_draft = draft.model_copy(update={'segments':draft.segments + block_checks})
                 except Exception:
                     proposal = None
                     diagnostics['composition_outcome'] = 'text_only'
             await progress('verifying_claims',coarse='validating')
             verification=await structured(llm,settings.model_companion_evidence,prompts.VERIFY,
-                {'draft':private_draft.model_dump(),'rich_response':evidence_context.compact_rich_response(proposal),'evidence':model_evidence(),'assessment':data['assessment'],'assessment_unavailable':data['assessment_unavailable'],'general_knowledge_allowed':allow_general},
+                {'draft':private_draft.model_dump(),'rich_response':evidence_context.compact_rich_response(proposal),'evidence':synthesis_records,'assessment':data['assessment'],'assessment_unavailable':data['assessment_unavailable'],'general_knowledge_allowed':allow_general},
                 Verification,settings.companion_evidence_timeout_s,'companion.claim_verification')
-            all_accepted,all_rejected=accepted_segments(private_draft,verification,evidence,allow_general)
+            all_accepted,all_rejected=accepted_segments(private_draft,verification,synthesis_evidence,allow_general)
             narrative_ids={s.id for s in draft.segments}
             accepted=[s for s in all_accepted if s.id in narrative_ids]
             rejected=[r for r in all_rejected if r['id'] in narrative_ids]
@@ -690,10 +676,10 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             ids=list(dict.fromkeys(s.evidence_id for s in seg.supports))
             texts.append(text+''.join(f'[[source:{aliases[eid]}]]' for eid in ids))
             segments.append({'id':seg.id,'kind':seg.kind,'text':text,'evidence_ids':ids,'claims':seg.claims})
-        incomplete = bool(rejected or diagnostics.get('evidence_budget_omitted') or diagnostics.get('assessment_unavailable') or diagnostics.get('assessment_evidence_omitted') or
+        incomplete = bool(rejected or (plan.needs and any(s.kind in {'uncertainty', 'clarification', 'general_knowledge'} for s in accepted)) or diagnostics.get('evidence_budget_omitted') or diagnostics.get('assessment_unavailable') or diagnostics.get('assessment_evidence_omitted') or
                           any(r['status'] != 'ok' or r.get('source_readiness')=='partial' or (r.get('source_trace') or {}).get('omitted_oversized_units') or
                               ((r.get('source_trace') or {}).get('evidence_coverage') or {}).get('status', 'adequate') != 'adequate' for r in outcomes) or
-                          (assessment and any(n.status != 'supported' for n in assessment.needs)))
+                          (plan.needs and (assessment is None or not assessment.sufficient)))
         if incomplete:
             limitation = 'I could not verify all requested details from the available sources.'
             identifier = 'verification-limitations'
@@ -701,7 +687,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                 identifier += '-1'
             texts.append(limitation)
             segments.append({'id':identifier,'kind':'uncertainty','text':limitation,'evidence_ids':[],'claims':[]})
-        complete=bool(assessment and all(n.status=='supported' for n in assessment.needs) and not incomplete and
+        complete=bool(synthesis_evidence and assessment and assessment.sufficient and not incomplete and
                       all(r['status']=='ok' for r in outcomes) and not diagnostics.get('evidence_budget_omitted') and
                       all(e.get('coverage',{}).get('status')!='partial' for e in evidence if e['source_type']=='foundry') and
                       all(not r.get('source_coverage',{}).get('sources_without_ready_index') and not r.get('source_coverage',{}).get('sources_requiring_reindex') for r in outcomes))

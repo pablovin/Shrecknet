@@ -1,6 +1,6 @@
 """Strict internal contracts for scope selection, source plans and evidence checks."""
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
 from app.jobs.elder.v2_schemas import RetrievalPlan
 
 
@@ -11,7 +11,43 @@ class Contract(BaseModel):
 PublicQuery = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
+Source = Literal['atlas', 'shreckworld', 'chronicle', 'character_memory']
+
+
+class ResearchTask(Contract):
+    question: PublicQuery
+    sources: list[Source] = Field(min_length=1, max_length=3)
+
+
+class SimpleCompanionPlan(Contract):
+    mode: Literal['search', 'chat'] = 'search'
+    tasks: list[ResearchTask] = Field(default_factory=list, max_length=3)
+
+    @model_validator(mode='after')
+    def consistent(self):
+        if (self.mode == 'search') != bool(self.tasks):
+            raise ValueError('search_requires_tasks_chat_requires_none')
+        return self
+
+
+class ScopeIntent(Contract):
+    action: Literal['keep', 'switch', 'clarify']
+    ontology_name: str | None = Field(None, min_length=1, max_length=255)
+    resume_pending: bool
+
+    @model_validator(mode='after')
+    def consistent(self):
+        if (self.action == 'switch') != (self.ontology_name is not None):
+            raise ValueError('switch_requires_target_only')
+        return self
+
+
+class MemoryRelevance(Contract):
+    relevant: bool
+
+
 class OntologyDecision(Contract):
+    resume_pending: bool = False
     status: Literal['resolved', 'ambiguous', 'unresolved', 'not_needed']
     ontology_id: int | None = None
     ontology_name: str | None = Field(None, max_length=255)
@@ -20,7 +56,7 @@ class OntologyDecision(Contract):
 
 class Need(Contract):
     id: str = Field(min_length=1, max_length=40)
-    question: str = Field(min_length=1, max_length=1000)
+    question: str = Field(min_length=1, max_length=17000)
     public_recovery_query: PublicQuery | None = None
 
 
@@ -50,15 +86,6 @@ class PlannedCall(Contract):
         return self
 
 
-class PublicRecoveryQuery(Contract):
-    need_id: str = Field(min_length=1, max_length=40)
-    query: PublicQuery | None = None
-
-
-class PublicRecoveryQueries(Contract):
-    queries: list[PublicRecoveryQuery] = Field(max_length=6)
-
-
 class OntologyUpdate(Contract):
     ontology_name: str = Field(min_length=1, max_length=255)
     reason: str = Field(min_length=1, max_length=500)
@@ -68,7 +95,7 @@ class QueryPlan(Contract):
     action: Literal['retrieve', 'ontology_update', 'clarify', 'conversation']
     ontology_update: OntologyUpdate | None
     needs: list[Need] = Field(max_length=6)
-    calls: list[PlannedCall] = Field(max_length=4)
+    calls: list[PlannedCall] = Field(max_length=9)
     clarification_questions: list[str] = Field(max_length=3)
     resume_pending: bool = False
 
@@ -80,7 +107,7 @@ class QueryPlan(Contract):
         if any(not set(c.need_ids) <= ids for c in self.calls):
             raise ValueError('unknown_need')
         if self.action == 'retrieve':
-            if not self.calls or not self.needs or self.ontology_update or self.clarification_questions:
+            if not self.needs or self.ontology_update or self.clarification_questions:
                 raise ValueError('invalid_retrieval_action')
         elif self.action == 'ontology_update':
             if not self.ontology_update or self.calls or self.needs or self.clarification_questions:
@@ -98,17 +125,22 @@ class Support(Contract):
     quote: str = Field(min_length=1, max_length=2000)
 
 
-class NeedAssessment(Contract):
-    need_id: str
-    status: Literal['supported', 'partial', 'missing', 'contradicted', 'unverified']
-    supports: list[Support] = Field(max_length=10)
-    conflicting_evidence_ids: list[str] = Field(max_length=10)
-    missing: str = Field(max_length=1000)
+class EvidenceAssessment(Contract):
+    """A pre-Web recovery decision, never a certificate of final claim support."""
+    sufficient: StrictBool
+    web_queries: list[Annotated[str, StringConstraints(
+        strict=True, strip_whitespace=True, min_length=1, max_length=500)]] = Field(max_length=2, strict=True)
 
-
-class Assessment(Contract):
-    needs: list[NeedAssessment] = Field(max_length=6)
-    follow_up_calls: list[PlannedCall] = Field(max_length=4)
+    @model_validator(mode='after')
+    def normalize_queries(self):
+        if self.sufficient:
+            self.web_queries = []
+        else:
+            unique = {}
+            for query in self.web_queries:
+                unique.setdefault(' '.join(query.casefold().split()), query)
+            self.web_queries = list(unique.values())
+        return self
 
 
 class Segment(Contract):

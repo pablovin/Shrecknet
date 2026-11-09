@@ -98,7 +98,7 @@ async def test_light_rules_use_scoped_single_evidence_without_child_llm(monkeypa
         import json
         payload=json.loads(request.content)
         assert payload=={'query':'Explain a single rule','mode':'evidence','retrieval_strategy':'single',
-                         'top_k':6,'library_item_ids':['book']}
+                         'top_k':5,'library_item_ids':['book']}
         assert request.extensions['timeout']['read']==600
         assert request.url.path==('/shreckworlds/world/companion-evidence' if legacy else '/ontologies/7/companion-evidence')
         return httpx.Response(200,json={'citations':[{'library_item_id':'book','chunk_id':'chunk',

@@ -37,16 +37,13 @@ See the [runnable example](../examples/12_character_companion/chat.py),
 [HTTP contract](../../Documentation/Agents/Companion/Frontend%20API.md), and
 [operations](../../Documentation/Agents/Companion/Companion.md).
 
-Agent `LLMModelTarget` values also accept `web_search_enabled=False`. Set it on
-Companion synthesis for gateway-backed OpenRouter retrieval; web search is offered
-on every turn when a provider is configured, and the legacy per-turn `tools.web`
-value is ignored. Unsupported providers/models cannot enable search in the administration
-UI. Web retrieval sends up to the first 500 characters of the submitted question,
-without appended Foundry names or image-derived terms. The question is not redacted;
-avoid including private information because web search may be considered on any turn. Routing, interim,
-image interpretation, synthesis and rapport calls do not use provider-managed
+Agent `LLMModelTarget` values accept `web_search_enabled`. Companion uses only
+its dedicated `model_companion_web_search` target (or configured JSON provider)
+for Web recovery after insufficient internal assessment. Legacy per-turn
+`tools.web` is accepted but ignored. The provider receives only bounded public
+queries, never the raw user question or appended private context. Routing, interim,
+image interpretation, synthesis, evidence review and rapport disable provider
 search. See [shared agent web search](../../Documentation/Architecture/LLM_WEB_SEARCH.md).
-
 
 ## Chat session limits and context
 
@@ -137,7 +134,7 @@ The evidence-first pipeline is the sole runtime path; the retired pipeline
 selector is not accepted through `/config/`. SDK model configuration includes `model_companion_web_search` and `model_companion_evidence` alongside
 the existing four roles. The web target defaults to OpenRouter DeepSeek Flash with
 search enabled; per-turn `tools.web` is accepted for backward compatibility but is
-ignored, since web search is offered on every turn.
+ignored; configured Web is available only for assessed recovery.
 
 `send()` additionally accepts `general_knowledge_opt_in`, `use_page_scope`, and
 `clarification_id`. For example, after reading the chat's pending clarification:
@@ -196,11 +193,13 @@ not construct nested retrieval plans. Atlas normally reuses the Companion query,
 and individual book questions use ShreckWorld single evidence retrieval. Identity
 and traits shape voice even when memory retrieval is skipped.
 
-When configured Web is available, local failures and reviewed evidence gaps can
-trigger a public search automatically without another tool-selection decision.
-The backend prepares public queries, shares the bounded recovery budget, and keeps
-private campaign history distinct from public evidence. Legacy `tools.web` remains
-ignored. This behavior requires no new per-turn SDK argument.
+Web runs only after a valid insufficient internal assessment, in one batch of
+at most two queries and five total results. There is no reassessment after Web.
+Missing private campaign canon can yield no public queries; source failure alone
+does not trigger Web. Legacy `tools.web` remains ignored. No new SDK argument is
+required. Internal tools each contribute at most five records across their calls;
+assessment sees at most eight need-balanced excerpts. Full admitted records and
+references remain available even when a model projection omits them.
 
 Calls default to a maximum of 600 seconds each. Total turn execution may span
 several calls; `send` still returns admission immediately. `events()` already uses
@@ -218,13 +217,19 @@ later administrator edits remain authoritative. See the
 
 ## Assessment failure and extractive replies
 
-If semantic assessment times out or returns invalid structured/support output,
-the server retains evidence and retries once with a compact subset (at most four
-whole records, 3,000 evidence tokens and 60 seconds). Successful review resumes
-normal synthesis/verification. When review stays unavailable, `outcome="limited"`
-and `coverage="partial"` can include attributed source quotes in `extractive`
-segments with `claims=[]`, alongside explicit limitations. A quote is not a
-verified general answer. Final source access/revision checks remain enforced.
+Assessment failures retain evidence and retry once with identical evidence/needs/
+outcomes, bounded to 60 seconds. Persistent failure skips Web and attempts grounded
+synthesis with uncertainty, followed by claim verification. If generation or
+verification fails, `extractive` segments attribute source quotes with `claims=[]`,
+`outcome="limited"` and `coverage="partial"`. Final source access checks still apply.
+
+New `turn.result['assessment']` values are null or
+`{"sufficient": false, "web_queries": []}` (at most two nonblank queries).
+`diagnostics['assessment_contract_version']` is `sufficiency_v1`. This is a pre-Web
+decision, not certification of the final answer. Recovery/outage answers remain
+`partial`; successful Web execution alone cannot produce complete coverage.
+Historical per-need assessment dictionaries are returned unchanged; inspect the
+version before assuming a shape. SDK raw dictionaries preserve both forms.
 
 `CompanionTurn.result['diagnostics']['evidence_assessment']` and final-message
 `answer_details['diagnostics']` retain attempt timings, compact input size/model/
@@ -235,3 +240,10 @@ references stay available for navigation; compact model inputs do not replace
 the full Answer Breakdown. See
 [inspect_answer.py](../../python_sdk/examples/12_character_companion/inspect_answer.py) for safe
 optional-field reads and the [API contract](../../Documentation/Agents/Companion/Frontend%20API.md#assessment-recovery-and-execution-diagnostics).
+
+
+Simple research planning adds optional `result['diagnostics']['research_plan']`
+and `result['diagnostics']['planning']` records. `planning.contract_version` is
+`simple_research_v1`; `diagnostics['plan']` remains the compiled execution plan.
+Initial retrieval may contain up to nine calls. Admission models and endpoint
+payloads are unchanged. See the [API compatibility contract](../../Documentation/Agents/Companion/Frontend%20API.md#simple-research-planning-compatibility).

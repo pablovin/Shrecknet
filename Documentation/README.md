@@ -41,6 +41,8 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 - [Character Companion](./Agents/Companion/Companion.md) — implemented behavior, compact evidence assessment/extractive recovery, ownership, deployment, privacy and remaining acceptance gates
 - [Companion query pipeline redesign plan](./Agents/Companion/Query%20Pipeline%20Plan.md) — design and rollout acceptance for ontology resolution, LLM source planning, dedicated web model, evidence verification, permanent commentary and frontend settings
+- [Companion simple research planner plan](./Agents/Companion/Simple%20Research%20Planner%20Plan.md) — implemented minimal question/source contract, deterministic compiler, scope/state ownership, technical fallback and exceptional memory/Web policies
+- [Companion assessment and Web recovery plan](./Agents/Companion/Assessment%20Recovery%20Plan.md) — proposed two-field assessment, internal-first retrieval, need-aware excerpt selection and one bounded Web recovery batch
 - [Companion retrieval execution plan](./Agents/Companion/Retrieval%20Execution%20Plan.md) — implemented design record for Atlas plan reuse, light/deep book retrieval, relevant personal memory, automatic web recovery and ten-minute call budgets
 - [Companion rich response plan](./Agents/Companion/Rich%20Response%20Plan.md) — delivered verified narrative, media, entity cards, tables and book excerpts shared by ShreckOS and Foundry, plus rollout acceptance gates
 

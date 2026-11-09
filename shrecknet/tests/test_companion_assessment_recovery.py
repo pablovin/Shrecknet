@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.jobs.companion import query_pipeline as pipeline
-from app.jobs.companion.evidence_context import compact_evidence, compact_outcomes, recovery_records, extractive_response
+from app.jobs.companion.evidence_context import compact_evidence, compact_outcomes, select_records, extractive_response
 from app.integrations.companion.retrieval import evidence
 from test_companion_query_pipeline import harness, plan
 
@@ -28,20 +28,18 @@ def install_books(monkeypatch, rows):
 
 
 def supported(data):
-    row=data['evidence'][0]
-    return {'needs':[{'need_id':'n1','status':'supported','supports':[
-        {'evidence_id':row['evidence_id'],'quote':'Fiona rules.'}],
-        'conflicting_evidence_ids':[],'missing':''}],'follow_up_calls':[]}
+    return {'sufficient':True,'web_queries':[]}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('failure',[TimeoutError(), '{}', 'not JSON', RuntimeError('provider secret must not leak')])
-async def test_failed_review_quotes_retained_book_with_diagnostics_and_no_synthesis(harness,monkeypatch,failure):
+async def test_failed_review_preserves_evidence_and_attempts_synthesis_before_extracts(harness,monkeypatch,failure):
     h=harness
     source=book()
     install_books(monkeypatch,[source])
     h.replies['companion.evidence_assessment']=failure
     h.replies['companion.evidence_assessment_recovery']=failure
+    h.replies['companion.claim_verification']=RuntimeError('verifier unavailable')
     turn=await h.run()
     assert turn['status']=='completed',turn['error']
     result=turn['result']
@@ -51,7 +49,7 @@ async def test_failed_review_quotes_retained_book_with_diagnostics_and_no_synthe
     assert result['citations'][0]['reference']==source['reference']
     assert all(segment['kind'] in {'uncertainty','extractive'} and not segment['claims'] for segment in result['segments'])
     assert result['citations'][0]['segment_ids']==['excerpt-1']
-    assert not any(tag=='companion.grounded_synthesis' for tag,_ in h.calls)
+    assert any(tag=='companion.grounded_synthesis' for tag,_ in h.calls)
     trace=result['diagnostics']['evidence_assessment']
     assert trace['fallback_mode']=='extractive' and trace['fallback_used']
     assert trace['retained_evidence_count']==1 and trace['sources_retained_for_extraction']==1
@@ -65,21 +63,22 @@ async def test_failed_review_quotes_retained_book_with_diagnostics_and_no_synthe
         assert entry['configured_deadline_s']==600
         assert entry['compact_prompt_bytes']>=entry['compact_prompt_characters']
     assert trace['attempts'][1]['effective_deadline_s']==60
-    assert trace['attempts'][1]['compact_prompt_bytes']<trace['attempts'][0]['compact_prompt_bytes']
+    contexts=[data for tag,data in h.calls if tag.startswith('companion.evidence_assessment')]
+    assert contexts[0]==contexts[1]
     assert turn['metrics']['evidence_assessment']==trace
     assert 'provider secret' not in json.dumps(trace)
     assert 'NAVIGATION_SENTINEL' not in json.dumps(h.calls)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('failure',[TimeoutError(), '{}', 'invalid_support'])
+@pytest.mark.parametrize('failure',[TimeoutError(), '{}', 'invalid_contract'])
 async def test_compact_retry_restores_normal_synthesis_and_verification(harness,monkeypatch,failure):
     h=harness
     source=book()
     install_books(monkeypatch,[source])
-    if failure=='invalid_support':
+    if failure=='invalid_contract':
         value=supported({'evidence':[source]})
-        value['needs'][0]['supports'][0]['quote']='An invented quote.'
+        value['sufficient']='true'
         h.replies['companion.evidence_assessment']=value
     else:
         h.replies['companion.evidence_assessment']=failure
@@ -93,7 +92,7 @@ async def test_compact_retry_restores_normal_synthesis_and_verification(harness,
     assert turn['status']=='completed',turn['error']
     result=turn['result']
     assert result['outcome']=='answered' and result['coverage']=='complete'
-    assert result['diagnostics']['evidence_assessment']['fallback_mode']=='compact_retry'
+    assert result['diagnostics']['evidence_assessment']['fallback_mode']=='same_context_retry'
     assert not result['diagnostics'].get('extractive_fallback')
     assert any(tag=='companion.grounded_synthesis' for tag,_ in h.calls)
     assert any(tag=='companion.claim_verification' for tag,_ in h.calls)
@@ -105,9 +104,9 @@ async def test_compact_retry_restores_normal_synthesis_and_verification(harness,
             assert data['evidence'][0]['page_number']==12
             assert data['evidence'][0]['need_ids']==['n1']
             assert 'reference' not in data['evidence'][0] and 'navigation' not in data['evidence'][0]
-    if failure=='invalid_support':
+    if failure=='invalid_contract':
         assert result['diagnostics']['evidence_assessment']['attempts'][0]['validation_failures']==[
-            {'type':'invalid_assessment_support'}]
+            {'type':'bool_type','loc':['sufficient']}]
 
 
 @pytest.mark.asyncio
@@ -120,39 +119,33 @@ async def test_retry_omissions_do_not_remove_full_evidence_or_its_navigation(har
     turn=await h.run()
     assert turn['status']=='completed',turn['error']
     result=turn['result']
-    assert result['evidence']==rows
+    assert len(result['evidence'])==5
+    assert all(row in rows for row in result['evidence'])
     retry=next(data for tag,data in h.calls if tag=='companion.evidence_assessment_recovery')
-    assert 0<len(retry['evidence'])<=4
+    assert len(retry['evidence'])==5
+    initial=next(data for tag,data in h.calls if tag=='companion.evidence_assessment')
+    assert retry==initial
     assert all(row['excerpt']==next(source['excerpt'] for source in rows if source['evidence_id']==row['evidence_id']) for row in retry['evidence'])
-    assert any(row['reason'].startswith('assessment_retry_') for row in result['diagnostics']['evidence_omissions'])
+    assert any(row['reason']=='record_limit' for row in result['diagnostics']['evidence_omissions'])
     assert all(row['reference']['geometry'] for row in result['evidence'])
     assert len([tag for tag,_ in h.calls if tag=='companion.evidence_assessment_recovery'])==1
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('verifier_fails',[False,True])
-async def test_failed_reassessment_reuses_previous_support_but_requires_final_verification(harness,verifier_fails):
+async def test_failed_assessment_still_synthesizes_and_verifies(harness,verifier_fails):
     h=harness
-    count=0
-    def assess(tag,data):
-        nonlocal count
-        count+=1
-        if count>1:
-            raise TimeoutError()
-        result=supported(data)
-        result['needs'][0].update(status='partial',missing='More details')
-        result['follow_up_calls']=[{'id':'r1','tool':'atlas','query':'Additional details','need_ids':['n1']}]
-        return result
-    h.replies['companion.evidence_assessment']=assess
+    h.replies['companion.evidence_assessment']=TimeoutError()
     h.replies['companion.evidence_assessment_recovery']=TimeoutError()
     if verifier_fails:
         h.replies['companion.claim_verification']=RuntimeError('Verifier offline')
     turn=await h.run()
     assert turn['status']=='completed',turn['error']
     assert turn['result']['coverage']=='partial'
-    assert turn['result']['diagnostics']['evidence_assessment']['reused_previous_assessment']
+    assert turn['result']['assessment'] is None
     assert any(tag=='companion.grounded_synthesis' for tag,_ in h.calls)
     assert any(tag=='companion.claim_verification' for tag,_ in h.calls)
+    assert all(row[0]!='web' for row in h.retrievals)
     assert turn['result']['diagnostics'].get('extractive_fallback',False)==verifier_fails
 
 
@@ -166,7 +159,7 @@ async def test_no_evidence_never_becomes_an_uncited_factual_fallback(harness,mon
     result=turn['result']
     assert not result['evidence'] and not result['citations']
     assert not any(segment['kind']=='factual' for segment in result['segments'])
-    assert not any(tag=='companion.evidence_assessment_recovery' for tag,_ in h.calls)
+    assert any(tag=='companion.evidence_assessment_recovery' for tag,_ in h.calls)
 
 
 @pytest.mark.asyncio
@@ -186,7 +179,7 @@ async def test_extracts_still_fail_closed_on_source_revocation(harness,monkeypat
 
 
 @pytest.mark.asyncio
-async def test_collection_budget_is_unchanged_and_records_omission_reason(harness,monkeypatch):
+async def test_projection_budget_keeps_full_evidence_and_records_omission_reason(harness,monkeypatch):
     h=harness
     h.settings.companion_max_evidence_tokens=100
     source=book(text='Long passage. '*300)
@@ -196,10 +189,10 @@ async def test_collection_budget_is_unchanged_and_records_omission_reason(harnes
     assert turn['status']=='completed',turn['error']
     assert h.settings.companion_max_evidence_tokens==100
     result=turn['result']
-    assert not result['evidence']
-    omission=next(row for row in result['diagnostics']['evidence_omissions'] if row['stage']=='collection')
+    assert result['evidence']==[source]
+    omission=next(row for row in result['diagnostics']['evidence_omissions'] if row['stage']=='assessment')
     assert omission['evidence_id']==source['evidence_id'] and omission['reason']=='evidence_token_budget'
-    assert result['tool_calls'][0]['returned_count']==1 and not result['tool_calls'][0]['evidence_ids']
+    assert result['tool_calls'][0]['returned_count']==1 and result['tool_calls'][0]['evidence_ids']==[source['evidence_id']]
 
 
 def test_compaction_preserves_essential_fields_without_embeddings_or_navigation():
@@ -266,6 +259,7 @@ async def test_extractive_history_keeps_diagnostics_navigation_and_owner_isolati
     install_books(monkeypatch,[source])
     h.replies['companion.evidence_assessment']=TimeoutError()
     h.replies['companion.evidence_assessment_recovery']=TimeoutError()
+    h.replies['companion.claim_verification']=RuntimeError('offline')
     turn=await h.run()
     async with h.sessions() as session:
         row=(await session.execute(select(CompanionMessage).where(
@@ -324,25 +318,3 @@ async def test_real_assessment_deadline_cancels_wait_and_enters_compact_recovery
     assert trace['attempts'][1]['structured_response_status']=='valid'
 
 
-@pytest.mark.asyncio
-async def test_unverified_previous_quotes_are_not_reused_as_verified_support(harness):
-    h=harness
-    count=0
-    def assess(tag,data):
-        nonlocal count
-        count+=1
-        if count>1:
-            raise TimeoutError()
-        result=supported(data)
-        result['needs'][0].update(status='unverified',missing='Entailment not established')
-        result['follow_up_calls']=[{'id':'r1','tool':'atlas','query':'Additional evidence','need_ids':['n1']}]
-        return result
-    h.replies['companion.evidence_assessment']=assess
-    h.replies['companion.evidence_assessment_recovery']=TimeoutError()
-    turn=await h.run()
-    assert turn['status']=='completed',turn['error']
-    result=turn['result']
-    assert result['diagnostics']['extractive_fallback']
-    assert not result['diagnostics']['evidence_assessment'].get('reused_previous_assessment')
-    assert not any(tag=='companion.grounded_synthesis' for tag,_ in h.calls)
-    assert result['citations'] and all(segment['kind']!='factual' for segment in result['segments'])

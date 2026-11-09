@@ -7,7 +7,7 @@ repository without imports from the Shrecknet backend repository.
 
 ## Install or update
 
-Version **0.5.1** supports Foundry VTT 14. In Foundry Setup → Add-on Modules →
+Version **0.5.2** supports Foundry VTT 14. In Foundry Setup → Add-on Modules →
 Install Module, use this stable manifest URL:
 
 ```text
@@ -15,8 +15,8 @@ https://raw.githubusercontent.com/pablovin/Shrecknet/main/integrations/foundry/s
 ```
 
 For this exact version, use the
-[0.5.1 manifest](https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.5.1/module.json).
-See the [release notes](https://github.com/pablovin/Shrecknet/releases/tag/foundry-v0.5.1).
+[0.5.2 manifest](https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.5.2/module.json).
+See the [release notes](https://github.com/pablovin/Shrecknet/releases/tag/foundry-v0.5.2).
 Deploy the matching backend and Companion workers first for contextual snapshots;
 older servers retain text chat with contextual controls unavailable. Reload the
 Foundry table after updating.
@@ -110,8 +110,8 @@ detail view provides direct Previous scene and Next scene links.
 
 ## Connected workspaces
 
-- **Companion** opens private Character Companion conversations with a portrait
-  hero card and saved chat tabs. Choose a character, create or switch chats,
+- **Companion** opens private Character Companion conversations with a compact portrait/name
+  header and a small saved-chat selector below the composer. Choose a character, create or switch chats,
   rename them, delete with confirmation, and load earlier messages. Running
   replies can be stopped or recovered by reopening the chat. The server enforces
   the account-wide ten-chat limit. This view supports contextual text conversations; see the
@@ -166,13 +166,13 @@ base defaults to `/shreckworld-api`; the ShreckRPG base defaults to
 
 The **Ask Companion** scene-control launcher opens compact chat. The workspace's
 **Compact chat**/**Expand** controls switch the same conversation between layouts.
-Actor, Item and current Journal page header actions attach the document without
+Direct chat-icon buttons beside Actor, Item and current Journal page window controls attach the document without
 sending. Drag/drop, UUID links and an explicit assigned-character action use the
 same permission-filtered extractor. Table title/description, system metadata and
-the connected Shrecknet World appear as removable context. Quick questions fill
+the connected Shrecknet World are included by default; the table toggle lives in Context settings. Quick questions fill
 the composer; Send remains explicit.
 
-Expand **Review attached context** to preview content and choose World lore and a
+Choose **Attach / context** to open **Context settings** to preview content and choose World lore and a
 linked rules library. Attachments refresh on each new Send and remain per chat in
 memory. Ambiguous retries reuse the original snapshot. Partial generic extraction
 uses visible text/readonly labeled fields; closed or unsupported sheets provide

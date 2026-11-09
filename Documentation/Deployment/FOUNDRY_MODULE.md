@@ -107,11 +107,11 @@ origin as above.
 
 ## Release process
 
-The module version is **0.5.1**. The Shrecknet scene-control launcher uses native
+The module version is **0.5.2**. The Shrecknet scene-control launcher uses native
 Foundry control dimensions with a white background and a purple logo. Companion
 replies render safe Markdown in both workspace and compact layouts, including the
 fallback when rich replies are disabled or unavailable. See the
-[release notes](../../changelogs/foundry-v0.5.1.md) for compatibility and rollback.
+[release notes](../../changelogs/foundry-v0.5.2.md) for compatibility and rollback.
 The release workflow uses the matching
 `changelogs/foundry-vX.Y.Z.md` as its GitHub Release notes.
 
@@ -119,9 +119,9 @@ To build an installable archive locally from the repository root:
 
 ```bash
 node --test integrations/foundry/shrecknet-foundry/tests/*.test.mjs
-mkdir -p dist/foundry-v0.5.1
-(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.5.1/shrecknet-foundry-v0.5.1.zip . -x '.DS_Store' -x '__MACOSX/*')
-cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.5.1/module.json
+mkdir -p dist/foundry-v0.5.2
+(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.5.2/shrecknet-foundry-v0.5.2.zip . -x '.DS_Store' -x '__MACOSX/*')
+cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.5.2/module.json
 ```
 
 Use a fresh output directory when rebuilding, so obsolete files cannot remain in
@@ -286,11 +286,10 @@ remain accessible from Atlas home and Atlas page relationships/scenes.
 **Companion** uses the canonical Character Companion API; it is independent of
 Atlas Elders and the ShreckWorld rules companion.
 
-The Companion workspace presents a character hero card with a portrait fallback,
-name, subtitle, availability, and character chooser alongside a full-height chat.
-On narrow windows the card becomes a compact header. Saved conversations appear
-as horizontally scrollable buttons with an announced selected state. Choose a tab
-to read it; **New chat**, **Rename**, and **Delete** manage server-persisted chats.
+The Companion workspace presents a compact character portrait/name header with a
+**Change companion** button above a full-height conversation. Saved conversations
+appear in a small selector below the composer. Choose a conversation to read it;
+**New chat**, **Rename**, and **Delete** manage server-persisted chats.
 Deletion requires an inline confirmation and preserves character memory and
 rapport. Rename submits `expected_revision`; conflicts and quota errors are shown
 without silently overwriting server state. The server enforces the account-wide
@@ -362,20 +361,29 @@ connection identity. Account/connection changes create fresh state; authenticati
 expiry and sign-out clear all content caches. Late errors from replaced windows
 cannot clear the new account's session.
 
-The default **Table** chip includes the Foundry table title and available
+Table background is included by default without a visible table banner. It includes the Foundry table title and available
 sanitized description, installed system ID/title/version, Foundry version, and
-configured Shrecknet World ID/name. **Review attached context** displays the
-background and attached document previews. Toggle the table chip off to exclude
+configured Shrecknet World ID/name. **Attach / context** opens **Context settings**,
+which displays the background and attached document previews. Toggle **Include table background** off to exclude
 that background and its lore/rules selection from the next question. The speaking
 CharacterAgent remains independent of any attached Foundry Actor.
 
 Standard v14 Actor, Item, and currently viewed Journal page headers gain **Ask
-Companion** in their header controls. Actor/Item/Journal page context menus also
+Companion** as a direct chat-icon button beside the native window controls. The
+button rechecks document permissions when clicked and is not duplicated on rerender. Actor/Item/Journal page context menus also
 provide the action. It opens/focuses chat and attaches the document without sending.
 Drag documents or a UUID link into chat, use **Attach a document link**, or explicitly
 attach the player's assigned Actor. A Journal link resolves its current page, or
 its sole readable page; otherwise open the desired page first. Quick questions
 populate the composer and require Send.
+
+Attachments appear as small content-type icons inside the composer area, with
+individual remove buttons. Hover or focus identifies the document name, type and
+source table; clicking its icon opens the context previews. Quick questions and
+lore/rules selection live inside **Context settings**. The conversation footer
+contains **New chat**, a saved-chat selector, and an overflow menu for Refresh,
+Sign out and conversation management. Compact chat hides the separate Shrecknet
+brand/account header; Sign out remains available in the footer menu.
 
 Chips can be removed independently. References remain attached to that chat in
 memory until removed, sign-out, connection change, or browser reload. New chats

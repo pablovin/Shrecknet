@@ -41,3 +41,5 @@ This folder contains release notes by application version.
 - [Unreleased Companion conversation](./unreleased-companion-conversation.md) — parallel tools, cited Markdown, deterministic rich responses and bounded truncation recovery.
 
 - [Foundry v0.5.1](./foundry-v0.5.1.md) - Native-size white launcher with purple branding and safe Companion Markdown.
+
+- [Foundry v0.5.2](./foundry-v0.5.2.md) - Conversation-first Companion layout, composer attachments, compact conversation footer and direct sheet title-bar action.

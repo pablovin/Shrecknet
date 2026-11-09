@@ -52,11 +52,28 @@ Hooks.on("getSceneControlButtons", (controls) => {
   };
 });
 
-Hooks.on("getHeaderControlsApplicationV2", (app, controls) => {
-  const doc = sheetDocument(app);
-  if (!readable(doc) || controls.some((control) => control.action === "shrecknetCompanion")) return;
-  controls.push({ action: "shrecknetCompanion", label: "Ask Companion", icon: "fa-solid fa-comment-dots",
-    onClick: () => askCompanion(sheetDocument(app), app) });
+// Render a direct title-bar control rather than burying it in the header menu.
+Hooks.on("renderApplicationV2", (app, element) => {
+  const root = element?.[0] || element || app.element;
+  const header = root?.querySelector?.(".window-header");
+  if (!header) return;
+  const existing = header.querySelector(".shrecknet-ask-companion");
+  if (!readable(sheetDocument(app))) { existing?.remove(); return; }
+  if (existing) return;
+  const button = header.ownerDocument.createElement("button");
+  button.type = "button";
+  button.className = "header-control icon fa-solid fa-comment-dots shrecknet-ask-companion";
+  button.title = "Ask Companion";
+  button.setAttribute("aria-label", "Ask Companion");
+  // Stop ApplicationV2's delegated click handling; this control owns its callback.
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const doc = sheetDocument(app);
+    if (!readable(doc)) { ui.notifications.error("This document is not available to you."); return; }
+    void askCompanion(doc, app);
+  });
+  header.insertBefore(button, header.querySelector('[data-action="toggleControls"], [data-action="minimize"], [data-action="close"]'));
 });
 
 for (const kind of ["Actor", "Item", "JournalEntryPage"]) {

@@ -13,21 +13,41 @@ const launches = [];
 ShrecknetShell.openWorkspace = async (options) => { launches.push(options || {}); };
 const doc = { uuid: "Actor.bao", documentName: "Actor", testUserPermission: (user, level) => user.id === "player" && level === "OBSERVER" };
 
-test("v14 header action attaches the active document once without submitting", async () => {
-  const hook = hooks.get("getHeaderControlsApplicationV2")[0];
+function windowFixture() {
+  const children = [];
+  const native = { native: true };
+  const header = {
+    ownerDocument: { createElement() { return { attributes: {}, listeners: {}, setAttribute(k, v) { this.attributes[k] = v; }, addEventListener(k, v) { this.listeners[k] = v; }, remove() { children.splice(children.indexOf(this), 1); } }; } },
+    querySelector(selector) { return selector === ".shrecknet-ask-companion" ? children[0] : native; },
+    insertBefore(button, before) { assert.equal(before, native); children.push(button); },
+  };
+  return { root: { querySelector: () => header }, children };
+}
+
+test("v14 title-bar button attaches the active document once without submitting", async () => {
+  const hook = hooks.get("renderApplicationV2")[0];
   const app = { document: doc }; doc.sheet = app;
-  const controls = [];
-  hook(app, controls); hook(app, controls);
-  assert.equal(controls.length, 1);
-  assert.equal(controls[0].action, "shrecknetCompanion");
-  await controls[0].onClick({}, {});
+  const { root, children } = windowFixture();
+  hook(app, root); hook(app, root);
+  assert.equal(children.length, 1);
+  assert.equal(children[0].attributes["aria-label"], "Ask Companion");
+  let stopped = false;
+  children[0].listeners.click({ preventDefault() {}, stopPropagation() { stopped = true; } });
+  await Promise.resolve();
+  assert.equal(stopped, true);
   assert.deepEqual(launches.at(-1), { companion: true, document: doc, sourceApp: app });
-  const administrative = [];
-  hook({ document: doc }, administrative);
-  assert.equal(administrative.length, 0);
-  const unavailable = [];
-  hook({ document: { ...doc, testUserPermission: () => false } }, unavailable);
-  assert.equal(unavailable.length, 0);
+  const administrative = windowFixture();
+  hook({ document: doc }, administrative.root);
+  assert.equal(administrative.children.length, 0);
+  const count = launches.length;
+  const permission = doc.testUserPermission;
+  doc.testUserPermission = () => false;
+  children[0].listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(launches.length, count);
+  assert.match(errors.at(-1), /not available/);
+  hook(app, root);
+  assert.equal(children.length, 0);
+  doc.testUserPermission = permission;
 });
 
 test("v14 context menu callback uses the second target argument and rechecks document permissions", async () => {

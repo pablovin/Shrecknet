@@ -233,3 +233,35 @@ test('polling retains delivered commentary and exposes detailed verification sta
   assert.equal(w.status,'Checking factual claims');
   assert.equal(w.messages.filter(m=>m.id==='skit').length,1);
 });
+
+
+test("composer controls preserve context and chooser state without sending", async () => {
+  const { app, w } = fixture(() => { throw new Error("Must not send"); });
+  await companionActions.toggleCompanionChooser.call(app);
+  assert.equal(w.state().details.chooser, true);
+  await companionActions.toggleCompanionChooser.call(app);
+  assert.equal(w.state().details.chooser, false);
+  await companionActions.toggleCompanionContext.call(app);
+  assert.equal(w.state().details.context, true);
+  await companionActions.toggleCompanionContext.call(app);
+  assert.equal(w.state().details.context, false);
+  await companionActions.previewCompanionContext.call(app);
+  assert.equal(w.state().details.context, true);
+});
+
+test("footer selector opens the chosen chat and ignores pending replies", async () => {
+  const { w } = fixture();
+  let change;
+  const select = { addEventListener(name, handler) { if (name === "change") change = handler; } };
+  const root = { querySelectorAll: () => [], querySelector: (selector) => selector === "[data-companion-chat-select]" ? select : null };
+  const opened = [];
+  w.openChat = async (id) => { opened.push(id); };
+  w.bind(root);
+  change({ target: { value: "second" } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(opened, ["second"]);
+  w.pendingTurn = { message: "saved" };
+  change({ target: { value: "third" } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(opened, ["second"]);
+});

@@ -80,7 +80,10 @@ export class CompanionWorkspace {
     const preview = await documentSnapshot(reference);
     if (generation !== this.generation || state !== this.state()) throw new Error("Companion session changed.");
     if (state.references.some((ref) => ref.uuid === preview.uuid)) return;
-    state.references.push({ ...reference, uuid: preview.uuid, name: preview.name });
+    state.references.push({ ...reference, uuid: preview.uuid, name: preview.name, kind: preview.kind,
+      tableName: game.world.title || game.world.name,
+      icon: ({ Actor: "fa-user", Item: "fa-suitcase", JournalEntryPage: "fa-file-lines" })[preview.kind] || "fa-file",
+    });
     state.previews.push(preview);
     this.focusDraft = true;
   }
@@ -222,6 +225,11 @@ export class CompanionWorkspace {
       if (Object.hasOwn(state.details, key)) details.open = state.details[key];
       details.addEventListener("toggle", () => { state.details[key] = details.open; });
     });
+    const chooserButton = root?.querySelector('[data-action="toggleCompanionChooser"]');
+    chooserButton?.setAttribute("aria-expanded", String(Boolean(root?.querySelector('[data-companion-details="chooser"]')?.open)));
+    root?.querySelector("[data-companion-chat-select]")?.addEventListener("change", (event) => {
+      if (!this.busy && !this.pendingTurn && event.target.value) void this.act(() => this.openChat(event.target.value));
+    });
     const draft = root?.querySelector("[data-companion-draft]");
     draft?.addEventListener("input", (event) => { this.draft = event.target.value; this.state().draft = this.draft; });
     if (this.focusDraft || this.restoreDraftFocus) {
@@ -349,6 +357,17 @@ export const companionActions = {
     w.before = page.next_cursor;
     w.keepScroll = true;
   }),
+  toggleCompanionChooser: action(async (w) => {
+    const details = w.state().details ||= {};
+    details.chooser = !(details.chooser ?? !w.selection?.character_agent_id);
+  }),
+  toggleCompanionContext: action(async (w) => {
+    const details = w.state().details ||= {};
+    details.context = !details.context;
+  }),
+  previewCompanionContext: action(async (w) => {
+    (w.state().details ||= {}).context = true;
+  }, { duringTurn: true }),
   toggleCompanionTable: action(async (w) => {
     if (w.pendingTurn) throw new Error("Resolve the pending message first.");
     w.state().includeTable = !w.state().includeTable;

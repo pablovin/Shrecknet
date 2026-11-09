@@ -499,3 +499,28 @@
 .shrecknet-companion-markdown p { margin:.4rem 0; }
 .shrecknet-companion-markdown pre { white-space:pre-wrap; overflow-x:auto; }
 .shrecknet-companion-markdown th, .shrecknet-companion-markdown td { padding:.25rem .5rem; text-align:left; }
+
+/* Conversation-first layout, shared by workspace and compact chat. */
+.shrecknet .shrecknet-companion-heading { flex-wrap: wrap; gap: .5rem; flex: 0 0 auto; }
+.shrecknet .shrecknet-companion-identity { display: flex; align-items: center; gap: .6rem; min-width: 0; flex: 1; }
+.shrecknet .shrecknet-companion-identity img { width: 2.5rem; height: 2.5rem; border-radius: 50%; object-fit: cover; }
+.shrecknet .shrecknet-companion-identity h2 { font-size: 1.2rem; overflow-wrap: anywhere; }
+.shrecknet .shrecknet-companion-chooser { margin: 0; flex: 0 0 auto; max-height: 30%; overflow: auto; }
+.shrecknet .shrecknet-companion-chooser form { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .3rem 0; }
+.shrecknet .shrecknet-companion-chooser select { flex: 1; min-width: 8rem; }
+.shrecknet .shrecknet-companion-layout { display: flex; flex-direction: column; gap: 0; overflow: hidden; }
+.shrecknet .shrecknet-companion-chat { flex: 1; }
+.shrecknet .shrecknet-companion-compose-area { flex: 0 1 auto; min-height: 0; max-height: 55%; overflow: auto; margin: 0 .6rem .4rem; border: 1px solid var(--shrecknet-border); border-radius: .8rem; background: var(--shrecknet-panel); }
+.shrecknet .shrecknet-companion-context { max-height: none; padding: .3rem .5rem; border: 0; overflow: visible; font-size: .75rem; }
+.shrecknet .shrecknet-companion-context details:not([open]) { display: none; }
+.shrecknet .shrecknet-context-chips { flex-wrap: nowrap; overflow-x: auto; align-items: center; gap: .3rem; }
+.shrecknet .shrecknet-context-chip { flex: 0 0 auto; padding: 0; }
+.shrecknet .shrecknet-companion .shrecknet-context-chips button { width: auto; font-size: .75rem; padding: .2rem .4rem; min-height: 1.6rem; background: transparent; color: var(--shrecknet-text); }
+.shrecknet .shrecknet-companion-composer { margin: 0; border: 0; box-shadow: none; background: transparent; }
+.shrecknet .shrecknet-companion-footer { display: flex; flex: 0 0 auto; align-items: center; gap: .3rem; padding: .2rem .5rem; border-top: 1px solid var(--shrecknet-border); }
+.shrecknet .shrecknet-companion .shrecknet-companion-footer > select { flex: 1; min-width: 0; height: 1.8rem; min-height: 1.8rem; font-size: .7rem; padding: .1rem .3rem; }
+.shrecknet .shrecknet-companion .shrecknet-companion-footer > button { width: auto; min-height: 1.8rem; font-size: .7rem; padding: .2rem .4rem; }
+.shrecknet-companion-overflow > summary { cursor: pointer; padding: .1rem .5rem; list-style: none; }
+.shrecknet-companion-overflow > div { position: absolute; bottom: 3rem; right: 1rem; z-index: 5; max-width: calc(100% - 2rem); max-height: 45%; overflow: auto; padding: .5rem; border: 1px solid var(--shrecknet-border); border-radius: .6rem; background: var(--shrecknet-panel); box-shadow: 0 4px 15px #0005; }
+.shrecknet.is-companion-sidecar .shrecknet-header { display: none; }
+.shrecknet-ask-companion { flex: 0 0 auto; }

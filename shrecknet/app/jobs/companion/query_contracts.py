@@ -1,6 +1,6 @@
-"""Strict internal contracts for scope selection, source plans and evidence checks."""
+"""Strict internal contracts for scope selection and bounded source plans."""
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from app.jobs.elder.v2_schemas import RetrievalPlan
 
 
@@ -8,25 +8,27 @@ class Contract(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
-PublicQuery = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+QueryText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
-Source = Literal['atlas', 'shreckworld', 'chronicle', 'character_memory']
+Source = Literal['atlas', 'shreckworld', 'chronicle', 'character_memory', 'web']
 
 
 class ResearchTask(Contract):
-    question: PublicQuery
-    sources: list[Source] = Field(min_length=1, max_length=3)
+    query: QueryText
+    sources: list[Source] = Field(min_length=1, max_length=5)
 
 
 class SimpleCompanionPlan(Contract):
-    mode: Literal['search', 'chat'] = 'search'
-    tasks: list[ResearchTask] = Field(default_factory=list, max_length=3)
+    mode: Literal['search', 'chat', 'clarify']
+    tasks: list[ResearchTask] = Field(max_length=3)
+    clarification_questions: list[QueryText] = Field(max_length=3)
 
     @model_validator(mode='after')
     def consistent(self):
-        if (self.mode == 'search') != bool(self.tasks):
-            raise ValueError('search_requires_tasks_chat_requires_none')
+        if ((self.mode == 'search') != bool(self.tasks) or
+                (self.mode == 'clarify') != bool(self.clarification_questions)):
+            raise ValueError('inconsistent_router_mode')
         return self
 
 
@@ -42,10 +44,6 @@ class ScopeIntent(Contract):
         return self
 
 
-class MemoryRelevance(Contract):
-    relevant: bool
-
-
 class OntologyDecision(Contract):
     resume_pending: bool = False
     status: Literal['resolved', 'ambiguous', 'unresolved', 'not_needed']
@@ -57,7 +55,6 @@ class OntologyDecision(Contract):
 class Need(Contract):
     id: str = Field(min_length=1, max_length=40)
     question: str = Field(min_length=1, max_length=17000)
-    public_recovery_query: PublicQuery | None = None
 
 
 class PlannedCall(Contract):
@@ -118,54 +115,3 @@ class QueryPlan(Contract):
         elif self.calls or self.needs or self.ontology_update or self.clarification_questions:
             raise ValueError('invalid_conversation_action')
         return self
-
-
-class Support(Contract):
-    evidence_id: str
-    quote: str = Field(min_length=1, max_length=2000)
-
-
-class EvidenceAssessment(Contract):
-    """A pre-Web recovery decision, never a certificate of final claim support."""
-    sufficient: StrictBool
-    web_queries: list[Annotated[str, StringConstraints(
-        strict=True, strip_whitespace=True, min_length=1, max_length=500)]] = Field(max_length=2, strict=True)
-
-    @model_validator(mode='after')
-    def normalize_queries(self):
-        if self.sufficient:
-            self.web_queries = []
-        else:
-            unique = {}
-            for query in self.web_queries:
-                unique.setdefault(' '.join(query.casefold().split()), query)
-            self.web_queries = list(unique.values())
-        return self
-
-
-class Segment(Contract):
-    id: str = Field(min_length=1, max_length=40)
-    kind: Literal['factual', 'reaction', 'uncertainty', 'clarification', 'general_knowledge']
-    text: str = Field(min_length=1, max_length=8000)
-    claims: list[str] = Field(max_length=12)
-    supports: list[Support] = Field(max_length=12)
-
-
-class Draft(Contract):
-    segments: list[Segment] = Field(min_length=1, max_length=20)
-
-    @model_validator(mode='after')
-    def unique(self):
-        if len({s.id for s in self.segments}) != len(self.segments):
-            raise ValueError('duplicate_segments')
-        return self
-
-
-class SegmentCheck(Contract):
-    segment_id: str
-    supported: bool
-    reason: str = Field(max_length=500)
-
-
-class Verification(Contract):
-    segments: list[SegmentCheck] = Field(max_length=28)

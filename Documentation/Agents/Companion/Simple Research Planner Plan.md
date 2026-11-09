@@ -1,5 +1,11 @@
 # Companion simple research planner design
 
+> Historical design record. Assessment, claim verification, memory voting and
+> recovery-only Web policies below have been superseded by the
+> [conversational simplification](./Conversational%20Simplification%20Plan.md).
+> See [Companion](./Companion.md) for the current execution contract.
+
+
 Status: implemented. The canonical behavior and ordered stages are documented in
 [Companion](./Companion.md#execution-and-ownership); public compatibility is in
 [Frontend API](./Frontend%20API.md#simple-research-planning-compatibility).

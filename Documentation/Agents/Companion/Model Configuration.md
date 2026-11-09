@@ -1,25 +1,26 @@
 # Companion Agent model configuration
 
 Companion Agent is a separate configuration group from CharacterAgent embodiment
-and the existing personal companion orchestrator. All six roles use the existing
+and the existing personal companion orchestrator. The four active roles and two compatibility roles use the existing
 `LLMModelTarget` object (`provider`, `name`, `reasoning`, nullable `reasoning_effort`, `web_search_enabled` default false).
 Names come from the configured provider catalog; these are role assignments rather
 than new provider implementations.
 
 | Setting | Purpose | Required |
 | --- | --- | --- |
-| `model_companion_routing` | Scope/continuation decisions, simple research planning, memory relevance and public-query preparation | Required |
-| `model_companion_web_search` | Dedicated v2 web evidence search | When no JSON search URL is configured |
-| `model_companion_evidence` | V2 coverage review and factual claim verification | Required in v2 |
-| `model_companion_synthesis` | Embodied streaming answer and optional image interpretation | For conversation |
-| `model_companion_interim` | Provisional reaction during retrieval | When interim enabled |
+| `model_companion_routing` | Scope/continuation and search/chat/clarify routing | Required |
+| `model_companion_web_search` | Router-selected Web evidence search | When no JSON search URL is configured |
+| `model_companion_evidence` | Inactive compatibility role | No |
+| `model_companion_synthesis` | Embodied Markdown answer and optional image interpretation | For conversation |
+| `model_companion_interim` | Inactive compatibility role | No |
 | `model_companion_rapport_update` | Async completed-exchange rapport proposal | For feature enablement |
 
 All six roles default to provider `openrouter`, model
 `deepseek/deepseek-v4.1-flash`, with reasoning disabled and null effort. The dedicated web target defaults to
 `web_search_enabled=true`; other targets default false. The model
 ID is verified against the [OpenRouter catalog](https://openrouter.ai/deepseek/deepseek-v4.1-flash).
-Routing is required when Companion is enabled; generated interim calls remain optional. Existing role
+Routing, synthesis and rapport targets are required when Companion is enabled;
+generated interim and evidence-review calls have been removed. Existing role
 assignments, including deliberate blanks, are preserved on reload; defaults apply
 to absent settings. Existing model roles are not automatically copied. Each supplied target replaces that object; omitted top-level roles retain
 their values. Reasoning settings remain independent for each role. Image support
@@ -63,16 +64,16 @@ Missing roles receive defaults; no gateway credentials are copied into role conf
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `companion_general_knowledge_policy` | `disabled` | `labeled_opt_in` additionally requires per-turn opt-in |
-| `companion_routing_timeout_s` | 600 | Deadline for each scope/planner/relevance/public-query call |
-| `companion_evidence_timeout_s` | 600 | Deadline for each coverage/verifier call |
+| `companion_routing_timeout_s` | 600 | Deadline for each scope/router call |
+| `companion_evidence_timeout_s` | 600 | Deadline for optional image interpretation |
 | `companion_web_timeout_s` | 600 | Web call deadline, bounded by overall retrieval/turn budget |
-| `companion_recovery_max_rounds` | 1 | 0 disables Web recovery; 1 permits one assessed Web batch |
-| `companion_recovery_max_calls` | 2 | Saved range 1..4; Web execution uses at most min(value, 2) queries |
-| `companion_interim_max_messages` | 2 | 0..3 permanent messages including immediate acknowledgement |
-| `companion_interim_min_interval_s` | 8 | Minimum spacing for generated skits |
-| `companion_interim_output_tokens` | 100 | 32..300 generated commentary tokens |
+| `companion_recovery_max_rounds` | 1 | Inactive compatibility setting |
+| `companion_recovery_max_calls` | 2 | Inactive compatibility setting; normal Web cap is two calls |
+| `companion_interim_max_messages` | 2 | 0 disables acknowledgement; positive values emit just one |
+| `companion_interim_min_interval_s` | 8 | Inactive compatibility setting |
+| `companion_interim_output_tokens` | 100 | Inactive compatibility setting |
 
-The evidence-first pipeline requires valid routing and evidence targets when
+The evidence-first pipeline requires valid routing, synthesis and rapport targets when
 Companion is enabled. Retired pipeline/optional-routing flags do not select a
 legacy runner and are not accepted by `/config/`. Stage deadlines must fit
 within the turn deadline. Enabled model web search requires an OpenRouter target; disabling its search flag
@@ -80,40 +81,37 @@ makes the tool unavailable. Gateway capability checks still apply at execution. 
 dedicated `model_companion_web_search` target controls search availability. Backend
 failures do not silently switch providers. Search is disabled for all other calls. Source-specific pipelines keep their existing model owners.
 
-The seed enables optional generated commentary for new installations; the Settings
-fallback remains false and persisted flags are preserved. Immediate v2
-acknowledgement depends on the message maximum, not the generated-skit switch.
-Set the maximum to zero to keep only status. Reload/restart API and workers
-together after changing their cached runtime configuration.
+Generated commentary switches/model keys remain accepted for saved configuration and
+SDK compatibility but have no execution effect. One static acknowledgement depends
+only on `companion_interim_max_messages`. Zero keeps status events only. Reload API
+and workers together after cached runtime configuration changes.
 
 ## Controls and defaults
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `companion_enabled` | false | Admission requires this and `enable_ai_agents` |
-| `companion_interim_enabled` | false | Optional concurrent reaction |
+| `companion_interim_enabled` | false | Inactive compatibility setting |
 | `companion_tool_timeout_s` | 600 | Per-source and synthesis deadline, 0.1..600 seconds |
 | `companion_retrieval_timeout_s` | 615 | Per-round parallel retrieval window, 0.1..660 seconds |
 | `companion_turn_timeout_s` | 10200 | Total sequential execution budget, 10..10800 seconds |
 | `companion_event_retention_days` | 7 | Event replay retention, 1..90 days |
 | `companion_rapport_max_attempts` | 3 | Evaluation retries before audited no-op, 1..10 |
 | `companion_max_evidence_tokens` | 10000 | Model evidence projection tokens, 100..32000; full admitted records remain retained |
-| `companion_output_tokens` | 2000 | Output tokens, 128..16000 |
+| `companion_output_tokens` | 8000 | Technical ceiling, 128..16000; prompt guidance controls ordinary length |
 | `companion_image_models` | [`openrouter/deepseek/deepseek-v4.1-flash`] | Explicit image-capable `provider/name` targets |
-| `companion_shreckworld_url` | empty | Trusted ShreckWorld internal origin |
-| `companion_chronicles_url` | empty | Trusted RPG internal origin |
-| `companion_web_enabled` | false | Enable the legacy JSON search integration |
+| `shreckworld_base_url` | configured deployment origin | Trusted ShreckWorld internal origin |
+| `shreckrpg_base_url` | configured deployment origin | Trusted RPG internal origin |
 | `companion_web_search_url` | empty | Configured JSON search provider endpoint |
 | `companion_web_search_token` | empty | Private provider token; redacted on reads |
 
-For the legacy pipeline, enable `web_search_enabled` on `model_companion_synthesis` to use OpenRouter
-search through the existing gateway credentials. Web recovery is available after a valid insufficient assessment
-whenever a provider is configured; the legacy per-turn `tools.web` value is ignored.
-Provider citations with excerpts enter the normal evidence validator.
-Search is disabled on routing, interim, image interpretation, final synthesis and
-rapport calls regardless of those roles' saved search flags. See
-[shared agent web search](../../Architecture/LLM_WEB_SEARCH.md) for capabilities,
-budgets, errors, compatibility, and deployment.
+Only `model_companion_web_search` enables model-managed Web search. Configured
+Web is available to the router when `tools.allowed` permits it; the legacy
+`tools.web` field does not gate selection. Queries are unrestricted by public/private
+classification. There is no public-query catalog or filtering stage. Web runs with
+selected internal tools in one bounded parallel round, never as assessment recovery.
+Search is disabled on scope/routing, image interpretation, synthesis and rapport.
+See [shared agent web search](../../Architecture/LLM_WEB_SEARCH.md).
 
 The legacy JSON web provider receives a POST search request and returns bounded
 `results:[{title,url,snippet}]`. Public HTTP(S) result URLs are checked; private,
@@ -123,8 +121,7 @@ secret updates retain the existing token. Do not expose configuration storage to
 browser clients outside the administrator API.
 
 Runtime config storage is authoritative after initial seeding. API validation
-requires synthesis/rapport targets when enabling Companion and optional role
-targets when enabling those switches. Global agent reconciliation does not silently
+requires routing/synthesis/rapport targets when enabling Companion. Global agent reconciliation does not silently
 choose Companion targets. Jobs read current settings at entry; coordinate process
 reload/restart during rollout because settings may be cached in each process.
 A conversational result records the targets selected by its worker. It does not
@@ -141,17 +138,15 @@ The existing Administration **Shrecknet → Companion Agent** schema group also
 contains `companion_rich_response_enabled` (default true for new/missing settings; saved false values are preserved),
 `companion_rich_response_timeout_s` (default 2, allowed 0.1–10), and
 `companion_web_images_enabled` (default false). Saved values are preserved during
-upgrade. Rich presentation requires `evidence_v2`; legacy replies remain text.
+upgrade. Rich presentation uses the sole Markdown pipeline; historical replies remain readable.
 The optional timeout shares discovery/final-asset checking time inside the total
-turn deadline. Failed media/composition does not invalidate verified prose.
+turn deadline. Failed media/composition does not invalidate cited Markdown.
 
-Composition is deterministic and adds no model role. The existing
-`model_companion_evidence` verifies narrative and optional block facts in the same
-batched call. The synthesis and evidence prompts receive no independent search
-permission from these controls. Web image discovery requires the JSON provider's
-source-associated image contract and a configured web provider; leave it off
-for providers without image support. Provider-managed model search continues to
-return factual excerpts only. See [rich responses](Companion.md#verified-rich-responses).
+Composition is deterministic and adds no model role or verifier call. It uses
+resolved citations and retrieved metadata. Web image discovery requires the JSON
+provider's source-associated image contract and configured opt-in; leave it off
+for providers without image support. Provider-managed search supplies excerpts
+only. See [rich responses](Companion.md#deterministic-rich-responses).
 
 After changing presentation flags/deadlines, refresh the API and turn workers using
 the installation's normal configuration reload/restart procedure. Workers may
@@ -159,7 +154,7 @@ cache settings per process; each turn uses its entry-time settings snapshot.
 
 ## Ten-minute call rollout
 
-New/missing settings use 600-second per-call limits (routing, evidence review,
+New/missing settings use 600-second per-call limits (routing, image interpretation,
 retrieval and synthesis), a 615-second retrieval-round window, and a 10,200-second
 turn budget. Fast calls return immediately. Startup now runs a one-time saved
 configuration migration: shorter stored limits are raised to these values, while
@@ -180,11 +175,9 @@ for inspection or later administrator changes:
 
 Timeout updates reject a retrieval window shorter than the local/web calls or a
 turn budget shorter than the conservative serial execution path. The minimum is
-`4*routing + 4*evidence + 5*tool + rounds*retrieval + min(evidence,60) + 2*media + 60`
-seconds, where `rounds=1+companion_recovery_max_rounds`. It reserves optional
-scope/continuation work, research planning, optional memory relevance,
-image interpretation, one assessment plus one identical-context retry,
-both drafts/verifications, identity/source checks and orchestration overhead.
+`3*routing + evidence + 5*tool + retrieval + 2*media + 60` seconds. It reserves
+scope/continuation, routing, optional image interpretation, initial/final identity,
+source checks and two synthesis attempts. There is one parallel retrieval round.
 After the migration, explicit administrator changes remain authoritative on later
 reloads/restarts. Choosing shorter limits deliberately reduces the call budgets.
 
@@ -234,15 +227,8 @@ while keeping the new code, update the configuration APIs after the migration;
 retain the markers so restarts respect those edits. Never delete configuration
 databases or migration markers to adjust budgets.
 
-Assessment recovery adds at most one 60-second retry with the same evidence,
-clipped to `companion_evidence_timeout_s` and remaining turn time. Primary
-assessment and final verification each default to 600 seconds. The retry uses the
-existing evidence model role, with no new setting, startup migration or source
-recovery round. The default turn limit stays 10,200 seconds; saved limits are not
-lowered by the reduced minimum-budget calculation. A valid insufficient assessment
-can produce one Web batch of at most two queries and five total records. No
-post-Web reassessment or separate public-query rendering call is made. Persistent
-assessment failure skips Web and attempts grounded synthesis/verification with
-limitations, then attributed extracts if necessary. Gateway jobs retain their
-provider-attempt/watchdog lifetimes; the retry deadline bounds Companion waiting.
-See the [recovery contract](./Companion.md#compact-evidence-assessment-and-extractive-recovery).
+Truncated synthesis retries once with the same evidence and citation aliases and
+shorter-answer guidance, bounded by the remaining turn budget. Persistent truncation
+is a typed generation failure. No assessment, verifier, sufficiency or structured
+repair calls remain. Saved turn/output settings are preserved; the new 8,000-token
+ceiling applies to missing settings, not an automatic overwrite of custom limits.

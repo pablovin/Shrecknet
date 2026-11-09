@@ -64,6 +64,7 @@ async def safe_web_url(url):
 class CompanionRetrieval:
     def __init__(self, turn, actor):
         self.turn, self.actor, self.settings = turn, actor, get_settings()
+        self.llm_usage = []
         self.scope = getattr(turn, "execution_context", None) if getattr(turn, "execution_context", None) is not None else (turn.request.get("context") or {})
 
     async def retrieve(self, tool, query, *, planned_call=None):
@@ -95,7 +96,7 @@ class CompanionRetrieval:
         except httpx.TimeoutException:
             return {"tool": tool, "status": "timed_out", "evidence": [], "coverage": "unknown", "timeout_s": timeout, "timeout_layer": "http"}
         except Exception as exc:
-            logger.warning("Companion retrieval %s failed: %s: %s", tool, type(exc).__name__, str(exc)[:500])
+            logger.warning("Companion retrieval %s failed: %s", tool, type(exc).__name__)
             return {"tool": tool, "status": "unavailable", "evidence": [], "coverage": "unknown"}
 
     async def character_memory(self, query):
@@ -145,11 +146,18 @@ class CompanionRetrieval:
                         fields[row.node_id] = await fields_for(row, self.scope['ontology_id'], session)
             except Exception:
                 fields = {}  # Optional structured presentation cannot fail text retrieval.
-        return [evidence("atlas", row.node_id, row.text, title=getattr(row, "node_name", None) or getattr(row, "node_alias", None) or "Atlas record",
-                         reference={"node_id": row.node_id, "ontology_id": self.scope["ontology_id"], "node_label": row.node_label,
-                                    **({'updated_at':str(row.properties['updated_at'])} if row.properties.get('updated_at') else {})},
-                         scope={"ontology_id": self.scope["ontology_id"]}, structured={'fields':fields[row.node_id]} if fields.get(row.node_id) else None)
-                for row in records]
+        projected = []
+        for row in records:
+            structured = {'fields': fields[row.node_id]} if fields.get(row.node_id) else {}
+            description = row.properties.get('description')
+            if isinstance(description, str) and 0 < len(description) <= 300:
+                structured['description'] = description
+            projected.append(evidence("atlas", row.node_id, row.text,
+                title=getattr(row, "node_name", None) or getattr(row, "node_alias", None) or "Atlas record",
+                reference={"node_id": row.node_id, "ontology_id": self.scope["ontology_id"], "node_label": row.node_label,
+                           **({'updated_at': str(row.properties['updated_at'])} if row.properties.get('updated_at') else {})},
+                scope={"ontology_id": self.scope["ontology_id"]}, structured=structured or None))
+        return projected
 
     async def shreckworld(self, query, *, planned_call=None):
         identifier = self.scope.get("shreckworld_id") or self.scope.get("ontology_id")
@@ -214,6 +222,7 @@ class CompanionRetrieval:
                 data = await client.chat(model=self.settings.model_companion_web_search,
                     messages=[{"role": "system", "content": WEB_RETRIEVAL}, {"role": "user", "content": query[:500]}],
                     usage_tag="companion.web_retrieval", max_tokens=1000, return_metadata=True)
+                self.llm_usage.append({"stage": "companion.web_retrieval", "usage": data.get("usage") or {}})
             results = [row["url_citation"] for row in data.get("annotations", []) if row.get("type") == "url_citation"]
             rows = []
             for row in results[:COMPANION_TOOL_EVIDENCE_LIMIT]:

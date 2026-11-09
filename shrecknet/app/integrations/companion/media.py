@@ -75,7 +75,7 @@ async def resolve(turn, actor, evidence, settings):
             rows=[{'id':stable_id('a',source['evidence_id']),'source_type':'foundry','source_revision':ref.get('source_revision'),
                 'provenance_kind':'document_image','attribution':source['title'][:1000],
                 'delivery_ref':{'kind':'foundry_local','reference':ref}}]
-        elif kind=='web' and turn.request.get('tools',{}).get('web') in {'allow','require'}:
+        elif kind=='web':
             # Adapter admits only provider-declared, source-associated image metadata.
             for image in source['reference'].get('images',[])[:4]:
                 rows.append({'id':stable_id('a',source['evidence_id']+image['url']),'source_type':'web','source_revision':None,

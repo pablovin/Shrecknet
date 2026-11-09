@@ -30,9 +30,7 @@ COMPANION_TIMEOUT_FIELDS = (
     'companion_routing_timeout_s', 'companion_evidence_timeout_s',
     'companion_retrieval_timeout_s', 'companion_turn_timeout_s',
 )
-COMPANION_ASSESSMENT_RETRY_TIMEOUT_S = 60
 COMPANION_TOOL_EVIDENCE_LIMIT = 5
-COMPANION_ASSESSMENT_RECORD_LIMIT = 8
 COMPANION_WEB_QUERY_LIMIT = 2
 DEFAULT_CONFIG_SEED_FILE = Path("/configs/shrecknet.initial.json")
 SERVICE_CONNECTION_FIELDS = frozenset({
@@ -400,7 +398,7 @@ class Settings(BaseSettings):
     companion_event_retention_days: int = Field(7, ge=1, le=90)
     companion_rapport_max_attempts: int = Field(3, ge=1, le=10)
     companion_max_evidence_tokens: int = Field(10000, ge=100, le=32000)
-    companion_output_tokens: int = Field(2000, ge=128, le=16000)
+    companion_output_tokens: int = Field(8000, ge=128, le=16000)
     companion_web_search_url: str = ""
     companion_web_search_token: str = ""
     companion_image_models: list[str] = Field(default_factory=lambda: ["openrouter/deepseek/deepseek-v4.1-flash"])
@@ -446,25 +444,21 @@ class Settings(BaseSettings):
 
     @property
     def companion_rich_response_active(self) -> bool:
-        """Presentation is optional within the sole evidence-first query pipeline."""
+        """Presentation is optional within the sole conversational query pipeline."""
         return self.companion_rich_response_enabled
 
 
 def companion_required_turn_budget(settings: Settings) -> float:
-    """Conservative longest serial path, including one recovery and draft repair.
+    """Bound scope/routing, optional image interpretation and one synthesis retry.
 
-    Four routing calls reserve scope/continuation, planning and memory relevance;
-    four evidence calls cover an image, one assessment and two verifications.
-    Five tool windows cover initial/final identity, source checks and two drafts.
-    Concurrent source calls consume one window per retrieval round, not their sum.
-    The assessment can also use one bounded retry with identical evidence.
+    Tools execute concurrently in a single round. Initial/final identity, source
+    validation and two synthesis calls each reserve a tool-timeout window.
+    Saved outer deadlines are preserved; assessment/recovery settings are inactive.
     """
-    rounds = 1 + settings.companion_recovery_max_rounds
-    return (4 * settings.companion_routing_timeout_s +
-            4 * settings.companion_evidence_timeout_s +
+    return (3 * settings.companion_routing_timeout_s +
+            settings.companion_evidence_timeout_s +
             5 * settings.companion_tool_timeout_s +
-            rounds * settings.companion_retrieval_timeout_s +
-            min(settings.companion_evidence_timeout_s, COMPANION_ASSESSMENT_RETRY_TIMEOUT_S) +
+            settings.companion_retrieval_timeout_s +
             2 * settings.companion_rich_response_timeout_s + 60)
 
 

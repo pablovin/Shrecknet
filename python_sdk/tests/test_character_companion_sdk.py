@@ -76,7 +76,11 @@ async def test_foundry_snapshot_forwarded_without_changing_table_identifiers():
     {'sufficient':False,'web_queries':[]}, {'sufficient':True,'web_queries':[]}])
 async def test_answer_breakdown_survives_turn_and_message_reads(assessment):
     details = {'tool_calls': [{'tool':'atlas','status':'ok','query':'forest','cache_hit':False,'elapsed_ms':4,'returned_count':1,'evidence_ids':['e1'],'retrieval_depth':'light','timeout_s':600,'timeout_layer':None}], 'evidence':[{'evidence_id':'e1','excerpt':'Old trees'}], 'segments':[{'id':'s1','text':'Forest','kind':'fact','evidence_ids':['e1']}], 'coverage':'complete','warnings':[]}
-    details['diagnostics']={'evidence_assessment':{'fallback_used':True,'retained_evidence_count':1}}
+    details['diagnostics']=({'version':'markdown_v3','citation_validation':{'valid':1,'unknown':0,'malformed':False}}
+        if assessment is None else {'evidence_assessment':{'fallback_used':True,'retained_evidence_count':1}})
+    if assessment is None:
+        details['segments'][0]['kind']='conversation'
+        details['coverage']='unknown'
     if assessment is not None and 'sufficient' in assessment:
         details['diagnostics']['assessment_contract_version']='sufficiency_v1'
     def handler(request):

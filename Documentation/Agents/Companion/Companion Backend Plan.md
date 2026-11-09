@@ -1,4 +1,9 @@
 > Design baseline and acceptance checklist. The code now implements the core integration;
+
+> The query-stage design is superseded by the implemented
+> [conversational simplification](./Conversational%20Simplification%20Plan.md).
+> This broader backend/migration record retains its historical scope.
+
 > see [Character Companion](Companion.md) for the current contract, deployment gates
 > and explicit remaining work. This plan is not a claim that every acceptance gate passed.
 

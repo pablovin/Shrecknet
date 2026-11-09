@@ -52,10 +52,12 @@ for rollout, restart behavior, and legacy database cleanup.
 
 ## Companion retrieval budgets
 
-Companion reuses Atlas plans, retrieves individual book questions through the
-light evidence path, and assesses internal evidence before recovering permitted public information
-in one bounded Web batch. Missing private campaign canon never requires Web. Personal memories are retrieved only for relevant needs; identity
-and traits always shape voice. Per-call defaults are ten minutes, with separate
-round/turn budgets and durable progress. A one-time startup configuration migration raises shorter saved timeouts;
-later administrator edits remain authoritative. See the [configuration rollout](../Documentation/Agents/Companion/Model%20Configuration.md#ten-minute-call-rollout)
-for coordinated API, worker, gateway and ShreckWorld settings.
+Companion reuses Atlas plans and retrieves individual book questions through the
+light evidence path. One router selects internal tools, subjective character memory
+and Web queries; tools run concurrently before one Markdown synthesis. There is no
+assessment, memory vote or claim verifier. Citation/access checks and optional rich
+rendering are deterministic; rapport updates asynchronously after commit. One
+truncated synthesis retry retains its evidence. Per-call defaults remain ten minutes;
+saved timeout/output settings are preserved. See the
+[Companion contract](../Documentation/Agents/Companion/Companion.md) and
+[configuration rollout](../Documentation/Agents/Companion/Model%20Configuration.md#ten-minute-call-rollout).

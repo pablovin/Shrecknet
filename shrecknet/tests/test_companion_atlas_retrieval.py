@@ -38,7 +38,7 @@ async def test_atlas_reuses_plans_and_returns_evidence(monkeypatch, mode):
     row = SimpleNamespace(
         node_id="node-1", node_label="EntityInstance", node_name="Telmori",
         node_alias=None, text="Telmori are a wolf-people of Glorantha.",
-        properties={"updated_at": "2026-01-01"},
+        properties={"updated_at": "2026-01-01", "description": "A wolf-people of Glorantha."},
     )
 
     async def retrieve_plan(*args, **kwargs):
@@ -61,6 +61,7 @@ async def test_atlas_reuses_plans_and_returns_evidence(monkeypatch, mode):
     assert result["status"] == "ok"
     assert result["evidence"][0]["source_type"] == "atlas"
     assert result["evidence"][0]["source_id"] == "node-1"
+    assert result["evidence"][0]["structured_evidence"]["description"] == "A wolf-people of Glorantha."
     assert len(planner_calls) == (1 if mode=='deep' else 0)
     if mode=='supplied':
         assert planned.steps[0].filters.ontology_ids == []  # Scoped copy, no mutation.

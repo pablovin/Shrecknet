@@ -38,4 +38,6 @@ This folder contains release notes by application version.
 
 - [Unreleased Companion retrieval execution](./unreleased-companion-retrieval.md) — reusable Atlas plans, light/deep book evidence, relevant memories, automatic public-Web recovery and coordinated ten-minute call budgets.
 
+- [Unreleased Companion conversation](./unreleased-companion-conversation.md) — parallel tools, cited Markdown, deterministic rich responses and bounded truncation recovery.
+
 - [Foundry v0.5.1](./foundry-v0.5.1.md) - Native-size white launcher with purple branding and safe Companion Markdown.

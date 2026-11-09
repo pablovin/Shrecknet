@@ -15,6 +15,7 @@ from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient, LLMProviderUnavailableError
 from app.jobs.companion.prompts import RAPPORT
 from app.jobs.companion.contracts import RapportProposal
+from app.jobs.companion.errors import CompanionExecutionError
 from app.models.character_companion import CompanionTurn, CompanionOutbox, CompanionChat, CompanionMessage, CompanionRapport, CompanionRapportAudit, CompanionAttachment, utcnow
 from app.repositories.character_companion_repository import CompanionRepository, record, fail
 from app.schemas.character_companion import DIMENSIONS, TERMINAL
@@ -102,6 +103,15 @@ async def execute_turn(turn, lease):
         return await run(turn, lease, actor=actor, identity=identity, rapport=rapport,
             recent=recent, images=images, image_sources=image_sources, llm=llm,
             settings=settings, metrics=metrics, started=started)
+    except Exception:
+        # Retain safe stage/tool diagnostics even when generation/access checks fail.
+        metrics['execution_ms'] = round((time.monotonic()-started)*1000, 2)
+        metrics['llm_usage'] = llm.get_usage_summary() if hasattr(llm, 'get_usage_summary') else {}
+        async with database() as session:
+            await session.execute(update(CompanionTurn).where(CompanionTurn.id == turn.id,
+                CompanionTurn.lease == lease, CompanionTurn.status.notin_(TERMINAL)).values(metrics=metrics))
+            await session.commit()
+        raise
     finally:
         await llm.aclose()
 
@@ -243,7 +253,7 @@ async def process_outbox(identifier):
                         failure["validation_rule"] = "empty_synthesis"
                     current.metrics = {**(current.metrics or {}), **failure}
                     logger.warning("companion_turn_failed turn_id=%s stage=%s error_type=%s", aggregate, current.status, type(exc).__name__)
-                    await CompanionRepository(session).terminal(current, "failed", error={"code": "llm_provider_unavailable" if isinstance(exc, LLMProviderUnavailableError) else "companion_execution_failed", "retryable": True}, lease=lease)
+                    await CompanionRepository(session).terminal(current, "failed", error={"code": exc.code if isinstance(exc, CompanionExecutionError) else "llm_provider_unavailable" if isinstance(exc, LLMProviderUnavailableError) else "companion_execution_failed", "retryable": exc.retryable if isinstance(exc, CompanionExecutionError) else True}, lease=lease)
                     await session.commit()
         else:
             done = False

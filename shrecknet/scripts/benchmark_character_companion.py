@@ -1,4 +1,4 @@
-"""Measure deployed end-to-end cohorts, including true first token.
+"""Measure deployed end-to-end cohorts, distinguishing provisional first token from first completed reply.
 
 This command creates private benchmark chats/turns. Credentials come only from
 SHRECKNET_URL and SHRECKNET_TOKEN; output never contains credentials or answer text.
@@ -27,7 +27,7 @@ async def run(args):
             response=await client.post(root+'/chats',json={'character_agent_id':selection['character_agent_id'],'selection_version':selection['version'],'title':'Companion benchmark'},headers={'Idempotency-Key':str(uuid4())});response.raise_for_status();chat=response.json()
             start=time.perf_counter()
             response=await client.post(root+f"/chats/{chat['id']}/turns",json={'text':case['text'],'context':case.get('context'),'selection_version':selection['version'],'attachment_ids':case.get('attachment_ids',[])},headers={'Idempotency-Key':str(uuid4())});response.raise_for_status();turn=response.json()
-            row={'cohort':case['cohort'],'first_feedback_ms':None,'first_token_ms':None,'first_commentary_ms':None,'first_stage_ms':None,'completion_ms':None}
+            row={'cohort':case['cohort'],'first_feedback_ms':None,'first_token_ms':None,'first_reply_ms':None,'first_commentary_ms':None,'first_stage_ms':None,'completion_ms':None}
             event=''
             async with client.stream('GET',turn['events_url'],headers={'Accept':'text/event-stream'}) as stream:
                 stream.raise_for_status()
@@ -38,7 +38,8 @@ async def run(args):
                         if row['first_feedback_ms'] is None:row['first_feedback_ms']=elapsed
                         if event=='message.committed' and row['first_commentary_ms'] is None:row['first_commentary_ms']=elapsed
                         if event=='pipeline.status' and row['first_stage_ms'] is None:row['first_stage_ms']=elapsed
-                        if event in {'response.delta','response.final'} and row['first_token_ms'] is None:row['first_token_ms']=elapsed
+                        if event=='response.delta' and row['first_token_ms'] is None:row['first_token_ms']=elapsed
+                        if event=='response.final' and row['first_reply_ms'] is None:row['first_reply_ms']=elapsed
                         if event in {'turn.completed','turn.failed','turn.cancelled'}:row['completion_ms']=elapsed;row['terminal_event']=event
             result=await client.get(turn['result_url']);result.raise_for_status()
             snapshot=result.json()

@@ -16,7 +16,7 @@ async def main():
             if name == 'response.delta':
                 print(event.payload['delta'],end='',flush=True)
             elif name == 'response.final':
-                print('\nValidated:',event.payload['text'])
+                print('\nReply:',event.payload['text'])
         print(await api.turn(turn.turn_id))
 
 

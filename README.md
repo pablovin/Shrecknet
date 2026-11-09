@@ -122,11 +122,11 @@ Open in browser:
 ## Character Companion (optional)
 
 Character Companion adds persistent CharacterAgent selection, private conversations,
-streaming and per-user rapport. Optional verified rich responses add source-backed
-cards, tables, excerpts and media in ShreckOS and Foundry. It is disabled by default. Its six model roles
+streaming and per-user rapport. Optional cited rich responses add source-backed
+cards, tables, excerpts and media in ShreckOS and Foundry. It is disabled by default. Its four active model roles (plus two retained compatibility roles)
 default to OpenRouter `deepseek/deepseek-v4.1-flash` and are independently editable
-in frontend Administration or `/config/`. The evidence-first query pipeline handles
-all turns. Retrieval/model calls default to ten-minute limits; startup migrations
+in frontend Administration or `/config/`. The conversational pipeline routes tools in parallel and synthesizes cited Markdown
+for all turns, without separate evidence assessment or claim verification. Retrieval/model calls default to ten-minute limits; startup migrations
 raise shorter saved timeout values once while preserving longer limits and later
 edits. See the [timeout rollout](Documentation/Agents/Companion/Model%20Configuration.md#ten-minute-call-rollout)
 when upgrading an existing installation. Configure and activate OpenRouter (or

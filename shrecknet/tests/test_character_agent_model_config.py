@@ -305,25 +305,22 @@ def test_search_survives_legacy_normalization(isolated_config):
     assert getattr(config.reload_settings(), field).web_search_enabled is True
 
 
-def test_companion_pipeline_defaults_to_evidence_v2_for_missing_setting(isolated_config):
-    assert config.Settings().companion_query_pipeline_version == 'evidence_v2'
-    # Represents an installed config database predating the pipeline setting.
-    store({'companion_enabled': False})
-    assert config.load_settings().companion_query_pipeline_version == 'evidence_v2'
-    assert config.reload_settings().companion_query_pipeline_version == 'evidence_v2'
-    assert stored(isolated_config)['companion_query_pipeline_version'] == 'evidence_v2'
+def test_companion_pipeline_has_no_runtime_selector(isolated_config):
+    assert 'companion_query_pipeline_version' not in config.Settings.model_fields
+    assert config.load_settings().companion_rich_response_active
+    assert config.reload_settings().companion_rich_response_active
 
 
-def test_companion_pipeline_keeps_explicit_legacy_selection(isolated_config):
-    store({'companion_query_pipeline_version': 'legacy'})
-    assert config.load_settings().companion_query_pipeline_version == 'legacy'
-    assert config.reload_settings().companion_query_pipeline_version == 'legacy'
+def test_companion_pipeline_ignores_retired_legacy_selection(isolated_config):
+    store({'companion_query_pipeline_version':'legacy'})
+    assert not hasattr(config.load_settings(),'companion_query_pipeline_version')
+    assert not hasattr(config.reload_settings(),'companion_query_pipeline_version')
 
 
-def test_companion_initial_seed_selects_evidence_v2():
+def test_companion_initial_seed_has_no_retired_pipeline_selector():
     from pathlib import Path
-    seed = Path(__file__).resolve().parents[2] / 'configs' / 'shrecknet.initial.json'
-    assert json.loads(seed.read_text())['companion_query_pipeline_version'] == 'evidence_v2'
+    seed=Path(__file__).resolve().parents[2]/'configs'/'shrecknet.initial.json'
+    assert 'companion_query_pipeline_version' not in json.loads(seed.read_text())
 
 
 def test_companion_rich_responses_default_enabled_for_missing_setting(isolated_config):

@@ -512,7 +512,7 @@ the `verified` version only after smoke testing the applicable Foundry release.
 
 ### Evidence-first Companion queries
 
-With backend `companion_query_pipeline_version="evidence_v2"`, an explicit table
+With the conversational backend, an explicit table
 ontology skips model inference and a saved chat ontology persists across turns.
 A conflicting conversational switch asks before overriding the table scope; the
 active ontology is shown and **Use page/Foundry context for the next message**
@@ -523,21 +523,21 @@ Polling reads detailed stages and durable commentary from turn snapshots, merges
 messages by ID, and refreshes changed chat scope. Commentary remains in history
 after completion or failure. General-knowledge fallback is a separate, one-message
 opt-in exposed only when permitted by the backend; web search availability is
-unchanged. Factual drafts remain private during evidence verification.
-Deploy the SQL migration and matching backend/workers with the clients; v2
-defaults on for new/missing configuration, while explicit saved selections persist. Old
-servers retain text/context chat without the additive behavior. See the
-[canonical pipeline](../Agents/Companion/Companion.md#evidence-first-query-pipeline)
+unchanged. Markdown drafts remain private until required source/access checks.
+There is no evidence assessment or model claim-verification stage. Deploy matching
+backend/workers with clients; no new schema migration is required. Historical
+startup migrations remain necessary. Old servers retain compatible text/context chat. See the
+[canonical pipeline](../Agents/Companion/Companion.md#execution-and-ownership)
 and [HTTP/SSE contract](../Agents/Companion/Frontend%20API.md#evidence-v2).
 
 ## Companion rich replies
 
 The Companion workspace and compact sidecar render the same optional v1 rich
 response as ShreckOS: narrative, entity cards, images/galleries, structured tables
-and book excerpts. Headings, lists, tables, code and basic inline Markdown render
-through `companion-markdown.js`; raw HTML and arbitrary model image/link URLs are
-escaped. Text remains readable on older servers, unknown rich-response versions
-or when rich rendering is disabled.
+and optional requested book excerpts. Headings, lists, tables, code and basic
+inline Markdown render through `companion-markdown.js`; raw HTML and arbitrary
+model image/link URLs are escaped. Text remains readable without rich rendering.
+No presentation or verification model call runs.
 Source controls use admitted message evidence/targets; table sorting keeps cells
 and citations together. Expansion opens an inert image dialog, never a macro or
 new generation request. Content remains in the current user's private Companion
@@ -556,7 +556,7 @@ click and never receive the player's Shrecknet bearer token.
 
 Deploy the updated ShreckWorld, API/workers and module together.
 `companion_rich_response_enabled` defaults true for new/missing settings on
-evidence v2; explicitly saved false values remain respected. Output media support is separate
+the conversational pipeline; explicitly saved false values remain respected. Output media support is separate
 from user image uploads, which this Foundry view still does not implement. No
 additional Companion database migration is introduced; v2's durable-commentary
 migration remains required. Disabling rich composition preserves saved text and

@@ -1,4 +1,4 @@
-"""V2 scope, verification, durable commentary and migration regressions."""
+"""Conversational scope, citations, durable commentary and migration regressions."""
 import json
 import time
 from contextlib import asynccontextmanager
@@ -10,7 +10,7 @@ from sqlalchemy import select, create_engine, text
 from app.core.config_store import Settings
 from app.db.companion_query_migration import migrate_companion_query
 from app.jobs.companion import runner, query_pipeline as pipeline
-from app.jobs.companion.query_contracts import QueryPlan, Draft, Verification
+from app.jobs.companion.query_contracts import QueryPlan
 from app.models.character_companion import CompanionChat, CompanionMessage, CompanionTurn, CompanionOutbox
 from app.models.ontology import Ontology
 from app.models.user import User
@@ -22,10 +22,10 @@ from app.integrations.companion.retrieval import evidence
 
 def plan(action='retrieve', **kw):
     if action == 'conversation':
-        return {'mode':'chat','tasks':[]}
+        return {'mode':'chat','tasks':[], 'clarification_questions':[]}
     needs = kw.get('needs',[{'id':'n1','question':'Who rules?'}])
     calls = kw.get('calls',[{'tool':'atlas','need_ids':['n1']}])
-    return {'mode':'search','tasks':[{'question':n['question'],
+    return {'mode':'search','clarification_questions':[], 'tasks':[{'query':n['question'],
         'sources':list(dict.fromkeys(c['tool'] for c in calls if n['id'] in c['need_ids']))} for n in needs]}
 
 
@@ -40,7 +40,7 @@ def tool_settings(url='https://search.example'):
 
 
 def test_available_tools_always_offers_web_when_configured():
-    assert 'web' in pipeline.available_tools(tool_turn(allowed=['character_memory']), tool_settings(), {'ontology_id': 1, 'chronicle_id': 'c'})
+    assert 'web' not in pipeline.available_tools(tool_turn(allowed=['character_memory']), tool_settings(), {'ontology_id': 1, 'chronicle_id': 'c'})
     assert 'web' in pipeline.available_tools(tool_turn(web='disabled'), tool_settings(), {'ontology_id': 1, 'chronicle_id': 'c'})
 
 
@@ -69,27 +69,22 @@ async def harness(session_maker, monkeypatch):
     def default(tag,data):
         if tag=='companion.query_planner': return plan()
         if tag=='companion.scope_intent': return {'action':'keep','ontology_name':None,'resume_pending':False}
-        if tag=='companion.memory_relevance': return {'relevant':True}
         if tag=='companion.ontology': return {'status':'resolved','ontology_id':1,'reason':'Question'}
         if tag=='companion.clarification': return 'Which world do you mean?'
-        if tag in {'companion.evidence_assessment', 'companion.evidence_assessment_recovery'}:
-            return {'sufficient': bool(data['evidence']), 'web_queries': []}
         if tag=='companion.grounded_synthesis':
-            if not data['evidence']:
-                return {'segments':[{'id':'s1','kind':'uncertainty','text':'I lack evidence for this question.',
-                                     'claims':[],'supports':[]}]}
-            return {'segments':[{'id':'s1','kind':'factual','text':'Fiona rules.','claims':['Fiona rules.'],
-                'supports':[{'evidence_id':data['evidence'][0]['evidence_id'],'quote':'Fiona rules.'}]}]}
-        if tag=='companion.claim_verification': return {'segments':[{'segment_id':'s1','supported':True,'reason':'Matches source'}]}
+            return 'Fiona rules.[[source:1]]' if data['evidence'] else 'I lack evidence for this question.'
         return {'changes':[]}
     class LLM:
         def __init__(self,**kw): pass
         async def aclose(self): pass
         async def chat(self,**kw):
-            tag=kw['usage_tag'];data=json.loads(kw['messages'][-1]['content']);calls.append((tag,data))
+            tag=kw['usage_tag']; content=kw['messages'][-1]['content']
+            data=json.loads(content[0]['text'] if isinstance(content,list) else content);calls.append((tag,data))
             reply=replies.get(tag,default)
             if isinstance(reply,Exception): raise reply
             value=reply(tag,data) if callable(reply) else reply
+            if kw.get('return_metadata'):
+                return value if isinstance(value,dict) else {'text':value,'response_metadata':{'finish_reason':'stop'},'usage':{}}
             return value if isinstance(value,str) else json.dumps(value)
     monkeypatch.setattr(runner,'ShreckLLMClient',LLM)
     class Retrieval:
@@ -119,7 +114,7 @@ async def harness(session_maker, monkeypatch):
 async def test_explicit_and_saved_scope_skip_inference_and_commentary_persists(harness):
     h=harness;r=await h.run()
     assert r['status']=='completed',r['error']
-    assert r['result']['coverage']=='complete'
+    assert r['result']['coverage']=='unknown'
     assert h.validated and not any(t=='companion.ontology' for t,_ in h.calls)
     async with h.sessions() as s:
         rows=list((await s.execute(select(CompanionMessage).order_by(CompanionMessage.created_at))).scalars())
@@ -165,14 +160,6 @@ async def test_unresolved_scope_does_not_use_character_world(harness):
     async with h.sessions() as s: assert (await s.get(CompanionChat,h.cid)).active_turn_id is None
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize('tag,response',[('companion.claim_verification',RuntimeError('offline')),('companion.claim_verification',{'segments':[{'segment_id':'s1','supported':False,'reason':'Wrong world'}]})])
-async def test_invalid_planning_or_verification_never_publishes_factual_draft(harness,tag,response):
-    h=harness;h.replies[tag]=response;r=await h.run()
-    assert r['status']=='completed',r['error']
-    assert r['result']['outcome'] in {'limited','needs_clarification'}
-    assert 'Fiona rules.' not in r['result']['text']
-    assert len([1 for t,_ in h.calls if t=='companion.grounded_synthesis'])<=2
 
 
 @pytest.mark.asyncio
@@ -191,12 +178,6 @@ async def test_source_failure_does_not_cancel_success(harness,monkeypatch):
     assert {c['status'] for c in r['result']['tool_calls']}=={'ok','unavailable'}
 
 
-def test_reactions_cannot_hide_claims_and_unknown_needs_fail():
-    draft=Draft.model_validate({'segments':[{'id':'s1','kind':'reaction','text':'Fiona rules.','claims':['Fiona rules.'],'supports':[]}]})
-    checks=Verification.model_validate({'segments':[{'segment_id':'s1','supported':True,'reason':'ok'}]})
-    accepted,rejected=pipeline.accepted_segments(draft,checks,[],False)
-    assert not accepted and rejected
-    with pytest.raises(ValueError): QueryPlan.model_validate({'action':'retrieve','ontology_update':None,'needs':[{'id':'n1','question':'x'}],'calls':[{'id':'c1','tool':'atlas','query':'x','need_ids':['unknown']}],'clarification_questions':[]})
 
 
 def test_migration_preserves_content_and_is_idempotent():
@@ -212,17 +193,6 @@ def test_migration_preserves_content_and_is_idempotent():
         c.execute(text("INSERT INTO character_companion_messages VALUES ('skit','t','c','assistant','commentary',1,'hello','[]',1,'2026-01-01')"))
 
 
-@pytest.mark.asyncio
-async def test_recovery_is_targeted_and_bounded(harness):
-    h=harness
-    h.replies['companion.evidence_assessment']={'sufficient':False,'web_queries':['RuneQuest city rules']}
-    r=await h.run()
-    assert r['status']=='completed',r['error']
-    assert [row[0] for row in h.retrievals]==['atlas','web']
-    assert h.retrievals[1][1]=='RuneQuest city rules'
-    assert len([1 for tag,_ in h.calls if tag=='companion.evidence_assessment'])==1
-    assert r['result']['tool_calls'][1]['recovery']
-    assert r['result']['coverage']=='partial'
 
 
 @pytest.mark.asyncio
@@ -230,11 +200,12 @@ async def test_recovery_is_targeted_and_bounded(harness):
 async def test_general_knowledge_requires_both_permissions_and_is_labeled(harness,opt_in,policy,allowed):
     h=harness;h.settings.companion_general_knowledge_policy=policy
     h.replies['companion.query_planner']=plan('conversation')
-    h.replies['companion.grounded_synthesis']={'segments':[{'id':'s1','kind':'general_knowledge','text':'This may vary by edition.','claims':[],'supports':[]}]}
+    h.replies['companion.grounded_synthesis']=lambda tag,data: ('General knowledge — not verified: This may vary by edition.' if data['general_knowledge_allowed'] else 'I do not have evidence for that.')
     r=await h.run(general_knowledge_opt_in=opt_in)
     assert r['status']=='completed',r['error']
     assert ('General knowledge — not verified' in r['result']['text'])==allowed
-    if not allowed: assert r['result']['outcome']=='limited'
+    data=next(data for tag,data in h.calls if tag=='companion.grounded_synthesis')
+    assert data['general_knowledge_allowed']==allowed
 
 
 @pytest.mark.asyncio
@@ -325,90 +296,14 @@ async def test_explicit_foundry_scope_skips_inference_and_preserves_original_req
     assert result['execution_context']['character_ontology_id']==1
 
 
-def test_structured_snapshot_support_is_validated_without_inventing_prose():
-    from app.jobs.companion.query_contracts import Support
-    source=evidence('foundry','Actor.a','',structured={'fields':[{'label':'HP','value':10}]})
-    support=Support(evidence_id=source['evidence_id'],quote='"label": "HP", "value": 10')
-    assert pipeline.valid_support(support,{source['evidence_id']:source})
-    assert not pipeline.valid_support(Support(evidence_id=source['evidence_id'],quote='"value": 99'),{source['evidence_id']:source})
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize('local_status', ['unavailable','timed_out','empty','irrelevant'])
-@pytest.mark.parametrize('web_flag',['disabled','require'])
-async def test_web_recovery_is_automatic_without_reviewer_tool_vote(harness, monkeypatch, local_status, web_flag):
-    h=harness
-    h.replies['companion.query_planner']=plan(needs=[{
-        'id':'n1','question':'Who rules?', 'public_recovery_query':'public ruler reference'}])
-    old=pipeline.CompanionRetrieval
-    class Retrieval(old):
-        async def retrieve(self,tool,query,*,planned_call=None):
-            if tool=='atlas' and local_status!='irrelevant':
-                h.retrievals.append((tool,query,self.turn.execution_context.copy()))
-                return {'tool':tool,'status':local_status,'evidence':[]}
-            return await super().retrieve(tool,query,planned_call=planned_call)
-    monkeypatch.setattr(pipeline,'CompanionRetrieval',Retrieval)
-    h.replies['companion.evidence_assessment']={'sufficient':False,'web_queries':['public ruler reference']}
-    result=await h.run(tools={'web':web_flag})
-    assert result['status']=='completed',result['error']
-    assert [row[0] for row in h.retrievals]==['atlas','web']
-    details=result['result']
-    assert details['tool_calls'][1]['recovery']
-    assert details['diagnostics']['recovery_trigger']=='assessed_evidence_gap'
-    assert details['coverage']=='partial'
-    assessments=[data for tag,data in h.calls if tag=='companion.evidence_assessment']
-    assert len(assessments)==1
-    assert not any(row['source_type']=='web' for row in assessments[0]['evidence'])
-    assert not any(tag=='companion.public_recovery_query' for tag,_ in h.calls)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize('permitted,rounds',[(False,1),(True,0)])
-async def test_automatic_web_obeys_availability_and_recovery_disable(harness,permitted,rounds):
-    h=harness
-    h.settings.model_companion_web_search.web_search_enabled=permitted
-    h.settings.companion_recovery_max_rounds=rounds
-    h.replies['companion.query_planner']=plan(needs=[{'id':'n1','question':'Who rules?','public_recovery_query':'public ruler'}])
-    h.replies['companion.evidence_assessment']={'sufficient':False,'web_queries':['public ruler reference']}
-    result=await h.run()
-    assert result['status']=='completed',result['error']
-    assert [r[0] for r in h.retrievals]==['atlas']
-    if rounds==0:
-        assert result['result']['diagnostics']['recovery_disabled']
 
 
-@pytest.mark.asyncio
-async def test_private_need_does_not_leak_failed_local_query_to_web(harness,monkeypatch):
-    h=harness
-    private='Secret campaign incident involving a private character'
-    h.replies['companion.query_planner']=plan(needs=[{'id':'n1','question':private}],calls=[{
-        'id':'c1','tool':'atlas','query':private,'need_ids':['n1']}])
-    h.replies['companion.evidence_assessment']={'sufficient':False,'web_queries':[]}
-    result=await h.run()
-    assert result['status']=='completed',result['error']
-    assert all(row[0]!='web' for row in h.retrievals)
-    assert result['result']['diagnostics']['web_recovery_blocked']['reason']=='no_public_queries'
-    assert not any(tag=='companion.public_recovery_query' for tag,_ in h.calls)
 
 
-@pytest.mark.asyncio
-async def test_operational_failure_and_reviewer_outage_never_trigger_web(harness,monkeypatch):
-    h=harness
-    h.replies['companion.query_planner']=plan(needs=[{'id':'n1','question':'Who rules?','public_recovery_query':'public ruler'}])
-    h.replies['companion.evidence_assessment']=RuntimeError('reviewer offline')
-    old=pipeline.CompanionRetrieval
-    class Retrieval(old):
-        async def retrieve(self,tool,query,*,planned_call=None):
-            if tool=='atlas':
-                h.retrievals.append((tool,query,self.turn.execution_context.copy()))
-                return {'tool':tool,'status':'timed_out','evidence':[]}
-            return await super().retrieve(tool,query,planned_call=planned_call)
-    monkeypatch.setattr(pipeline,'CompanionRetrieval',Retrieval)
-    result=await h.run()
-    assert [r[0] for r in h.retrievals]==['atlas']
-    assert result['result']['coverage']=='partial'
-    assert any(tag=='companion.grounded_synthesis' for tag,_ in h.calls)
-    assert len([tag for tag,_ in h.calls if tag.startswith('companion.evidence_assessment')])==2
 
 
 def test_retrieval_contract_enforces_depth_and_personal_memory_reason():

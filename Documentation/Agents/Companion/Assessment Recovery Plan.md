@@ -1,5 +1,11 @@
 # Companion assessment and Web recovery plan
 
+> Historical design record. Assessment, claim verification, memory voting and
+> recovery-only Web policies below have been superseded by the
+> [conversational simplification](./Conversational%20Simplification%20Plan.md).
+> See [Companion](./Companion.md) for the current execution contract.
+
+
 Status: proposed; runtime behavior has not changed. This plan replaces the
 assessment/recovery portions of the current pipeline when implemented. The
 [Companion guide](./Companion.md) describes current behavior; the

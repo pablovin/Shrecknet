@@ -1,29 +1,28 @@
 """Research boundary, deterministic compilation and intent/recovery regressions."""
 import pytest
-from app.jobs.companion.query_contracts import SimpleCompanionPlan, EvidenceAssessment
+from app.jobs.companion.query_contracts import SimpleCompanionPlan
 from app.jobs.companion import planning, query_prompts
 from test_companion_query_pipeline import harness
 
 
 def proposal(tasks):
-    return SimpleCompanionPlan(mode='search',tasks=tasks)
+    return SimpleCompanionPlan(mode='search',tasks=tasks,clarification_questions=[])
 
 
 def test_tiny_schema_rejects_execution_plumbing_and_inconsistent_modes():
     schema = str(SimpleCompanionPlan.model_json_schema())
     assert 'RetrievalPlan' not in schema and 'atlas_plan' not in schema
     assert 'atlas_plan' not in query_prompts.PLANNER and 'need_ids' not in query_prompts.PLANNER
-    assert 'atlas_plan' not in query_prompts.ASSESS
-    assert 'retrieval_depth' not in str(EvidenceAssessment.model_json_schema())
-    for payload in ({'mode':'search','tasks':[]}, {'mode':'chat','tasks':[{'question':'x','sources':['atlas']}]},
+    assert 'supports' not in query_prompts.SYNTHESIZE
+    for payload in ({'mode':'search','tasks':[]}, {'mode':'chat','tasks':[{'query':'x','sources':['atlas']}]},
                     {'mode':'chat','tasks':[],'ontology_update':None},
-                    {'tasks':[{'question':' ','sources':['atlas']}]},
-                    {'tasks':[{'question':'x','sources':['atlas'],'retrieval_depth':'deep'}]}):
+                    {'tasks':[{'query':' ','sources':['atlas']}]},
+                    {'tasks':[{'query':'x','sources':['atlas'],'retrieval_depth':'deep'}]}):
         with pytest.raises(ValueError): SimpleCompanionPlan.model_validate(payload)
 
 
 def test_compiler_assigns_nine_light_calls_and_merges_duplicates():
-    tasks=[{'question':f'Question {i}','sources':['shreckworld','atlas','chronicle']} for i in range(3)]
+    tasks=[{'query':f'Question {i}','sources':['shreckworld','atlas','chronicle']} for i in range(3)]
     plan, trace=planning.compile_plan(proposal(tasks),['shreckworld','atlas','chronicle'])
     assert [c.id for c in plan.calls]==[f'c{i}' for i in range(1,10)]
     assert [n.id for n in plan.needs]==['n1','n2','n3']
@@ -33,17 +32,11 @@ def test_compiler_assigns_nine_light_calls_and_merges_duplicates():
     assert all(c.tool=='atlas' for c in plan.calls)
 
 
-def test_memory_gate_and_web_recovery_only_guard():
-    from types import SimpleNamespace
-    tasks=[SimpleNamespace(question='private detail',sources=['character_memory','web'])]
-    untrusted=SimpleNamespace(mode='search',tasks=tasks)
-    plan,trace=planning.compile_plan(untrusted,['character_memory','web','atlas'])
-    assert [c.tool for c in plan.calls]==['atlas']
-    assert {r['reason'] for r in trace['rejected_sources']}=={'memory_not_relevant','web_recovery_only'}
-    plan,_=planning.compile_plan(untrusted,['character_memory','web'],memory_relevant=True)
-    assert [c.query for c in plan.calls]==['private detail'] and plan.calls[0].memory_reason
-    with pytest.raises(ValueError):
-        proposal([{'question':'Public fact','sources':['web']}])
+def test_router_selects_memory_and_web_without_additional_semantic_gates():
+    value=proposal([{'query':'Any campaign question','sources':['character_memory','web']}])
+    plan,trace=planning.compile_plan(value,['character_memory','web'])
+    assert [c.tool for c in plan.calls]==['character_memory','web']
+    assert plan.calls[0].memory_reason and not trace['rejected_sources']
 
 
 def test_long_fallback_preserves_goal_and_segments_without_loss():
@@ -66,28 +59,14 @@ async def test_technical_planner_failure_searches_original_goal(harness,failure)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('decision',[{'relevant':False},RuntimeError('offline')])
-async def test_memory_gate_uses_original_intent_and_fails_closed(harness,decision):
+async def test_initial_web_choice_executes_without_recovery_or_query_filter(harness):
     h=harness
-    h.replies['companion.query_planner']={'tasks':[{'question':'Character memories','sources':['character_memory']}]}
-    h.replies['companion.memory_relevance']=decision
-    result=await h.run('Explain a generic rule')
-    assert result['status']=='completed'
-    assert all(row[0]!='character_memory' for row in h.retrievals)
-    gate=next(data for tag,data in h.calls if tag=='companion.memory_relevance')
-    assert gate['query']=='Explain a generic rule'
-
-
-@pytest.mark.asyncio
-async def test_initial_web_choice_falls_back_to_internal_retrieval(harness):
-    h=harness
-    h.replies['companion.query_planner']={'tasks':[{'question':'Private campaign rule','sources':['web']}]}
+    h.replies['companion.query_planner']={'mode':'search','tasks':[
+        {'query':'Any campaign question','sources':['web']}], 'clarification_questions':[]}
     result=await h.run()
     assert result['status']=='completed'
-    assert all(t!='web' and q=='Who rules?' for t,q,_ in h.retrievals)
-    assert any(t=='atlas' for t,_,_ in h.retrievals)
-    assert result['result']['diagnostics']['planning']['fallback_used']
-    assert not any(tag=='companion.public_recovery_query' for tag,_ in h.calls)
+    assert [(t,q) for t,q,_ in h.retrievals]==[('web','Any campaign question')]
+    assert not result['result']['diagnostics']['planning']['fallback_used']
 
 
 @pytest.mark.asyncio
@@ -112,18 +91,17 @@ async def test_evidence_budget_is_shared_across_needs_not_completion_speed(harne
     from app.jobs.companion import query_pipeline as pipeline
     from app.integrations.companion.retrieval import evidence
     h=harness
-    h.replies['companion.query_planner']={'tasks':[
-        {'question':f'Goal {i}','sources':['atlas']} for i in range(3)]}
+    h.replies['companion.query_planner']={'mode':'search','clarification_questions':[], 'tasks':[
+        {'query':f'Goal {i}','sources':['atlas']} for i in range(3)]}
     old=pipeline.CompanionRetrieval
     class Retrieval(old):
         async def retrieve(self,tool,query,**kwargs):
             return {'tool':tool,'status':'ok','evidence':[
                 evidence(tool,f'{query}-{i}','Fiona rules.',scope={'ontology_id':1}) for i in range(20)]}
     monkeypatch.setattr(pipeline,'CompanionRetrieval',Retrieval)
-    h.replies['companion.evidence_assessment']={'sufficient':True,'web_queries':[]}
     result=await h.run()
     assert result['status']=='completed'
-    records=next(data['evidence'] for tag,data in h.calls if tag=='companion.evidence_assessment')
+    records=next(data['evidence'] for tag,data in h.calls if tag=='companion.grounded_synthesis')
     counts=[sum(need in row['need_ids'] for row in records) for need in ('n1','n2','n3')]
     assert len(records)==5 and max(counts)-min(counts)<=1
     omissions=result['result']['diagnostics']['evidence_omissions']
@@ -131,11 +109,10 @@ async def test_evidence_budget_is_shared_across_needs_not_completion_speed(harne
 
 
 @pytest.mark.asyncio
-async def test_invalid_planning_without_local_permission_uses_only_safe_web(harness):
+async def test_invalid_planning_with_empty_allowlist_executes_nothing(harness):
     h=harness
     h.replies['companion.query_planner']='{}'
-    h.replies['companion.evidence_assessment']={'sufficient':False,'web_queries':['RuneQuest public rules']}
     result=await h.run('Private campaign rule question',tools={'allowed':[]})
-    assert result['result']['outcome']=='answered'
-    assert [(tool,query) for tool,query,_ in h.retrievals]==[('web','RuneQuest public rules')]
+    assert result['result']['outcome']=='limited'
+    assert h.retrievals==[]
     assert result['result']['diagnostics']['planning']['fallback_used']

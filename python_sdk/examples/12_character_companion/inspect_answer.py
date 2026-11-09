@@ -22,16 +22,18 @@ async def main():
             for identifier in call['evidence_ids']:
                 print(identifier, evidence[identifier]['excerpt'], evidence[identifier]['reference'])
         diagnostics = result.get('diagnostics') or {}
-        print('Recovery:', diagnostics.get('recovery_trigger', 'none'))
+        print('Pipeline:', diagnostics.get('version', 'historical'))
+        print('Citation validity:', json.dumps(result.get('citation_validation', {})))
+        print('Truncated attempts:', diagnostics.get('synthesis_truncations', 0))
         planning = diagnostics.get('planning') or {}
         print('Planner:', planning.get('contract_version'), 'fallback:', planning.get('fallback_used', False))
         decision = result.get('assessment')
         if decision is not None:
             version = diagnostics.get('assessment_contract_version', 'legacy')
-            print('Assessment contract:', version, 'decision:', json.dumps(decision, indent=2))
+            print('Historical assessment contract:', version, 'decision:', json.dumps(decision, indent=2))
         trace = diagnostics.get('evidence_assessment')
         if trace:
-            print('Assessment execution:', json.dumps(trace, indent=2))
+            print('Historical assessment execution:', json.dumps(trace, indent=2))
         for segment in result['segments']:
             print(segment['id'], segment['text'], 'sources:', segment['evidence_ids'])
 

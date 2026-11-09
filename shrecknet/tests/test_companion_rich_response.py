@@ -6,7 +6,6 @@ import pytest
 from pydantic import ValidationError
 from app.integrations.companion.retrieval import evidence
 from app.jobs.companion import rich_response as rich
-from app.jobs.companion.query_contracts import Draft
 from app.schemas.companion_rich_response import RichResponse
 from app.schemas.character_companion import FoundryContext, normalized_turn_request
 from app.integrations.companion.media import local_image
@@ -17,59 +16,14 @@ def atlas():
     return evidence('atlas','fiona','Fiona rules.',title='Fiona',reference={'node_id':'fiona','node_label':'EntityInstance','ontology_id':1},scope={'ontology_id':1})
 
 
-def draft(source):
-    return Draft(segments=[{'id':'s1','kind':'factual','text':'Fiona rules.','claims':['Fiona rules.'],
-        'supports':[{'evidence_id':source['evidence_id'],'quote':source['excerpt'][:100]}]}])
 
 
-def test_only_cited_source_produces_a_block_and_rejection_prunes_it():
-    source=atlas();other=copy.deepcopy(source);other['evidence_id']='other'
-    proposal,checks=rich.compose(draft(source),[source,other],{})
-    assert len(checks)==1
-    assert proposal['blocks'][0]['name']=='Fiona'
-    segments=[{'id':'s1','kind':'factual','text':'Fiona rules.','evidence_ids':[source['evidence_id']]}]
-    rejected=rich.finalize(proposal,segments,set())
-    assert [b['type'] for b in rejected['blocks']]==['narrative']
-    assert rejected['targets']==[]
-    accepted=rich.finalize(proposal,segments,{checks[0].id})
-    assert accepted['blocks'][1]['type']=='entity_card'
-    assert rich.fallback(accepted,segments)=='Fiona rules.' # no duplicate title
 
 
-def test_structured_table_preserves_null_zero_and_row_citations():
-    source=evidence('foundry','Actor.hero','Visible sheet',title='Foundry snapshot · Hero',
-        reference={'foundry_world_id':'table','uuid':'Actor.hero','source_revision':'1'},
-        structured={'fields':[{'label':'HP','value':0},{'label':'Maximum','value':None}]})
-    response=draft(source)
-    response.segments[0].text='HP: 0. Maximum: unknown.'
-    proposal,checks=rich.compose(response,[source],{})
-    table=proposal['blocks'][0]
-    assert table['type']=='table'
-    assert [r['cells'][1]['value'] for r in table['rows']]==[0,None]
-    assert all(c['evidence_ids']==[source['evidence_id']] for r in table['rows'] for c in r['cells'])
-    assert checks[0].supports[0].quote in json.dumps(source['structured_evidence'],ensure_ascii=False)
 
 
-def test_exact_book_excerpt_and_physical_page_are_preserved():
-    source=evidence('shreckworld','book:chunk','An exact passage.',title='Rules',scope={'ontology_id':7},
-        reference={'library_item_id':'book','document_id':'doc','source_sha256':'a'*64,'page_number':12,'page_label':'iv'})
-    proposal,checks=rich.compose(draft(source),[source],{})
-    block=proposal['blocks'][0]
-    assert block['quote']==source['excerpt']
-    assert block['document_ref']['page_number']==12 and block['document_ref']['page_label']=='iv'
-    assert 'iv' in checks[0].text
-    source['reference']['document_id']=None
-    assert rich.compose(draft(source),[source],{})[0]['blocks']==[]
 
 
-def test_schema_rejects_dangling_ids_non_rectangular_tables_and_duplicate_segments():
-    source=atlas();proposal,checks=rich.compose(draft(source),[source],{})
-    result=rich.finalize(proposal,[{'id':'s1','text':'Fiona','evidence_ids':[]}],{checks[0].id})
-    result['blocks'][1]['asset_id']='invented'
-    with pytest.raises(ValidationError):RichResponse.model_validate(result)
-    result['blocks'][1]['asset_id']=None
-    result['blocks'][0]['segment_ids']=['s1','s1']
-    with pytest.raises(ValidationError):RichResponse.model_validate(result)
 
 
 def test_local_media_never_maps_external_urls_traversal_or_svg(tmp_path):
@@ -82,7 +36,7 @@ def test_local_media_never_maps_external_urls_traversal_or_svg(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_verified_rich_reply_matches_event_history_and_snapshot(harness,monkeypatch):
+async def test_cited_rich_reply_matches_event_history_and_snapshot(harness,monkeypatch):
     from app.jobs.companion import query_pipeline as pipeline
     from app.models.character_companion import CompanionTurn,CompanionMessage,CompanionEvent
     from app.repositories.character_companion_repository import CompanionRepository
@@ -92,7 +46,6 @@ async def test_verified_rich_reply_matches_event_history_and_snapshot(harness,mo
     monkeypatch.setattr(pipeline.CompanionRetrieval,'retrieve',retrieval)
     async def no_media(*args):return {}
     monkeypatch.setattr(pipeline.companion_media,'resolve',no_media)
-    h.replies['companion.claim_verification']=lambda tag,data:{'segments':[{'segment_id':s['id'],'supported':True,'reason':'Source supported'} for s in data['draft']['segments']]}
     turn=await h.run()
     assert turn['status']=='completed',turn['error']
     result=turn['result'];assert result['rich_response']['blocks'][1]['name']=='Fiona'
@@ -105,19 +58,6 @@ async def test_verified_rich_reply_matches_event_history_and_snapshot(harness,mo
         assert (await CompanionRepository(session).message_records([message],h.uid+1))[0]['answer_details'] is None
 
 
-@pytest.mark.asyncio
-async def test_rejected_visual_keeps_verified_narrative_without_another_repair(harness,monkeypatch):
-    from app.jobs.companion import query_pipeline as pipeline
-    h=harness;h.settings.companion_rich_response_enabled=True
-    async def retrieval(self,tool,query):return {'tool':tool,'status':'ok','evidence':[atlas()]}
-    async def no_media(*args):return {}
-    monkeypatch.setattr(pipeline.CompanionRetrieval,'retrieve',retrieval)
-    monkeypatch.setattr(pipeline.companion_media,'resolve',no_media)
-    h.replies['companion.claim_verification']=lambda tag,data:{'segments':[{'segment_id':s['id'],'supported':s['id']=='s1','reason':'Unverified image attribution'} for s in data['draft']['segments']]}
-    turn=await h.run()
-    assert turn['result']['text']=='Fiona rules.'
-    assert len(turn['result']['rich_response']['blocks'])==1
-    assert len([tag for tag,_ in h.calls if tag=='companion.grounded_synthesis'])==1
 
 
 def test_foundry_v2_image_negotiation_preserves_v1_idempotency():
@@ -180,7 +120,6 @@ async def test_saved_atlas_asset_rechecks_owner_scope_revision_and_file(harness,
     monkeypatch.setattr(pipeline.companion_media,'atlas_image',image)
     monkeypatch.setattr(assets,'atlas_image',image)
     monkeypatch.setattr(config_store,'get_settings',lambda:h.settings)
-    h.replies['companion.claim_verification']=lambda tag,data:{'segments':[{'segment_id':s['id'],'supported':True,'reason':'Source supported'} for s in data['draft']['segments']]}
     turn=await h.run()
     assert len(turn['result']['rich_response']['assets'])==1
     async with h.sessions() as session:
@@ -247,26 +186,95 @@ async def test_configured_web_images_require_permission_and_page_association(mon
     assert 'include_images' not in requests[1] and 'images' not in rows[0]['reference']
 
 
-def test_table_budget_keeps_every_displayed_value_in_text_fallback():
-    fields=[{'label':f'Field{i}','value':str(i)+'x'*499} for i in range(20)]
-    source=evidence('foundry','Actor.hero','Sheet',title='Hero',reference={'foundry_world_id':'table','uuid':'Actor.hero','source_revision':'1'},structured={'fields':fields})
-    response=draft(source);response.segments[0].text=' '.join(field['label'] for field in fields)
-    proposal,_=rich.compose(response,[source],{})
-    table=proposal['blocks'][0]
-    assert table['type']=='table' and len(table['rows'])<20
-    assert len(table['fallback_text'])<=4000
-    for row in table['rows']:
-        assert row['cells'][1]['value'] in table['fallback_text']
 
 
-def test_block_cannot_survive_a_rejected_dependent_narrative_segment():
-    source=atlas();proposal,checks=rich.compose(draft(source),[source],{})
-    response=rich.finalize(proposal,[{'id':'safe-reaction','text':'I would be careful.','evidence_ids':[]}],{checks[0].id})
-    assert [block['type'] for block in response['blocks']]==['narrative']
 
 
 def test_presentation_enablement_cannot_change_legacy_pipeline_behavior():
     from app.core.config_store import Settings
-    assert not Settings(companion_query_pipeline_version='legacy',companion_rich_response_enabled=True).companion_rich_response_active
+    assert Settings(companion_query_pipeline_version='legacy',companion_rich_response_enabled=True).companion_rich_response_active
     assert Settings(companion_query_pipeline_version='evidence_v2',companion_rich_response_enabled=True).companion_rich_response_active
     assert not Settings(companion_query_pipeline_version='evidence_v2',companion_rich_response_enabled=False).companion_rich_response_active
+
+
+def segments(source, text='Fiona rules.'):
+    return [{'id':'s1','kind':'conversation','text':text,'evidence_ids':[source['evidence_id']]}]
+
+
+def test_only_cited_sources_produce_blocks_without_verifier_claims():
+    source=atlas();other=copy.deepcopy(source);other['evidence_id']='other'
+    result=rich.compose(segments(source),[source,other],{})
+    assert [b['type'] for b in result['blocks']]==['narrative','entity_card']
+    assert result['blocks'][1]['name']=='Fiona' and result['blocks'][1]['description'] is None
+    assert len(result['targets'])==1
+    assert all('claims' not in block and 'supports' not in block for block in result['blocks'])
+    assert len(rich.compose([{'id':'s1','text':'Hello','evidence_ids':[]}],[source],{})['blocks'])==1
+
+
+def test_structured_table_preserves_null_zero_and_actual_field_citations():
+    source=evidence('foundry','Actor.hero','Visible sheet',title='Hero',
+        reference={'foundry_world_id':'table','uuid':'Actor.hero','source_revision':'1'},
+        structured={'fields':[{'label':'HP','value':0},{'label':'Maximum','value':None},
+                              {'label':'Unmentioned','value':99}]})
+    result=rich.compose(segments(source,'HP: 0. Maximum: unknown.'),[source],{})
+    table=result['blocks'][1]
+    assert table['type']=='table'
+    assert [r['cells'][1]['value'] for r in table['rows']]==[0,None]
+    assert all(c['evidence_ids']==[source['evidence_id']] for r in table['rows'] for c in r['cells'])
+
+
+def test_book_navigation_is_preserved_without_automatically_repeating_excerpts():
+    source=evidence('shreckworld','book:chunk','An exact passage.',title='Rules',scope={'ontology_id':7},
+        reference={'library_item_id':'book','document_id':'doc','source_sha256':'a'*64,'page_number':12,'page_label':'iv'})
+    result=rich.compose(segments(source),[source],{})
+    assert len(result['blocks'])==1 and result['targets'][0]['reference']['page_number']==12
+    quoted=rich.compose(segments(source),[source],{},query='Quote the passage')
+    block=quoted['blocks'][1]
+    assert block['quote']==source['excerpt'] and block['document_ref']['page_label']=='iv'
+    source['reference']['document_id']=None
+    assert len(rich.compose(segments(source),[source],{},query='Quote it')['blocks'])==1
+
+
+def test_schema_rejects_dangling_assets_and_duplicate_segments():
+    source=atlas();result=rich.compose(segments(source),[source],{})
+    result['blocks'][1]['asset_id']='invented'
+    with pytest.raises(ValidationError):RichResponse.model_validate(result)
+    result['blocks'][1]['asset_id']=None
+    result['blocks'][0]['segment_ids']=['s1','s1']
+    with pytest.raises(ValidationError):RichResponse.model_validate(result)
+
+
+def test_property_table_budget_preserves_actual_values_and_bounded_fallback():
+    fields=[{'label':f'Field{i}','value':str(i)+'x'*499} for i in range(20)]
+    source=evidence('foundry','Actor.hero','Sheet',title='Hero',reference={'foundry_world_id':'table','uuid':'Actor.hero'},structured={'fields':fields})
+    result=rich.compose(segments(source,' '.join(f['label'] for f in fields)),[source],{})
+    table=result['blocks'][1]
+    assert len(table['rows'])<20 and len(table['fallback_text'])<=4000
+    for row in table['rows']:
+        assert row['cells'][1]['value'] in table['fallback_text']
+
+
+@pytest.mark.asyncio
+async def test_rich_render_failure_keeps_correctly_cited_markdown(harness,monkeypatch):
+    from app.jobs.companion import query_pipeline as pipeline
+    h=harness
+    async def retrieval(self,tool,query):return {'tool':tool,'status':'ok','evidence':[atlas()]}
+    async def no_media(*args):return {}
+    def broken(*args,**kwargs):raise ValueError('optional rendering failed')
+    monkeypatch.setattr(pipeline.CompanionRetrieval,'retrieve',retrieval)
+    monkeypatch.setattr(pipeline.companion_media,'resolve',no_media)
+    monkeypatch.setattr(pipeline.rich_response,'compose',broken)
+    turn=await h.run()
+    assert turn['status']=='completed' and turn['result']['text']=='Fiona rules.'
+    assert len(turn['result']['citations'])==1 and turn['result']['rich_response'] is None
+    assert turn['result']['diagnostics']['composition_outcome']=='text_only'
+    assert len([tag for tag,_ in h.calls if tag=='companion.grounded_synthesis'])==1
+
+
+def test_entity_description_uses_actual_source_field_without_copying_the_answer():
+    source=atlas()
+    source['structured_evidence']={'description':'The ruler of the marsh.'}
+    result=rich.compose(segments(source),[source],{})
+    assert result['blocks'][1]['description']=='The ruler of the marsh.'
+    duplicate=rich.compose(segments(source,'The ruler of the marsh.'),[source],{})
+    assert duplicate['blocks'][1]['description'] is None

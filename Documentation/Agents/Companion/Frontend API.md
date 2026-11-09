@@ -50,7 +50,7 @@ A minimal turn is `{"text":"Hello","selection_version":1}`. Optional fields are
 Tools are `{"allowed":["atlas","character_memory"]}`; `allowed:null` permits
 configured sources. The legacy `web` field (`disabled`, `allow`, `require`) is
 accepted for backward compatibility but no longer gates retrieval: web search is
-offered on every turn whenever the backend has a provider configured.
+available whenever configured and permitted by `tools.allowed`; the router selects whether to use it.
 Unavailable sources remain explicit retrieval outcomes. Retry uses a new idempotency key and
 references the prior failed/cancelled/interrupted turn; never resubmit on reconnect.
 Server startup interrupts unfinished turns with retryable error code
@@ -74,8 +74,8 @@ model targets and provider usage when reported; cost may be null.
 New answers contain one `conversation` segment for the entire response; its
 `evidence_ids` identify supplied sources referenced by the model, not verified
 claim-level support. Older answers may retain other segment kinds. Memory evidence
-is subjective. `coverage` is `unknown` unless tool failure or partial Foundry
-context makes it `partial`. User message manifests include private `user_attachment` references with an
+is subjective. `coverage` is `unknown` unless tool failure, partial source readiness/Foundry
+context or rejected citation markers make it `partial`. User message manifests include private `user_attachment` references with an
 `attachment_id` and content hash. Load their bytes only through the authenticated
 attachment content route; do not construct public media URLs. Chronicle references
 carry `section_id` (`note:revision:reply-or-zero:Unicode-offset`) for revision-aware
@@ -106,18 +106,15 @@ Retrieval partial failures appear as diagnostics/coverage, not fabricated citati
 
 ## Provider web-search option
 
-Model targets include `web_search_enabled`, default `false`. Enabling it on the
-synthesis target permits OpenRouter retrieval without a separate JSON search URL.
-Web search is available on every turn when a provider is configured; the legacy
-per-turn `tools.web` value is ignored. Provider source excerpts enter the existing
-evidence/source events and final citation validation. Web retrieval receives a bounded, source-specific public query (at most 500
-characters). Automatic recovery uses a prepared public query or the safe public
-query renderer, never a raw failed local query, private history or Foundry content.
-Provider search is disabled on routing, interim, image interpretation, synthesis
-and rapport calls. See
-[shared configuration](../../Architecture/LLM_WEB_SEARCH.md) for capability
-discovery, unsupported models, budgets, and rollout.
-
+Only `model_companion_web_search` may enable provider-managed Web search.
+A configured JSON search URL takes precedence. The router can formulate any query;
+there is no public-query catalog or private-information filter. `tools.allowed`
+restricts all retrieval, including Web; `allowed:[]` disables every tool. The legacy
+`tools.web` field is accepted but ignored for tool selection. Query strings are
+bounded to 500 characters, with at most two Web calls in one parallel tool round.
+Provider source excerpts become evidence; generated summaries do not. Search is
+disabled on routing, image interpretation, synthesis and rapport targets.
+See [shared configuration](../../Architecture/LLM_WEB_SEARCH.md).
 
 ## Chat session limits and context
 
@@ -326,11 +323,10 @@ older clients keep using `manifest` and older replies keep their source cards.
 
 ## Evidence v2
 
-Existing endpoints and coarse `TurnRead.status` values are preserved. V2 is the
-default for new/missing pipeline settings; explicit saved selections are retained
-and remain editable through the administrator configuration API; user capabilities add
-`query_pipeline_version` and `general_knowledge_opt_in` (whether per-turn fallback
-can be requested). New independently configurable roles appear in `model_roles`.
+Existing endpoints and coarse `TurnRead.status` values are preserved. The Markdown
+pipeline is the sole execution path; retired pipeline selectors do not select a
+legacy runner. User capabilities retain general-knowledge opt-in discovery and
+model role configuration. Evidence/interim roles remain compatibility settings.
 
 `POST /users/me/character-companion/chats/{chat_id}/turns` accepts additive fields:
 
@@ -369,34 +365,33 @@ Turn snapshots add `stage`, validated `execution_context` and `commentary` recor
 SSE keeps version 1 envelopes and adds:
 
 - `pipeline.status`: `stage` plus optional `tool`/`status`, for resolution,
-  planning, update/replanning, retrieval, assessment, recovery, synthesis and
-  verification. These are short progress labels, never model reasoning.
+  planning, scope updates, retrieval, synthesis, media resolution and final
+  source/citation validation. These are short progress labels, never model reasoning.
 - `message.committed`: a persisted commentary record including stable message ID.
   Refresh owner-scoped message queries; deduplicate repeated events by message ID.
 - `ontology.updated`: `previous` and `ontology` metadata after a validated switch.
   Refresh chat scope and display its active name.
 
-Commentary survives event retention and failed/cancelled turns. V2 buffers factual
-drafts until verification; it does not emit unverified `response.delta` content.
-`response.final` remains the authoritative final reply. Results add `outcome`,
-assessment, structured segments, rejected-claim reasons and safe diagnostics;
-per-call details add ID, need IDs, recovery flag and optional `source_trace`
-retaining ShreckWorld coverage, need groups and child recovery diagnostics. Segments carry evidence links;
-coverage is partial unless all needs and sources support completion. General
-knowledge segments require both policy and turn permission and have an explicit
-unverified label. Empty searches never prove a rule absent.
+Commentary survives event retention and failed/cancelled turns. At most one static
+acknowledgement is generated; positive `companion_interim_max_messages` enables it.
+The pipeline buffers Markdown privately until required access checks; no failed
+truncation attempt is emitted as `response.delta`. `response.final` is authoritative.
+New results have `diagnostics.version="markdown_v3"`, one `conversation` segment,
+`assessment:null` and `rejected_claims:[]` for historical compatibility. Stored older
+assessment/segment payloads remain readable. Citation links are answer-level
+attribution and do not prove semantic correctness. Coverage is retrieval diagnostics,
+not a sufficiency certificate. General knowledge requires policy plus turn opt-in.
 
-Back up SQL and run startup migration before new workers; deploy compatible
-clients together: v2 activates automatically when the pipeline setting is absent.
-Roll back using a compatibility release that filters
-commentary, retaining additive schema and history. See [pipeline operations](Companion.md#evidence-first-query-pipeline).
+No additional schema migration is required. Drain turns and deploy API/workers with
+matching prompts/contracts. Rollback must retain historical result readers and all
+new conversation/rapport writes.
 
 ## Rich response v1
 
 `GET /users/me/character-companion/capabilities` adds
 `rich_response: {versions:[1], block_types:["narrative","image","gallery",
 "entity_card","table","book_excerpt"], enabled:boolean}`. `enabled` requires both
-`companion_rich_response_enabled` and `evidence_v2`. Capability absence means
+`companion_rich_response_enabled` in the sole runtime pipeline. Capability absence means
 ordinary text support. Existing admission payloads and idempotency keys remain
 unchanged; presentation is server configuration, not a client access grant.
 
@@ -404,14 +399,15 @@ Completed turn `result`, `response.final` and final-message `answer_details` add
 nullable `rich_response`. The version-one envelope contains `version`, ordered
 `blocks`, `assets` and typed `targets`. User/commentary messages have no envelope.
 The existing `text`, `content`, `segments`, `evidence`, `citations`, coverage and
-warnings remain valid. Saved text includes unique table/excerpt facts, making
-unknown versions and malformed optional presentation safe to render as text.
-SSE/public output remains buffered until narrative and block verification pass.
-`pipeline.status` adds `resolving_media` and `composing_response`; coarse turn
+warnings remain valid. Saved text is complete readable Markdown; optional cards
+do not append a duplicate narrative or long excerpt appendix. Unknown versions
+and malformed presentation fall back to text. Output stays private until required
+source/access checks pass; no model verifier runs.
+`pipeline.status` includes `resolving_media`; coarse turn
 statuses and version-one SSE envelopes do not change.
 
 Every block has `id`, `type`, `evidence_ids`, nullable `target_id`. Narrative uses
-ordered `segment_ids`, referencing accepted segments exactly once. Other blocks
+ordered `segment_ids`, referencing the narrative segment exactly once. Other blocks
 have `fallback_text` and type-specific fields:
 
 | Type | Fields |
@@ -469,95 +465,52 @@ kinds, scope rules and immutable-retry guarantees remain unchanged.
 
 ## Retrieval execution and deadlines
 
-Retrieval depth and memory relevance are server-planned internal options; clients
-continue to submit ordinary turns. Atlas reuses executable Companion plans and
-ShreckWorld defaults to single-question evidence retrieval, retaining explicit deep
-retrieval. Identity/traits shape all replies; personal-memory search is conditional.
+The router selects queries and sources, including memory and Web; there is no
+separate memory relevance or evidence sufficiency call. Atlas/ShreckWorld retain
+light/deep internal adapter contracts. Normal requests have at most three tasks,
+nine executable calls and two Web calls, executed in one concurrent round.
+`tools.allowed` applies to all sources. Empty results are distinct from unavailable
+and timed-out sources, and do not invalidate successful siblings.
 
-Configured Web runs only after a valid insufficient internal assessment.
-There is one optional batch (at most two queries/five total Web results), no
-pre-assessment Web and no post-Web reassessment. Private-only gaps can return no
-public queries. See the [current pipeline](./Companion.md#evidence-first-query-pipeline).
+`result.tool_calls[]` retains `retrieval_depth`, `timeout_s`, `timeout_layer`,
+source readiness, source attention, need IDs and coverage traces. New calls have
+`recovery:false`; old recovery records remain readable. Omitted projection records
+remain in `result.evidence`, with reasons in `diagnostics.evidence_omissions`.
+Per-call defaults remain ten minutes and the retrieval window 615 seconds; total
+saved turn limits remain unchanged. Admission still returns 202 immediately.
 
-`result.tool_calls[]` and stored answer details add optional `retrieval_depth`
-(`light`/`deep`, default `light` for old records), `timeout_s` (effective call or
-round limit), and `timeout_layer` (`tool`, `http`, `retrieval_round`, or null).
-Existing status values stay unchanged. `result.diagnostics.deadlines` records the
-settings snapshot; recovery diagnostics include `recovery_trigger`,
-`recovery_disabled`, and `web_recovery_blocked` (`privacy_blocked` with a
-count, or `no_public_queries`). The active trigger is `assessed_evidence_gap`. These diagnostics do not contain model reasoning or credentials.
+<a id="assessment-recovery-and-execution-diagnostics"></a>
 
-Per-call limits now default to ten minutes; sequential turn budgets are longer.
-Admission still returns 202 immediately. Keep using SSE or snapshots, allow
-reconnection, and cancel through the existing cancellation endpoint. Do not give
-an HTTP admission request the entire turn budget. Expired sessions and revoked
-sources remain enforced. Existing clients can ignore the additive diagnostics.
+## Markdown generation and execution diagnostics
 
-## Assessment recovery and execution diagnostics
+`result.text` is readable Markdown with source markers removed. Aliases are resolved
+only against the exact synthesis evidence projection. Unknown/malformed markers
+produce no links, add warnings and make coverage partial. `citation_validation`
+records `valid`/`unknown` marker counts and a `malformed` Boolean. These counts also
+appear in metrics and owner-only `answer_details.diagnostics`; they measure ID
+integrity, not factual support. The backend does not extract or verify claims.
 
-Assessment preserves full admitted source references while selecting at most
-eight compact excerpts. One retry uses identical evidence, needs and outcomes,
-waiting at most 60 seconds within the assessment/turn deadlines. If both attempts
-fail, no Web search runs: grounded synthesis still attempts a supported answer
-with explicit uncertainty, followed by normal claim verification. If that fails,
-backend-rendered `extractive` segments quote sources with `claims=[]`,
-`outcome="limited"` and `coverage="partial"`. Revocation/cancellation still prevent
-publication. No unverified draft is streamed.
+Length termination retries once with identical evidence and shorter-answer guidance.
+The final attempt replaces the private failed attempt. Persistent generation failure
+sets the turn to `failed` with a retryable safe code: `synthesis_truncated`,
+`synthesis_generation_failed`, `empty_synthesis`, `invalid_synthesis_response`,
+`synthesis_output_too_large` or `synthesis_context_budget_exceeded`. Required source
+changes/access/validation failures use `source_changed`, `source_access_denied` or
+`source_validation_failed` and never
+publish the draft. Optional rendering/media errors preserve cited text. Missing
+usable evidence instead permits an honest completed `outcome="limited"` answer.
 
-New results expose `diagnostics.assessment_contract_version="sufficiency_v1"`.
-`result.assessment` is null or exactly:
-
-```json
-{"sufficient": false, "web_queries": ["RuneQuest Telmori published rules"]}
-```
-
-Queries are at most two trimmed, nonblank strings of 1–500 characters. A sufficient
-decision discards queries. `false` with `[]` is valid. This is the pre-Web decision;
-Web success does not change it. Recovery/outage answers remain `coverage="partial"`.
-Complete coverage additionally requires a sufficient assessment, selected evidence,
-verified final claims and no limitations/readiness/omission failures. Historical
-per-need assessment dictionaries are preserved as stored; clients reading raw turn
-results must handle both shapes, using the diagnostic version for new records.
-Endpoint paths, requests and typed Answer Breakdown fields are unchanged.
-
-`result.diagnostics.evidence_assessment`, turn metrics and final-message
-`answer_details.diagnostics` include an `attempts` array with `stage`,
-`started_at`, `ended_at`, `elapsed_ms`, `input_evidence_count`, `input_source_count`,
-`compact_prompt_characters`, `compact_prompt_bytes`, `compact_prompt_tokens`,
-`model`, `configured_deadline_s`, `effective_deadline_s`,
-`structured_response_status`, `error_type` when failed, `validation_failures`, and
-`fallback_used`. Status is `valid`, `timed_out`, `invalid_structured_output`,
-`failed` or `cancelled` after a completed attempt.
-Summary fields identify fallback mode, retained records/unique sources, and
-counts actually used for synthesis/extraction. Diagnostics never contain raw
-provider error text or the private model draft.
-
-`diagnostics.evidence_omissions` records why a source record did not fit collection,
-assessment/synthesis projection or extractive output. Full references/geometry/navigation remain
-in retained evidence for source navigation and revalidation, rather than entering
-every model request. Existing status/event enums, source lists and Answer Breakdown
-remain compatible; diagnostics and readiness fields are additive. Only final
-assistant messages expose answer details, under the existing ownership checks.
-
+Metrics include model-stage duration/attempt/finish reason/usage, tools and statuses,
+selected tools, source-validation time and response characters/words. No raw provider
+error text is returned. Source access is revalidated before durable publication;
+source links and assets retain their existing revision-aware access checks.
 
 ## Simple research planning compatibility
 
-Routes and turn admission payloads are unchanged. Research-planning failures now
-execute a minimal authorized search instead of returning a technical clarification.
-World switches resolve before research planning; page conflicts still require
-confirmation and `clarification_id` retains its stale-request checks.
-
-Additive owner-only diagnostics include `research_plan` (`mode`, semantic `tasks`),
-`planning.contract_version="simple_research_v1"`, rejected sources with reasons,
-merged task count, fallback/error type and long-query segment/defer counts.
-`diagnostics.plan` remains the compiled internal plan with generated IDs and call
-options; clients must not submit it as a planning-model contract. Initial calls
-can number nine, all internal. Existing `tool_calls`, source references, segments
-and Answer Breakdown remain compatible. The assessment payload transition is
-described above; new assessments do not include `follow_up_tasks` or
-`follow_up_calls`. Memory-gate failure and unsafe public-query decisions remain
-observable without exposing model reasoning.
-
-No database schema change or additional timeout migration is needed. Drain active
-turns and restart API/workers together with matching prompts, schemas and compiler.
-Rollback those components together; previously saved answers remain readable.
+Routes, admission payloads, persisted scope/pending clarification and idempotency
+remain unchanged. Diagnostics expose `research_plan` (`mode`, `tasks` with `query`
+and `sources`, `clarification_questions`),
+`planning.contract_version="simple_research_v2"`, rejected source reasons and
+fallback/error/merge counts. `diagnostics.plan` is backend execution data and must
+not be submitted by clients as a router contract. Technical router failure uses
+bounded allowed internal search; it does not automatically call Web.

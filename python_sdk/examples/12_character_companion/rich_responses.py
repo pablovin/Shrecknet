@@ -1,4 +1,4 @@
-"""Print verified rich blocks from a saved turn; use environment-held credentials.
+"""Print cited-source rich blocks from a saved turn; use environment-held credentials.
 
 SHRECKNET_URL=http://localhost:8100 SHRECKNET_TOKEN=... COMPANION_TURN_ID=... \
     python examples/12_character_companion/rich_responses.py

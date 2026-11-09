@@ -37,19 +37,21 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## Character Companion
 
+- [Companion conversational simplification plan](./Agents/Companion/Conversational%20Simplification%20Plan.md) — minimal routing, parallel tools, Markdown synthesis, deterministic citations/rich rendering, unrestricted router-generated Web queries and regression-led rollout
+
 - [Foundry contextual Companion chat plan](./Deployment/FOUNDRY_CONTEXTUAL_COMPANION_PLAN.md) — implementation/design record for system-independent chat, table/World grounding, document attachments and remaining acceptance gates
 
-- [Character Companion](./Agents/Companion/Companion.md) — implemented behavior, compact evidence assessment/extractive recovery, ownership, deployment, privacy and remaining acceptance gates
-- [Companion query pipeline redesign plan](./Agents/Companion/Query%20Pipeline%20Plan.md) — design and rollout acceptance for ontology resolution, LLM source planning, dedicated web model, evidence verification, permanent commentary and frontend settings
-- [Companion simple research planner plan](./Agents/Companion/Simple%20Research%20Planner%20Plan.md) — implemented minimal question/source contract, deterministic compiler, scope/state ownership, technical fallback and exceptional memory/Web policies
-- [Companion assessment and Web recovery plan](./Agents/Companion/Assessment%20Recovery%20Plan.md) — proposed two-field assessment, internal-first retrieval, need-aware excerpt selection and one bounded Web recovery batch
-- [Companion retrieval execution plan](./Agents/Companion/Retrieval%20Execution%20Plan.md) — implemented design record for Atlas plan reuse, light/deep book retrieval, relevant personal memory, automatic web recovery and ten-minute call budgets
-- [Companion rich response plan](./Agents/Companion/Rich%20Response%20Plan.md) — delivered verified narrative, media, entity cards, tables and book excerpts shared by ShreckOS and Foundry, plus rollout acceptance gates
+- [Character Companion](./Agents/Companion/Companion.md) — current Markdown synthesis, parallel tools, deterministic citations/rich rendering, ownership, deployment, privacy and remaining acceptance gates
+- [Companion query pipeline redesign plan](./Agents/Companion/Query%20Pipeline%20Plan.md) — historical assessment/verification redesign; superseded by conversational simplification
+- [Companion simple research planner plan](./Agents/Companion/Simple%20Research%20Planner%20Plan.md) — historical question/source planner; superseded by query/source routing with normal Web and memory
+- [Companion assessment and Web recovery plan](./Agents/Companion/Assessment%20Recovery%20Plan.md) — historical assessment/recovery design; removed from normal execution
+- [Companion retrieval execution plan](./Agents/Companion/Retrieval%20Execution%20Plan.md) — historical retrieval design; Atlas/book adapters and timeouts retained, assessment recovery superseded
+- [Companion rich response plan](./Agents/Companion/Rich%20Response%20Plan.md) — historical rich-envelope design; current composition uses citations/metadata without a model verifier
 
-- [Unified Character Companion backend plan](./Agents/Companion/Companion%20Backend%20Plan.md) — proposed cross-repository reuse audit, architecture, rapport/evidence contracts, migration, and testable delivery milestones; design baseline and acceptance checklist
+- [Unified Character Companion backend plan](./Agents/Companion/Companion%20Backend%20Plan.md) — historical cross-repository backend/migration design; query stages superseded by conversational simplification
 - [Character Companion validation](./Agents/Companion/Validation.md) — repeatable checks, verified coverage and deployment acceptance gates
 - [Character Companion frontend API](./Agents/Companion/Frontend%20API.md) — selection, chat, private image, rapport, recovery/cancellation, and SSE contracts
-- [Companion Agent model configuration](./Agents/Companion/Model%20Configuration.md) — six independent model roles, frontend configuration/status integration, SDK scope, automatic timeout migrations and rollout
+- [Companion Agent model configuration](./Agents/Companion/Model%20Configuration.md) — four active model roles, two compatibility roles, token/time budgets and rollout
 
 ## Elder
 

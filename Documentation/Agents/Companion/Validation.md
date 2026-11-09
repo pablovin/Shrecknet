@@ -1,5 +1,76 @@
 # Character Companion validation and deployment acceptance
 
+## Conversational simplification verification — 2026-11-09
+
+The current runtime is documented in [Companion](./Companion.md). Older sections
+below record historical pipeline versions; their assessment/verification behavior
+and test filenames do not describe current execution. Assessment/recovery tests
+have migrated to `test_companion_generation.py` and
+`test_companion_evidence_selection.py`.
+
+Checks use isolated writable configuration/media roots and provider/service doubles:
+
+```bash
+# From shrecknet/
+SHRECKNET_MEDIA_ROOT=/tmp/shrecknet-companion-test-media \
+SHRECKNET_DATA_DIR=/tmp/shrecknet-companion-test-data \
+SHRECKNET_CONFIG_SEED_FILE=/tmp/shrecknet-no-seed.json \
+../.venv/bin/python -m pytest tests/test_companion*.py \
+  tests/test_character_companion.py tests/test_character_companion_import.py \
+  tests/test_character_agent_model_config.py tests/test_llm_status_operational.py \
+  tests/test_celery_startup_cleanup.py tests/test_installation.py --disable-warnings
+
+# From python_sdk/
+PYTHONPATH=. ../.venv/bin/python -m pytest --disable-warnings
+
+# From integrations/foundry/shrecknet-foundry/
+node --test tests/*.test.mjs
+```
+
+The affected backend run initially passed 258 checks. The SDK package passed 74
+checks; Foundry passed 96, including safe Markdown rendering of headings/lists/tables
+and inert HTML, model links and images. Later checks also cover source-field
+entity descriptions, internal-only rules, subjective memory, inactive model roles,
+marker-only/multiline malformed output and image-assisted Web queries with optional
+interpretation failure. The final affected backend run passed **266 tests**
+(three existing dependency/model-validator warnings). The final SDK Companion
+recheck passed all 11 selected tests. Python compilation, `git diff --check` and
+29 added relative documentation links passed; pre-existing broken index links
+were excluded from that added-link check.
+
+The full Shrecknet command `../.venv/bin/python -m pytest --disable-warnings
+--maxfail=8` completed with 1,205 passes and four failures. All four reproduce on
+unchanged HEAD in an isolated `git archive` checkout:
+
+- Three parameterizations of
+  `test_agent_model_defaults.py::test_fresh_model_defaults_and_saved_assignment_precedence`
+  expect 23 model keys while the baseline has 25.
+- `test_architect_scene_entity_discovery.py::test_run_milestone_proposal_phase_keeps_all_scenes_and_coerces_boundaries`
+  expects at most two description sentences while the baseline retains three.
+
+These unrelated baseline failures were preserved. The first local collection
+attempt failed because saved deployment media pointed into unwritable `/app`;
+the isolated paths above resolved it. No live configuration database was edited.
+
+Regression coverage includes router-selected unrestricted Web, allowed-tool limits,
+search/chat/clarify contracts, concurrent tool start, retained successful siblings,
+need-balanced whole-record selection, frozen citation alias mapping, malformed and
+unknown markers, one truncation retry and typed failure, source revocation before
+publication, optional media/render failure, persistent scope/history, cancellation,
+exactly-once rapport delivery and historical SDK/envelope compatibility. No removed
+assessment, memory-vote, verifier or generated-interim model calls execute.
+
+No live provider benchmark, human semantic-grounding evaluation, ShreckOS browser
+journey or real Foundry table acceptance was run. The Telmori regression verifies
+pipeline behavior with controlled excerpts; it does not certify RuneQuest mechanics.
+The public API/rich schema remains compatible and no SQL migration/re-embedding is
+introduced. Drain active turns and restart matching API/workers. Preserve saved
+history/configuration and use compatible binaries for rollback. Assessment/interim
+model keys remain inactive compatibility settings.
+
+## Historical verification records
+
+
 ## Repeatable package checks
 
 Run Python checks from each package directory so its configured import path applies.

@@ -25,6 +25,8 @@ Repeated evaluation failures settle as audited no-ops after the configured attem
 Deleting a chat preserves pair scores, removes its private content asynchronously,
 and settles outstanding evaluations without using deleted conversation content.
 
+<a id="evidence-first-query-pipeline"></a>
+
 ## Execution and ownership
 
 `character_companion` routes map HTTP to `CharacterCompanionService` and
@@ -32,231 +34,107 @@ and settles outstanding evaluations without using deleted conversation content.
 private attachment metadata, audit records, idempotency records and a durable outbox.
 Neo4j remains the authority for CharacterAgent identity and memory.
 
-The historical legacy worker flow (no active runtime selector) was:
+The sole runtime path is:
 
-1. Recheck originating user/session and canonical identity; load pair scores and
-   up to twelve committed messages from this chat.
-2. Stage 1 deterministic routing, optionally assisted by the routing model for
-   ambiguous requests. Optional routing failure falls back to conversation.
-3. For image turns requiring retrieval, interpret the image into bounded visible
-   observations and search terms. Interpretation is not published as an answer.
-4. Retrieve allowed sources concurrently with independent tool timeouts and an
-   overall deadline. When the synthesis target enables provider search,
-   `WEB_RETRIEVAL` receives at most the first 500 characters of the submitted
-   question, without added Foundry names or image-derived terms; provider citations
-   with source excerpts become external-web evidence. Its generated summary is not evidence.
-   An optional interim model can react concurrently using only
-   identity and the question. Its output is provisional and excluded from rapport.
-   Provider-managed search is disabled for routing, interim reactions and rapport
-   evaluation, even when enabled on those model targets.
-5. Stage 2 streams one embodied prose answer with provider search disabled;
-   image interpretation also disables provider search. Text deltas are provisional.
-   The backend removes optional inline source markers, builds the response envelope
-   and accepts only markers for supplied evidence. It rechecks current source
-   access/revisions, the originating session and character availability before commit.
-6. Commit the delivered user/assistant exchange, final event and rapport outbox in
-   one transaction. Stage 3 evaluates rapport separately with version/generation
-   checks and an audit trail.
+`User → Ontology resolution → LLM router → Parallel tools → Markdown synthesis → Deterministic rich rendering/access validation → Durable response → Asynchronous rapport`
 
-Prompt contracts live beside the job in `jobs/companion/prompts.py`. Only Stage 2
-produces final public output. Deterministic marker resolution enforces reference integrity; it does not prove
-semantic grounding, claim classification or character fidelity.
+1. Revalidate the originating user/session and canonical identity; load effective
+   traits, pair rapport and bounded completed conversation history.
+2. Reuse an explicit/saved validated ontology. `SCOPE_INTENT` detects switches and
+   pending continuation; missing scope uses `ONTOLOGY`. Resolve page conflicts and
+   persist authorized scope updates before retrieval. Character identity never
+   substitutes for an unresolved conversational world.
+3. `PLANNER` returns `mode` (`search`, `chat`, `clarify`), `tasks` and
+   `clarification_questions`. Each task has `query` (1–500 characters) and one to
+   five `sources`: `atlas`, `shreckworld`, `chronicle`, `character_memory`, `web`.
+   Search requires one to three tasks and no questions; chat requires both lists
+   empty; clarify requires one to three questions and no tasks. The backend merges
+   duplicate query/source pairs, assigns need/call IDs and admits at most nine
+   calls, including at most two Web calls. The router alone decides memory relevance.
+4. Intersect tool selections with `tools.allowed`, configured availability and
+   validated scope. `allowed:[]` executes no retrieval; null permits configured
+   sources. The legacy `tools.web` value remains accepted but does not gate Web.
+   Web is an ordinary router-selected tool and accepts any query, with no public
+   query catalog, privacy filter or separate semantic validation call. Prefer
+   internal indexed facts/rules and personal memory when appropriate; Web is not
+   automatic for every question. Technical router failure searches permitted
+   Atlas/ShreckWorld using the original resolved goal, without inventing a
+   clarification or automatically sending that goal to Web.
+5. Optional image interpretation supplies bounded visible observations and search
+   terms to selected tools, including Web. Interpretation failure preserves the
+   attached images for multimodal synthesis. Selected adapters run concurrently with independent sessions/deadlines;
+   failed, unavailable and empty sources do not cancel successful siblings.
+   Atlas reuses Elder retrieval without Elder synthesis; ordinary light queries
+   need no second planner. ShreckWorld uses single-question evidence retrieval;
+   internal deep/supplied-plan adapter contracts remain supported. Chronicle needs
+   explicit scope. Character memory is selected-character subjective perspective.
+   Web uses actual provider excerpts, never its generated summary as evidence.
+6. Aggregate evidence and select whole compact records across needs and sources.
+   Synthesis receives at most twenty records within the configured token budget,
+   identity/psychology/traits, rapport, question/history and retrieval outcomes.
+   Assign numeric citation aliases to this exact selected order and freeze the map.
+   Full admitted evidence and provenance remain retained for diagnostics/navigation.
+7. `SYNTHESIZE` returns plain Markdown with `[[source:N]]` references. It answers
+   supported parts directly, acknowledges missing/contradictory information and
+   distinguishes campaign canon, published editions, external sources and subjective
+   memories. There is no evidence assessment, sufficiency vote, claim extraction,
+   structured draft, semantic verifier or repair loop. Unknown/malformed citations
+   are rejected as links and reported; identifier validity does not prove truth.
+   Default length guidance is 50–150 words for simple facts, 150–300 for normal
+   explanations, longer for mechanics or requested exhaustive detail.
+8. Detect length termination from provider metadata and retry once with
+   `SYNTHESIZE_SHORT`, identical evidence/aliases and a shorter-answer instruction.
+   A failed second attempt is a typed generation error, never missing evidence.
+   No private generation attempt is streamed or concatenated with another attempt.
+9. Resolve citations and compose optional rich blocks deterministically from cited
+   metadata; media/rendering failure preserves cited Markdown. Revalidate identity,
+   session, all admitted source access/revisions and attachment availability before
+   committing the final exchange/event and rapport outbox atomically under its lease.
+10. Evaluate rapport asynchronously in completion order; operational clarification
+    and scope-only turns settle without score changes.
 
-The final result has one `conversation` segment representing the whole answer;
-its cited evidence is model-declared support for the answer, not a verified
-claim-by-claim attribution. Unknown complete source markers are removed and
-reported in `warnings`; missing markers do not fail an answer. `coverage` is
-`unknown` unless a retrieval failure or partial Foundry snapshot makes it
-`partial`. Empty output, provider errors, cancellation and authorization or
-source revalidation failures can still prevent completion.
+Prompt definitions and self-contained contracts live beside the job in
+`query_prompts.py` and `prompts.py`, in execution order. Scope/routing/image/rapport
+outputs remain structured; synthesis is Markdown. No competing runtime selector
+exists. Historical results retain their original segments and assessment data.
+New answers have one `conversation` segment and `result.assessment=null`.
 
-Atlas uses the shared Elder retrieval executor without Elder synthesis. Character
-memory uses the shared CharacterAgent ranking service and only the selected
-character's perspectives. Memory is subjective evidence, not objective scene truth.
-ShreckWorld uses evidence-only book retrieval. Chronicle search filters authorized
-notes before ranking and uses text offsets/revision references; ShreckOS opens the
-referenced body/reply passage and warns when the revision has changed. Web search
-uses a configured provider; it does not fetch arbitrary result pages. The question
-itself is not automatically redacted or converted to a public-only query, so users
-should not include private information in questions because web search may be
-considered on any turn. The router still decides whether a turn actually calls web.
-Evidence is capped at twenty records and the configured estimated token budget.
-The final context also has a bounded token estimate; model-specific context-window
-fit and image token costs still require deployment validation.
+`coverage` describes retrieval/context limitations, never semantic verification.
+It is normally `unknown`, or `partial` for failed tools, partial source readiness,
+partial Foundry context or rejected citation markers. Empty results from one tool
+and context omissions never force all useful evidence to be refused. With no usable
+model evidence, a research answer is `outcome="limited"`; the model describes what
+is missing without inventing rules. General knowledge remains disabled unless both
+administrator `labeled_opt_in` policy and per-turn opt-in permit explicitly labeled
+material. Identity and social conversation do not require retrieval.
 
-ShreckWorld reports the number of sources searched, not indexed, and requiring
-reindexing for the active embedding fingerprint. The Companion preserves those
-counts and passes partial-search outcomes to synthesis; compatible passages can
-still be used. Index readiness is independent of call success: returned passages
-keep `status="ok"`; no passages produce `status="empty"`, with partial-readiness
-diagnostics when requested indexes are missing. Service failures remain
-`unavailable`/`timed_out`. An incomplete index is never evidence of absence. Reindex affected sources with ShreckWorld's existing indexing workflow.
-Rules evidence is not reused from the prior turn because the active fingerprint
-or source availability may have changed.
+## Pipeline diagnostics and configuration
 
-## Evidence-first query pipeline
+`pipeline.status` events report ontology resolution, planning, scope updates,
+retrieval, synthesis, optional media resolution and final validation. At most one
+static acknowledgement is persisted; positive `companion_interim_max_messages`
+values enable it and zero disables it. No generated interim model runs.
 
-The evidence-first pipeline is the sole runtime path. The retired
-`companion_query_pipeline_version` and optional-routing flags are not configuration
-controls; selecting a legacy value does not activate another runner.
-Six independently configured model roles
-cover routing, dedicated web search, evidence review, synthesis, commentary and
-rapport. All inherit the repository's OpenRouter DeepSeek Flash model default;
-only the dedicated web target defaults to `web_search_enabled=true`.
+`diagnostics.version="markdown_v3"` identifies new results. Diagnostics preserve
+compiled plans, rejected sources, scope resolution, context omissions, truncation
+counts and citation validity. Metrics record selected tools, individual tool
+statuses/times, model-stage durations/usage, validation time and response length.
+Safe terminal codes distinguish generation failures/truncation/empty output,
+context overflow and source changes/validation failure. Provider error contents,
+private source text and model drafts are excluded from ordinary error logs.
 
-1. **Scope fast path.** Validate an explicit page/Foundry ontology or reuse the
-   chat's saved ontology, skipping the ontology-inference call. Missing scope is
-   inferred using the routing model and bounded authenticated ontology discovery.
-   Unresolved scope produces a direct question by world name. The character's
-   ontology is never substituted for an unresolved conversational world.
-2. **Scope and continuation decisions.** For an existing world, the routing
-   model's separate `SCOPE_INTENT` stage distinguishes a requested switch from a
-   comparison and a pending clarification answer from a new topic. Missing-world
-   resolution carries the same continuation decision. Only relevant answers resume
-   the saved goal; new topics abandon it. The backend validates world names,
-   clarifies page conflicts, clears incompatible source bindings and persists an
-   authorized override before research planning. Identity and rapport do not change.
-3. **Simple research planning and compilation.** `SimpleCompanionPlan` exposes only
-   `mode` (`search`/`chat`) and up to three `tasks`, each with a nonblank question
-   of at most 500 characters and one to three available internal `sources`. Web
-   is excluded from the planner schema and rejected by the compiler. Search requires
-   tasks; chat requires an empty list. `planning.py` merges repeated questions and
-   sources, generates stable need/call IDs, filters unavailable sources and assigns
-   light retrieval. Up to nine initial calls honor all three-by-three requests.
-   Tasks losing their sources use permitted local alternatives. Technical planning
-   failures search the original resolved goal using authorized ShreckWorld/Atlas;
-   they never manufacture clarification or factual chat. Long fallback questions
-   retain their full goal and split into deterministic 4,000-character queries,
-   with deferred segments audited. Without local tools, the unmet research goal
-   still reaches assessment; Web cannot run before a valid insufficient decision.
-4. **Independent parallel retrieval.** Atlas executes a supplied, scoped Elder
-   `RetrievalPlan` or deterministically converts the Companion's individual query
-   into one `hybrid_search` step. Ordinary calls make no second planning-model
-   request. An explicit deep Atlas call without a reusable plan can invoke Elder
-   planning. Invalid supplied plans fail without replanning. ShreckWorld defaults
-   to `retrieval_strategy="single"`, `mode="evidence"` for individual questions;
-   explicit deep calls retain `planned` retrieval and its child coverage trace.
-   Neither source produces a second public answer. The dedicated web model uses
-   gateway search and actual provider excerpts; generated summaries are not
-   evidence. JSON web search remains an explicitly configured alternative.
-   Failures/timeouts preserve successful siblings. Source scope, revision checks,
-   grants and evidence budgets remain enforced; earlier-turn evidence is not reused.
-5. **Assessment and recovery.** One assessment reasons over at most eight
-   need-balanced internal excerpts. `EvidenceAssessment` returns exactly
-   `{"sufficient":false,"web_queries":[]}`: a strict Boolean and at most two
-   nonblank queries of 1–500 characters. A sufficient response discards queries;
-   an insufficient response with no queries is valid for private-only gaps or
-   information no safe public lookup could verify. Invalid output/provider failure
-   gets one retry with identical evidence/needs/outcomes, bounded to 60 seconds.
-   A valid insufficient response may trigger one Web batch, at most two queries
-   and five unique Web records total. Local failures alone never trigger Web.
-   Merge Web snippets with internal evidence and synthesize without reassessment.
-   If both assessment attempts fail, skip Web and attempt grounded synthesis with
-   explicit uncertainty. If synthesis/verification fails, use attributed extracts.
-6. **Private synthesis and claim verification.** Synthesis uses identity, traits,
-   subjective memories, rapport and evidence to produce typed segments. Every
-   segment is reviewed, including reactions that might disguise factual claims.
-   Exact quotations and known source IDs are also checked deterministically.
-   Unsupported output gets at most one repair; rejected segments are omitted or
-   replaced with a limitations reply. No unverified factual draft is streamed.
-   Uncited personal reactions are allowed. Semantic review remains model-assisted
-   and requires curated human acceptance evaluation.
-7. **Final commit.** Revalidate identity, session and all supplied source access/
-   revisions before committing the final answer and rapport outbox. Operational
-   clarification/switch-only turns settle rapport in order without score changes.
+The four active model roles are routing, synthesis, Web search and asynchronous
+rapport. Evidence-review and interim model keys and old recovery/interim tuning
+remain accepted for configuration/SDK compatibility but are inactive. Per-call
+limits remain 600 seconds, one parallel retrieval window defaults to 615 seconds,
+and saved total turn limits remain unchanged. New/missing output-token ceilings
+are 8,000; saved custom ceilings are preserved. Prompt guidance determines normal
+length. See [model configuration](./Model%20Configuration.md).
 
-Personal memory is not an automatic retrieval prerequisite. A proposed memory task triggers
-a separate `MEMORY_RELEVANCE` check against the original resolved user intent, not
-the model-generated subquestion. Only a positive decision permits retrieval; gate
-failures skip memory. The compiler supplies the internal `memory_reason`. Generic rule explanations,
-public facts, greetings and style requests normally skip memory. Canonical identity,
-effective traits and rapport still shape every answer. Memory retains selected-character
-and public/private access restrictions and remains subjective evidence.
-
-Safe public-query generation belongs to `ASSESS`, with the former
-`PUBLIC_RECOVERY` privacy rules included in its self-contained contract. There is
-no separate public-query rendering call. Only public system/edition, published
-rules/lore and public facts may enter Web queries. Private campaign canon cannot
-be repaired with Web. Backend bounds, normalization/deduplication and known private
-name/ID checks provide additional controls; string matching is not proof of semantic
-privacy. Known private identifiers are rejected without a raw-question fallback.
-`web_recovery_blocked` records `privacy_blocked` or `no_public_queries` when
-applicable. Configured Web availability remains the permission authority; legacy
-`tools.web` and the initial internal-tool allowlist do not disable configured Web
-recovery. `companion_recovery_max_rounds=0` disables Web recovery.
-
-`PlannedCall` retains `retrieval_depth`, `depth_reason`, nullable `atlas_plan` and
-nullable `memory_reason` for internal execution and adapters. The assessment has
-no source IDs, support objects, per-need statuses, confidence or follow-up tasks.
-The backend generates recovery call IDs and associates queries with planned needs
-as retrieval intent, never as proof of support. No deep local recovery is selected
-by assessment. Prompt contracts live beside the job in `query_prompts.py` and
-`query_contracts.py`.
-
-Ordered flow: scope resolution/continuation → backend scope update → internal
-research planning → optional memory relevance → deterministic compilation →
-optional image interpretation → parallel internal retrieval/commentary →
-eight-excerpt assessment → optional identical-context retry → optional single Web
-batch → grounded synthesis → verification/one repair → backend source checks and
-final commit. Rapport follows asynchronously. See the
-[assessment design](./Assessment%20Recovery%20Plan.md) for ownership and regression
-acceptance. `sufficient` is a pre-Web decision, not final verification. Recovery
-and assessment-outage answers retain `coverage="partial"`; completion alone never
-upgrades coverage. Uncertainty/clarification/general-knowledge segments in research
-answers also prevent complete coverage.
-
-Per-call retrieval, routing, evidence review and synthesis limits default to
-600 seconds. Retrieval rounds default to 615 seconds and the total turn to
-10,200 seconds to accommodate sequential stages, recovery and repair. These are
-maximum budgets, not expected latency or correctness guarantees. Optional media
-keeps its separate two-second budget and textual fallback. A one-time startup
-migration raises shorter saved timeout limits; later admin edits are preserved. See [timeout rollout](./Model%20Configuration.md#ten-minute-call-rollout).
-An outbox heartbeat runs every fifteen seconds, separately from network work;
-workers missing heartbeats for ninety seconds can be recovered. Cancellation and
-lease loss fence ongoing work and final writes. Broker visibility outlives a turn.
-Originating authentication expiry and source revocation still end access; fresh
-short-lived grants are minted for each downstream request and source check.
-
-General-knowledge fallback defaults to disabled. With administrator policy
-`labeled_opt_in`, a turn must also set `general_knowledge_opt_in=true`. Such text
-is labeled **General knowledge — not verified against your world or books** and
-cannot represent verified canon or exact rule text. Web search availability depends
-on backend provider configuration, not on a per-turn client permission.
-
-An acknowledgement is persisted during admission. `pipeline.status` events report
-resolution/continuation, scope updates, research planning/compilation, retrieval, assessment/recovery, synthesis
-and factual verification. Optional character commentary runs concurrently; delivered
-commentary remains ordinary owner-only transcript history after finalization,
-failure, cancellation, reload and event-log expiry. Commentary is excluded from
-completed-exchange context, factual evidence and rapport quotations. Snapshots
-retain the current stage and commentary; ShreckOS uses SSE and Foundry polls them.
-
-Chat JSON records `resolved_ontology` (including resolution source and ontology
-revision), `scope_override` and pending clarification.
-Turns preserve the original submitted request separately from the validated
-`execution_context` used by retrieval grants. Message `kind` and `sequence`
-distinguish user, commentary and final records. Startup runs the idempotent
-`migrate_companion_query` migration, replacing the old message uniqueness rule.
-Back up SQL/config and drain workers before upgrading. Startup `create_all` alone
-is insufficient. No graph migration or re-embedding is required. A rollback
-requires a compatible release whose context/rapport reads exclude commentary;
-there is no runtime legacy-pipeline selector. Older binaries assume one assistant
-message per turn. Keep additive columns and delivered messages intact.
-
-#### Pipeline diagnostics
-
-The companion worker emits bounded, structured `companion.diag` INFO lines to the
-console for troubleshooting: `stage` for every pipeline transition,
-`router_available_tools` (candidate tools after configuration filters),
-`router_response` (the validated plan),
-`ontology_response`, and per-call `tool_response` (tool, status, reason and
-evidence). Retrieval adapter failures log the exception type and message instead
-of only the class name. Use these lines to distinguish a planner omission from an
-unavailable/unauthorized source; they are console diagnostics and do not change
-the turn snapshot, `pipeline.status` events or stored error details.
-
-See [the design and acceptance plan](Query%20Pipeline%20Plan.md),
-[configuration](Model%20Configuration.md) and [HTTP/SSE additions](Frontend%20API.md#evidence-v2).
+No SQL migration, graph rewrite or re-embedding is introduced by this simplification.
+Drain active turns and deploy matching API/workers/prompts/contracts together.
+Existing startup migrations and historical result readers remain required. Roll
+back compatible binaries without deleting new history, rapport or additive fields.
 
 ## Recovery, privacy and operations
 
@@ -291,9 +169,9 @@ by disabling `companion_enabled`, draining workers and restoring the prior image
 leave additive tables intact unless a separately reviewed cleanup is required.
 
 The standard Compose startup includes `shrecknet_companion_worker` and
-`shrecknet_companion_rapport_worker`. Configure synthesis and
+`shrecknet_companion_rapport_worker`. Configure routing, synthesis and
 rapport models before enabling both `enable_ai_agents` and `companion_enabled`.
-Routing/interim models are optional and have separate enable switches. See
+Evidence/interim roles are retained only for configuration compatibility. See
 [model configuration](Model%20Configuration.md).
 
 Shrecknet API startup deletes persisted background job history and purges its
@@ -320,10 +198,8 @@ services before claiming latency or quality targets. Provider image support must
 be explicitly allowlisted; unknown capability is not assumed. Local provider smoke results are recorded in [validation](Validation.md).
 No production latency distribution, cost, sustained live database concurrency or
 production import acceptance is implied by unit tests or a small smoke sample. Semantic grounding, character fidelity and rapport quality require curated
-human evaluation. Same-chat evidence from the latest completed turn can be reused for an identical
-question or recognized short follow-up for five minutes, only with identical scope
-and current-source validation. Revocation, revision changes or scope changes cause
-a cache miss; sources are revalidated again before final commit. Historical conversation text is the owner's transcript,
+human evaluation. Each turn retrieves fresh evidence; earlier-turn evidence is not
+reused because source revisions/readiness may have changed. Historical conversation text is the owner's transcript,
 not a promise of continued access to the original source document.
 
 ## Related contracts
@@ -388,11 +264,11 @@ World/ontology scope validation and conversion to user-provided evidence;
 Before Stage 1, the worker constructs bounded snapshot evidence without another
 model call. The router receives table/system titles and attached document names
 as context, and retrieval queries include bounded document/system names. No
-backend-to-Foundry live lookup occurs. Stage 2 receives those sources alongside
+backend-to-Foundry live lookup occurs. Synthesis receives those sources alongside
 ordinary retrieval evidence. Foundry facts remain client-supplied observations,
 not verified rules or authority to change the speaking identity. Existing citation
 validation applies, and partial snapshot coverage keeps the answer partial.
-Stage 3 continues to evaluate only delivered conversation quotations; it does not
+Asynchronous rapport continues to evaluate only delivered conversation quotations; it does not
 use the snapshot manifest as relational evidence or modify canonical identity.
 
 A selected table World never silently falls back to the character's unrelated
@@ -430,145 +306,63 @@ for privacy, source-access limits and rollout order.
 
 A ShreckWorld page context can carry `surface: "shreckworld"`, `ontology_id`, and optional `library_item_ids` directly. It does not require a separately created knowledge world. New clients submit direct ontology scope. Legacy contexts can retain `shreckworld_id` alongside their Atlas ontology; the explicit legacy ID keeps its original source scope. The server may enrich an admitted turn with its character ontology. Direct evidence and citation validation use `/ontologies/{id}/companion-evidence` and `/companion-validate` with the existing turn-bound retrieval grant, pinned to the admitted ontology and optional source subset. Legacy scopes retain their original routes. Evidence cards carry `scope.ontology_id` for direct sources; Nexus opens that ontology/item/page without guessing an association. Model answers and rapport rules are unchanged.
 
-## Verified rich responses
+<a id="verified-rich-responses"></a>
 
-`companion_rich_response_enabled` defaults to true for new or missing settings
-and applies only to `evidence_v2`. Explicitly saved false values and pipeline/model
-settings are preserved. Deploy matching API, workers, ShreckWorld and clients
-together; existing installations with a saved false value can enable it through
-Administration or `/config/`.
-The existing six model roles remain sufficient. Character Companion can return
-ordered narrative, entity/scene cards, images/galleries, one structured property
-table and exact book excerpt cards. Each factual addition is verified with the
-private narrative before the existing atomic final-message/event/rapport commit.
-Unverified blocks are omitted; optional media failure preserves verified prose.
-Commentary, ontology switching, grants and factual coverage retain v2 behavior.
+## Deterministic rich responses
 
-Composition is deterministic. It selects sources cited by the draft, projects
-Atlas/Foundry scalar properties whose labels occur in that source's narrative,
-and uses exact supporting book quotations. Entity descriptions reuse bounded
-factual draft segments rather than generating a second account. At most eight
-blocks, four image assets, one twenty-row/eight-column table and 64 KiB of rich
-JSON are admitted. No rich blocks are generated for casual chat or clarification.
-The optional media budget is `companion_rich_response_timeout_s` (default two
-seconds, range 0.1–10), shared by discovery and final Atlas image checks and
-bounded by the remaining turn deadline. The existing batched evidence call
-verifies block claims with narrative; there is no extra model role/search loop.
+`companion_rich_response_enabled` defaults true; saved false values are preserved.
+The version-1 envelope keeps narrative, entity cards, images/galleries, property
+tables and optional book excerpts. Markdown text remains the complete readable
+answer when composition is disabled or fails. New composition emits at most five
+blocks and four assets; the public schema still accepts historical eight-block
+responses. Only cited sources contribute optional blocks. No model call verifies
+or manufactures presentation.
 
-The job owner is `app/jobs/companion/rich_response.py`; the typed public contract
-is `app/schemas/companion_rich_response.py`. Source reference normalization,
-Atlas property projection and media adapters live in `app/integrations/companion/`.
-`CompanionRepository.message_records` projects the saved envelope into private
-history. The envelope is stored in existing turn result JSON; no additional
-Companion database migration or historical backfill is needed. The separate v2
-commentary migration remains required. Text fallback includes unique block facts
-and is used by old clients, conversation context and rapport.
+Atlas cards use source names and available short source descriptions, never copied
+model prose. Property tables use actual scalar/null source fields mentioned in the
+answer, at most twenty rows and 4,000 fallback characters. Markdown comparison
+and mechanics tables remain in the narrative. Book/page navigation remains available
+without adding excerpts; excerpt cards require a quote/passage request and project
+at most 600 source characters. No long excerpt appendix or duplicate narrative is
+added. Source cards, URLs and IDs are never invented.
 
-Atlas artwork is the admitted entity/scene's own `node_avatar_url`, mapped only
-inside configured local media storage. No category/ontology fallback is claimed
-to depict a specific entity. Source scope, file hash and revision are rechecked
-before commitment and protected delivery. Milestones have no standalone rich
-card; their existing narrative evidence remains available. Atlas tables use the
-retrieved property snapshot and authoritative scoped `OntologyProperty` labels.
+Atlas media uses only the admitted entity/scene's artwork, confined to configured
+local storage with hash/revision checks. Book media remains document/hash/page-bound
+through ShreckWorld. Foundry media is resolved only in its original table with
+current document permission/revision checks. Web images still require
+`companion_web_images_enabled`, the configured JSON provider's source-associated
+image metadata and valid attribution. Provider-managed Web search supplies factual
+excerpts only. External image loads remain explicit and receive no service token.
+Missing assets prune images/galleries independently of valid cards/text.
 
-ShreckWorld supplies source-hash/document/page-bound thumbnails and PDF picture
-crops through its authenticated media endpoints and optional media-only backfill.
-Media extraction changes no embeddings or active document metadata. Unsupported
-source formats keep text excerpts. Foundry context version 2 can indicate that a
-document has artwork without transmitting a file URL; Foundry alone resolves it
-against the original table, current document revision and read permission.
-ShreckOS shows a local-Foundry-image explanation instead of fetching that file.
+Ownership remains `jobs/companion/rich_response.py`, with reference/media adapters
+under `integrations/companion/` and the existing public response schema. History,
+final event and turn snapshots preserve the same envelope. Foundry renders a safe
+Markdown subset; raw HTML and arbitrary model image URLs are never executed.
+See [HTTP/history contract](Frontend%20API.md#rich-response-v1).
 
-Web images require `companion_web_images_enabled=true`, the configured JSON web
-provider, rich responses enabled, and an available web provider. This new
-provider opt-in defaults false; model-managed search does not claim image support.
-The JSON provider may return `images` on each factual result with `url`,
-`source_page_url` equal to that result's URL, `relation:"page_image"`, and nonblank
-`attribution`. Public-address checks apply. Related search hits without that
-association are discarded. Web pictures are labeled source images, never proof
-of the depicted subject; both clients require an explicit load click and send
-no service bearer token with that external request. There is no image proxy or
-arbitrary server-side remote image fetcher.
+<a id="compact-evidence-assessment-and-extractive-recovery"></a>
 
-See the [rich response implementation and acceptance record](Rich%20Response%20Plan.md)
-and [HTTP/history contract](Frontend%20API.md#rich-response-v1). Disable composition
-to stop generating new rich envelopes while preserving saved replies. Production
-provider quality/latency, real Foundry sheets and human image-grounding acceptance
-remain rollout gates; do not infer them from fixture-based tests.
+## Compact evidence and citation resolution
 
-## Compact evidence assessment and extractive recovery
+`evidence_context.py` projects exact excerpts, source type/title/page, essential
+structured fields, need associations, minimal source/scope identity, epistemic
+category and coverage/relevance metadata. Navigation URLs, geometry, source hashes,
+document blobs and embeddings stay outside model evidence. Full retained references
+remain available for access checks and Answer Breakdown.
 
-`jobs/companion/evidence_context.py` owns compact evidence projection and the
-backend extractive renderer. Assessment, synthesis and verification receive an
-evidence ID, source type/title/page, exact excerpt, essential structured fields,
-intended need IDs, epistemic category, minimal scope/source identity and coverage
-state. They do not repeatedly receive navigation URLs, geometry, hashes, embedding
-vectors, document blobs or full nested retrieval plans. Rich verification retains
-visible block claims and compact provenance while delivery/navigation stays
-server-side. Full evidence references remain in the turn/Answer Breakdown and
-are used for final access/revision checks.
+Each tool retains at most five unique records across its calls. Need-aware
+selection is independent of tool completion order. Synthesis then selects at most
+twenty whole records within `companion_max_evidence_tokens`; oversized records may
+be omitted while smaller relevant records remain. `diagnostics.evidence_omissions`
+records collection and synthesis omissions without erasing the retained pool.
 
-The backend admits at most five unique records per retrieval tool across all
-its calls, allocating across information needs before filling remaining capacity.
-Atlas, ShreckWorld and memory contribute at most fifteen records; Web contributes
-five more. Chronicle retains a separate five-record cap. Bounded Foundry snapshots
-and image evidence are additional inputs, not silently discarded to fit a universal
-twenty-record limit. Stable within-source ranks, query overlap and source diversity
-make selection independent of completion speed.
+The numeric aliases resolve exclusively against the exact synthesis projection,
+not the larger retained list. Unknown complete markers and malformed marker tails
+are removed; warnings and `citation_validation` record valid/unknown counts and a
+malformed flag. These checks establish reference integrity only. Grounding,
+character fidelity and applicability require curated regression/model evaluation.
 
-Assessment receives at most eight whole compact excerpts, also bounded by
-`companion_max_evidence_tokens` (default 10,000). Synthesis receives a separately
-budgeted projection of the retained combined pool; final verification receives the
-same selected passages. Projection omissions never erase admitted source records
-or navigation metadata. `diagnostics.evidence_omissions` records collection,
-assessment, synthesis and extractive omissions. Whole records are omitted from
-model context if oversized; other candidates may still fit.
-
-Primary assessment allows `companion_evidence_timeout_s` (default 600 seconds).
-There is at most one additional 60-second retry, clipped to the configured timeout
-and remaining turn time. `ASSESS_RECOVERY` uses the same `EvidenceAssessment`
-contract and identical input, including the Web availability decision. Persistent
-failure sets `assessment_unavailable`; grounded synthesis and claim verification
-still run if time permits, with explicit limitations. Extraction is the final
-fallback if supported synthesis cannot be delivered. Default total turn limits
-and saved timeout migrations are unchanged.
-
-New turn results use `diagnostics.assessment_contract_version="sufficiency_v1"` and
-`result.assessment` is the two-field decision or null. Historical raw per-need
-assessment objects remain unchanged/readable. There is no fabricated compatibility
-mapping from a Boolean to legacy support statuses. No SQL migration, graph rewrite
-or re-embedding is required. Drain active turns and deploy/restart API and workers
-with matching prompts/contracts; roll back the bundle without rewriting history.
-
-Extractive responses have `outcome="limited"`, `coverage="partial"`, an explicit
-uncertainty segment and backend-only `extractive` segments. These segments contain
-quoted source text or directly serialized essential source fields, attribution
-and citations; `claims=[]`. They do not assert that the source claims are true,
-relevant, exhaustive, applicable to the chosen edition, or free of conflicts.
-At most four passages are rendered within the answer token budget (capped at
-2,000 for extraction). A quote may use a contiguous prefix of at most 1,600
-characters, explicitly labelled when shortened; its full source passage remains
-in evidence. Literal source markers/Markdown/HTML are escaped. Empty evidence
-produces limitations only, never invented citations or model-knowledge fallback.
-Source revocation, revision changes, cancellation and lease loss remain fail-closed.
-
-`diagnostics.evidence_assessment` and `metrics.evidence_assessment` preserve every
-attempt: stage, UTC start/end, elapsed milliseconds, input record/source counts,
-compact prompt characters/UTF-8 bytes/estimated tokens, model target, configured
-and effective deadlines, structured-response status, exception class and safe
-validation rule paths. They record same-context retry/grounded-synthesis/extractive mode,
-retained evidence and unique-source counts, and counts used for synthesis or
-extraction. Provider exception text and raw model output are not copied into these
-diagnostics. Existing stage metrics/events remain available; saved final-message
-`answer_details.diagnostics` exposes the same owner-only record. The existing
-Answer Breakdown continues to show passages, citations, counts and warnings.
-
-ShreckWorld calls add `source_readiness` (`ready`/`partial`) and
-`sources_requiring_attention` (`library_item_id`, `title`, `reason`). Reasons are
-`index_not_ready`, `incompatible_index` or `empty_index`. Counts are scoped to the
-requested books and are disjoint: searchable active generations count as searched,
-even if a newer indexing attempt is queued/failed; incompatible existing indexes
-count as requiring reindexing; remaining unsearchable books count as not ready.
-Deploy the updated ShreckWorld publisher to receive source IDs; older responses
-retain their accurate count diagnostics without invented source identities.
-No SQL schema migration or re-embedding is required for this response change.
+The [simplification design](./Conversational%20Simplification%20Plan.md) records
+milestones and compatibility decisions. [Validation](./Validation.md) distinguishes
+local provider-double regressions from live deployment acceptance.

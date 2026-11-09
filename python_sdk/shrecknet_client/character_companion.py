@@ -12,6 +12,7 @@ PREFIX = '/users/me/character-companion'
 
 
 class CompanionModelConfig(BaseModel):
+    """Role keys remain compatible; interim/evidence roles are inactive on current servers."""
     model_companion_routing: LLMModelTarget
     model_companion_synthesis: LLMModelTarget
     model_companion_interim: LLMModelTarget

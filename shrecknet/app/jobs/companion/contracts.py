@@ -3,6 +3,7 @@ import re
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from app.schemas.character_companion import DIMENSIONS
+from app.jobs.companion.errors import CompanionExecutionError
 
 
 MARKER_PREFIX = "[[source:"
@@ -23,19 +24,32 @@ def provisional_text(raw, *, complete=False):
     return MARKER.sub("", raw)
 
 
-def build_answer(raw, evidence, tool_results, *, query=None):
+def build_answer(raw, evidence, tool_results, *, query=None, citation_evidence=None):
+    """Resolve aliases against exactly the records supplied to the model.
+
+    Unknown/malformed markers are rejected as citations, never fabricated links.
+    The complete evidence pool remains available for diagnostics and access checks.
+    This validates attribution identifiers, not factual support or entailment.
+    """
     text = provisional_text(raw, complete=True)
+    malformed = MARKER_PREFIX in text
+    # A partial marker is not readable prose and must not leak into final text.
+    text = re.sub(r"\[\[source:[^\]\r\n]*(?:\]\]?|(?=[\r\n]|$))", "", text)
     if not text.strip():
-        raise ValueError("empty_synthesis")
-    aliases = {str(index): item for index, item in enumerate(evidence, 1)}
+        raise CompanionExecutionError("empty_synthesis")
+    aliases = {str(index): item for index, item in enumerate(
+        evidence if citation_evidence is None else citation_evidence, 1)}
     cited = []
-    invalid_marker = False
+    invalid_count = 0
+    valid_count = 0
     for match in MARKER.finditer(raw):
         item = aliases.get(match.group(1))
         if item is None:
-            invalid_marker = True
-        elif item["evidence_id"] not in {source["evidence_id"] for source in cited}:
-            cited.append(item)
+            invalid_count += 1
+        else:
+            valid_count += 1
+            if item["evidence_id"] not in {source["evidence_id"] for source in cited}:
+                cited.append(item)
     citations = [{"citation_id": f"c{index}", "segment_ids": ["s1"], **item}
                  for index, item in enumerate(cited, 1)]
     supplied = {item["evidence_id"] for item in evidence}
@@ -60,14 +74,16 @@ def build_answer(raw, evidence, tool_results, *, query=None):
     warnings += [f"{row['tool']}: {row.get('reason', row['status'])}" for row in tool_results if row["status"] != "ok" or row.get('reason')]
     warnings += [f"shreckworld: {item['title']} ({item['library_item_id']}): {item['reason']}"
                  for row in tool_results for item in row.get('sources_requiring_attention', [])]
-    if invalid_marker:
+    if invalid_count:
         warnings.append("The response contained an unknown source marker; it was not cited.")
-    if MARKER_PREFIX in text:
+    if malformed:
         warnings.append("The response contained an incomplete source marker.")
     return {"text": text, "segments": [{"id": "s1", "kind": "conversation", "text": text,
                                        "evidence_ids": [item["evidence_id"] for item in cited]}],
             "citations": citations, "evidence": evidence, "tool_calls": tool_calls,
-            "coverage": "partial" if partial else "unknown", "warnings": warnings}
+            "coverage": "partial" if partial or invalid_count or malformed else "unknown", "warnings": warnings,
+            "citation_validation": {"valid": valid_count, "unknown": invalid_count,
+                                    "malformed": malformed}}
 
 
 class RapportEvidence(BaseModel):

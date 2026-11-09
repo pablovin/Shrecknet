@@ -1,5 +1,11 @@
 # Companion rich response implementation and acceptance plan
 
+> Historical design record. Assessment, claim verification, memory voting and
+> recovery-only Web policies below have been superseded by the
+> [conversational simplification](./Conversational%20Simplification%20Plan.md).
+> See [Companion](./Companion.md) for the current execution contract.
+
+
 Status: implemented locally with `companion_rich_response_enabled=true` by
 default for new/missing settings on `evidence_v2`; saved false values are preserved. Live provider quality/latency, human image-grounding and
 real Foundry v14 sheet acceptance remain deployment gates. This document records

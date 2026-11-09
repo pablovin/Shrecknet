@@ -371,33 +371,33 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
 # are bootstrap/infrastructure concerns and typically require service re-provisioning.
 FIELD_UI_META.update({
     "companion_web_images_enabled": {"type":"boolean","label":"Web image discovery","help":"Opt in only for a configured JSON provider supporting source-associated images. Model search does not supply image provenance."},
-    "companion_rich_response_enabled": {"type":"boolean","label":"Rich responses","help":"Verified source cards, tables, excerpts and media in evidence v2; text fallback remains available."},
+    "companion_rich_response_enabled": {"type":"boolean","label":"Rich responses","help":"Deterministic cited-source cards, tables, optional excerpts and media; Markdown remains readable."},
     "companion_rich_response_timeout_s": {"type":"number","label":"Optional media deadline","help":"Maximum optional media resolution seconds inside the total turn deadline, 0.1 through 10."},
     "companion_general_knowledge_policy": {"type":"enum","options":["disabled","labeled_opt_in"],"label":"General knowledge fallback","help":"Requires per-turn opt-in and an explicit label; never verified canon."},
     "companion_routing_timeout_s": {"type":"number","help":"Ontology inference and planner deadline, seconds."},
-    "companion_evidence_timeout_s": {"type":"number","help":"Coverage and claim verifier deadline per call, seconds."},
+    "companion_evidence_timeout_s": {"type":"number","help":"Image interpretation deadline, seconds; no assessment or claim verifier runs."},
     "companion_web_timeout_s": {"type":"number","help":"Dedicated web retrieval deadline, seconds; overall retrieval budget also applies."},
-    "companion_recovery_max_rounds": {"type":"integer","help":"Targeted Companion recovery rounds, 0 or 1."},
-    "companion_recovery_max_calls": {"type":"integer","help":"Maximum independent calls in recovery, 1 through 4."},
-    "companion_interim_max_messages": {"type":"integer","help":"Permanent commentary messages per turn, including acknowledgement; 0 through 3."},
-    "companion_interim_min_interval_s": {"type":"number","help":"Minimum time between permanent commentary messages, seconds."},
-    "companion_interim_output_tokens": {"type":"integer","help":"Maximum generated commentary tokens."},
-    "model_companion_web_search": {"type":"llm_target","label":"Companion web search","help":"Dedicated public web evidence model; enable its search capability. Per-turn permission still applies."},
-    "model_companion_evidence": {"type":"llm_target","label":"Companion evidence review","help":"Coverage, contradictions and factual claim verification; search disabled."},
-    "model_companion_routing": {"type":"llm_target","label":"Companion routing","help":"V2 ontology inference, ontology updates and source query planning; optional in legacy."},
-    "model_companion_synthesis": {"type":"llm_target","label":"Companion synthesis","help":"Embodied reply and image interpretation; V2 verifies factual drafts before publication."},
-    "model_companion_interim": {"type":"llm_target","label":"Companion interim reactions","help":"Optional brief known-context commentary during retrieval."},
+    "companion_recovery_max_rounds": {"type":"integer","help":"Inactive compatibility setting; router-selected tools run in one parallel round."},
+    "companion_recovery_max_calls": {"type":"integer","help":"Inactive compatibility setting; normal Web execution has a fixed two-query limit."},
+    "companion_interim_max_messages": {"type":"integer","help":"Zero disables the static acknowledgement; positive values emit just one acknowledgement."},
+    "companion_interim_min_interval_s": {"type":"number","help":"Inactive compatibility setting; generated interim commentary has been removed."},
+    "companion_interim_output_tokens": {"type":"integer","help":"Inactive compatibility setting; no interim model call runs."},
+    "model_companion_web_search": {"type":"llm_target","label":"Companion web search","help":"Dedicated Web evidence model; enable its search capability. Any router query is permitted when tools.allowed includes Web."},
+    "model_companion_evidence": {"type":"llm_target","label":"Companion evidence review","help":"Inactive compatibility role; assessment and claim verification have been removed."},
+    "model_companion_routing": {"type":"llm_target","label":"Companion routing","help":"Ontology inference, scope/continuation and search/chat/clarify routing."},
+    "model_companion_synthesis": {"type":"llm_target","label":"Companion synthesis","help":"Embodied Markdown reply and optional image interpretation; deterministic citation/access checks precede publication."},
+    "model_companion_interim": {"type":"llm_target","label":"Companion interim reactions","help":"Inactive compatibility role; progress uses status events and one static acknowledgement."},
     "model_companion_rapport_update": {"type":"llm_target","label":"Companion rapport updates","help":"Asynchronous character-conditioned relational evaluation."},
     "companion_web_search_token": {"type":"string","secret":True,"help":"Write-only credential for the configured web retrieval provider."},
-    "companion_enabled": {"type":"boolean","help":"Enable Character Companion after configuring synthesis and rapport models."},
-    "companion_interim_enabled": {"type":"boolean","help":"Enable character commentary. V2 persists delivered comments in history."},
+    "companion_enabled": {"type":"boolean","help":"Enable Character Companion after configuring routing, synthesis and rapport models."},
+    "companion_interim_enabled": {"type":"boolean","help":"Inactive compatibility setting; acknowledgement is controlled by companion_interim_max_messages."},
     "companion_tool_timeout_s": {"type":"number","help":"Per-source and synthesis deadline, seconds; default/maximum 600."},
     "companion_retrieval_timeout_s": {"type":"number","help":"Parallel retrieval deadline per round; default 615 seconds, including collection overhead."},
-    "companion_turn_timeout_s": {"type":"integer","help":"Total execution deadline; default 10200 seconds covers sequential ten-minute calls, recovery and repair."},
+    "companion_turn_timeout_s": {"type":"integer","help":"Total execution deadline; saved values remain valid for scope, retrieval, synthesis and one truncation retry."},
     "companion_event_retention_days": {"type":"integer","help":"Replay-log retention in days; completed snapshots remain."},
     "companion_rapport_max_attempts": {"type":"integer","help":"Attempts before an audited failed evaluation advances the pair cursor."},
     "companion_max_evidence_tokens": {"type":"integer","help":"Evidence context budget estimated with the shared tokenizer and UTF-8 fallback."},
-    "companion_output_tokens": {"type":"integer","help":"Maximum synthesis output tokens."},
+    "companion_output_tokens": {"type":"integer","help":"Technical synthesis ceiling (default 8000); prompt guidance controls ordinary answer length."},
 })
 
 FRONTEND_LOCKED_FIELDS: set[str] = {
@@ -468,7 +468,7 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
             if validated.companion_retrieval_timeout_s < max(validated.companion_tool_timeout_s, validated.companion_web_timeout_s):
                 raise HTTPException(400, detail="Companion retrieval deadline must cover tool and web deadlines")
             if validated.companion_turn_timeout_s < companion_required_turn_budget(validated):
-                raise HTTPException(400, detail="Companion turn deadline must cover sequential stages, recovery and repair; update timeout settings together")
+                raise HTTPException(400, detail="Companion turn deadline must cover sequential stages and truncation retry; update timeout settings together")
         if not validated.companion_web_search_url and validated.model_companion_web_search.web_search_enabled and validated.model_companion_web_search.provider != "openrouter":
             raise HTTPException(400, detail="Companion model web search requires an OpenRouter target; disable search to make the tool unavailable")
     if "shreckworld_embedding_backend" in payload:
@@ -482,9 +482,7 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail="Invalid embodiment validation retry limit; expected an integer from 0 through 3") from exc
     if merged.get("companion_enabled"):
-        required = ["model_companion_synthesis", "model_companion_rapport_update", "model_companion_routing", "model_companion_evidence"]
-        if merged.get("companion_interim_enabled"):
-            required.append("model_companion_interim")
+        required = ["model_companion_synthesis", "model_companion_rapport_update", "model_companion_routing"]
         if any(not merged[field].get("provider") or not merged[field].get("name") for field in required):
             raise HTTPException(400, detail="Companion requires its enabled model roles to be configured")
     if merged["email_verification_enabled"]:

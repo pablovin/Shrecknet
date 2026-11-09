@@ -39,11 +39,11 @@ See the [runnable example](../examples/12_character_companion/chat.py),
 
 Agent `LLMModelTarget` values accept `web_search_enabled`. Companion uses only
 its dedicated `model_companion_web_search` target (or configured JSON provider)
-for Web recovery after insufficient internal assessment. Legacy per-turn
-`tools.web` is accepted but ignored. The provider receives only bounded public
-queries, never the raw user question or appended private context. Routing, interim,
-image interpretation, synthesis, evidence review and rapport disable provider
-search. See [shared agent web search](../../Documentation/Architecture/LLM_WEB_SEARCH.md).
+for normal router-selected Web retrieval. Legacy per-turn
+`tools.web` is accepted but ignored; `tools.allowed` still restricts Web. The provider receives bounded router-generated
+queries without public/private filtering. Routing, image interpretation,
+synthesis and rapport disable provider-managed search; only the dedicated Web
+adapter performs it. See [shared agent web search](../../Documentation/Architecture/LLM_WEB_SEARCH.md).
 
 ## Chat session limits and context
 
@@ -134,7 +134,7 @@ The evidence-first pipeline is the sole runtime path; the retired pipeline
 selector is not accepted through `/config/`. SDK model configuration includes `model_companion_web_search` and `model_companion_evidence` alongside
 the existing four roles. The web target defaults to OpenRouter DeepSeek Flash with
 search enabled; per-turn `tools.web` is accepted for backward compatibility but is
-ignored; configured Web is available only for assessed recovery.
+ignored; configured Web can run alongside other router-selected sources.
 
 `send()` additionally accepts `general_knowledge_opt_in`, `use_page_scope`, and
 `clarification_id`. For example, after reading the chat's pending clarification:
@@ -158,7 +158,7 @@ Message dictionaries include permanent `commentary` records in ordinary history;
 never discard them on `response.final`. Turn snapshots add stage and commentary.
 Events add `pipeline.status`, `message.committed` and `ontology.updated`; the
 existing event parser preserves their names and payloads. Factual drafts stay
-private until verification. See the [canonical API](../../Documentation/Agents/Companion/Frontend%20API.md#evidence-v2)
+private until deterministic citation and required access checks. See the [canonical API](../../Documentation/Agents/Companion/Frontend%20API.md#evidence-v2)
 for migration, replay, limitations and failure behavior.
 
 ## Rich responses
@@ -173,7 +173,7 @@ exported as `CompanionRichResponse` and `CompanionPresentationConfig`.
 Administrators can read `presentation_config()` or call
 `update_presentation_config(CompanionPresentationConfig(companion_rich_response_enabled=True))`.
 Only explicitly set fields are sent. New/missing backend settings enable rich
-responses by default, preserving saved false values, and require `evidence_v2`; web images have a separate default-off JSON-provider capability
+responses by default, preserving saved false values; web images have a separate default-off JSON-provider capability
 opt-in. No new model role is needed. Deploy matching services/workers/clients together.
 The SDK conservatively reports rich responses disabled when an older server
 omits presentation settings.
@@ -193,13 +193,12 @@ not construct nested retrieval plans. Atlas normally reuses the Companion query,
 and individual book questions use ShreckWorld single evidence retrieval. Identity
 and traits shape voice even when memory retrieval is skipped.
 
-Web runs only after a valid insufficient internal assessment, in one batch of
-at most two queries and five total results. There is no reassessment after Web.
-Missing private campaign canon can yield no public queries; source failure alone
-does not trigger Web. Legacy `tools.web` remains ignored. No new SDK argument is
-required. Internal tools each contribute at most five records across their calls;
-assessment sees at most eight need-balanced excerpts. Full admitted records and
-references remain available even when a model projection omits them.
+Web runs as a normal selected tool concurrently with internal sources. Any
+router-generated query may execute when `tools.allowed` permits Web, with at most
+two queries and five retained Web records. There is no public-query catalog,
+privacy filter, assessment or separate memory vote. Each internal tool retains
+at most five records; synthesis selects at most twenty within its token budget.
+Full admitted evidence/navigation is retained even when omitted from model context.
 
 Calls default to a maximum of 600 seconds each. Total turn execution may span
 several calls; `send` still returns admission immediately. `events()` already uses
@@ -209,41 +208,29 @@ of submitting again. Authentication expiry and cancellation remain authoritative
 Raw `CompanionTurn.result` preserves additive `tool_calls[]` fields:
 `retrieval_depth` (`light`/`deep`), `timeout_s`, and nullable `timeout_layer`
 (`tool`/`http`/`retrieval_round`). Inspect `result.diagnostics` for deadline and
-recovery outcomes. Older records omit these fields; use `.get()` defaults, as in
+tool, citation and truncation outcomes. Older records omit these fields; use `.get()` defaults, as in
 [inspect_answer.py](../../python_sdk/examples/12_character_companion/inspect_answer.py).
 Startup migrations now upgrade shorter saved Shrecknet/gateway timeouts once;
 later administrator edits remain authoritative. See the
 [coordinated configuration](../../Documentation/Agents/Companion/Model%20Configuration.md#ten-minute-call-rollout).
 
-## Assessment failure and extractive replies
+## Markdown generation and failures
 
-Assessment failures retain evidence and retry once with identical evidence/needs/
-outcomes, bounded to 60 seconds. Persistent failure skips Web and attempts grounded
-synthesis with uncertainty, followed by claim verification. If generation or
-verification fails, `extractive` segments attribute source quotes with `claims=[]`,
-`outcome="limited"` and `coverage="partial"`. Final source access checks still apply.
+New answers return readable Markdown and one `conversation` segment. Numeric
+source aliases resolve only against the evidence supplied to synthesis. Unknown or
+malformed markers create warnings and no invented links. Citation validity is not
+proof of semantic grounding. `coverage` describes retrieval/context limitations.
 
-New `turn.result['assessment']` values are null or
-`{"sufficient": false, "web_queries": []}` (at most two nonblank queries).
-`diagnostics['assessment_contract_version']` is `sufficiency_v1`. This is a pre-Web
-decision, not certification of the final answer. Recovery/outage answers remain
-`partial`; successful Web execution alone cannot produce complete coverage.
-Historical per-need assessment dictionaries are returned unchanged; inspect the
-version before assuming a shape. SDK raw dictionaries preserve both forms.
+Length termination retries once with identical evidence and shorter-answer guidance.
+Persistent truncation or provider/empty-output failure is a typed failed turn, never
+an evidence refusal. Required source access/revision failure prevents publication;
+optional rich/media failure preserves cited text. Missing evidence may produce an
+honest completed limited answer. Asynchronous rapport still follows completion.
 
-`CompanionTurn.result['diagnostics']['evidence_assessment']` and final-message
-`answer_details['diagnostics']` retain attempt timings, compact input size/model/
-deadline, structured-response status, exception class, validation failures,
-fallback mode and retained-source counts. Raw SDK result/history dictionaries
-preserve these additive fields. Older results may omit them. Full evidence
-references stay available for navigation; compact model inputs do not replace
-the full Answer Breakdown. See
-[inspect_answer.py](../../python_sdk/examples/12_character_companion/inspect_answer.py) for safe
-optional-field reads and the [API contract](../../Documentation/Agents/Companion/Frontend%20API.md#assessment-recovery-and-execution-diagnostics).
-
-
-Simple research planning adds optional `result['diagnostics']['research_plan']`
-and `result['diagnostics']['planning']` records. `planning.contract_version` is
-`simple_research_v1`; `diagnostics['plan']` remains the compiled execution plan.
-Initial retrieval may contain up to nine calls. Admission models and endpoint
-payloads are unchanged. See the [API compatibility contract](../../Documentation/Agents/Companion/Frontend%20API.md#simple-research-planning-compatibility).
+New results have `assessment:null`, `rejected_claims:[]`,
+`diagnostics.version="markdown_v3"`, optional truncation/media diagnostics and
+`citation_validation` counts. SDK raw dictionaries preserve older assessment,
+segment and coverage shapes without rewriting history. `inspect_answer.py` reads
+both historical and current diagnostics. Model configuration retains six keys;
+`model_companion_evidence` and `model_companion_interim` are inactive compatibility
+roles. No new SDK arguments or database migration are required.

@@ -70,26 +70,23 @@ No third-party search key or separately configured search-service URL is require
 
 ## Companion permission and evidence
 
-For Companion, enabling search on `model_companion_synthesis` permits provider web
-retrieval. Web search is offered on every turn whenever a provider is configured;
-the legacy `tools.web` field is accepted but ignored. Routing chooses whether a
-turn needs search. The separate retrieval call receives only the first 500
-characters of the submitted question;
-identity, rapport, chat history, Foundry names, image-derived terms, private
-attachment bytes and canonical source bundles are not appended. The question itself
-is not automatically redacted, so it may still contain private information. Provider URL
-annotations with actual source excerpts become `external_web` evidence; generated
-summaries, citations without excerpts, and unsafe/private URLs are excluded.
-Embodied synthesis and image interpretation explicitly disable provider search so
-search cannot bypass the evidence/reference validator.
+Companion uses its dedicated `model_companion_web_search` target for model-managed
+search; a configured `companion_web_search_url` selects the JSON adapter instead.
+The router chooses queries and sources, including Web, for one parallel retrieval
+round. Any query may use Web when configured and permitted by `tools.allowed`.
+The legacy `tools.web` field remains accepted but does not gate selection. There is
+no public-query catalog, private-term filter, evidence-assessment recovery or
+additional semantic validation call. Queries are bounded to 500 characters; Web
+execution admits at most two calls and five retained records per turn.
 
-The original JSON search integration remains compatible: when provider search is
-not enabled, `companion_web_enabled` plus `companion_web_search_url` use the existing
-`{results:[{title,url,snippet}]}` protocol. OpenRouter search takes precedence when
-both are configured. Companion routing, interim, and rapport calls always disable
-provider-managed search, even if their saved role flags enable it. A search timeout or
-failure follows the existing independent retrieval diagnostic path; configure
-Companion's tool/overall retrieval deadlines for expected search latency.
+Provider URL annotations with actual excerpts become `external_web` evidence;
+generated summaries and annotations without excerpts do not. Unsafe/private-address
+result URLs remain excluded. JSON search keeps its existing
+`{results:[{title,url,snippet}]}` protocol. Routing, image interpretation, final
+synthesis and rapport disable provider-managed search, regardless of saved role
+flags. Failed/empty Web results do not invalidate internal evidence. Citation
+resolution is deterministic and source access is revalidated before publication;
+there is no model claim verifier. See [Companion](../Agents/Companion/Companion.md).
 
 ShreckWorld's existing world-level `web_search_enabled`/`web_search_policy` are
 separate domain settings; this model-target flag controls the gateway request.

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from app.core.config_store import Settings
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -88,10 +89,7 @@ class Characters:
 @pytest.mark.asyncio
 async def test_admission_freezes_snapshot_preserves_identity_and_replays(session_maker, monkeypatch):
     from app.services import character_companion_service as module
-    settings = SimpleNamespace(companion_enabled=True, enable_ai_agents=True,
-        model_companion_synthesis=SimpleNamespace(name="model"),
-        model_companion_rapport_update=SimpleNamespace(name="model"),
-        companion_web_enabled=False, companion_max_evidence_tokens=10000)
+    settings = Settings(companion_enabled=True, enable_ai_agents=True, companion_interim_max_messages=0)
     monkeypatch.setattr(module, "get_settings", lambda: settings)
     async with session_maker() as session:
         user = User(username="context-owner", email="context@example.test", role="player")
@@ -109,10 +107,10 @@ async def test_admission_freezes_snapshot_preserves_identity_and_replays(session
         admitted = await svc.admit(user, chat["id"], payload, key, principal)
         assert await svc.admit(user, chat["id"], payload, key, principal) == admitted
         turn = await session.get(CompanionTurn, admitted["turn_id"])
-        assert turn.request["context"]["ontology_id"] == 7
-        assert turn.request["context"]["character_ontology_id"] == 99
+        assert turn.execution_context["ontology_id"] == 7
+        assert turn.execution_context["character_ontology_id"] == 99
         assert turn.character_agent_id == "companion"
-        assert turn.request["foundry_context"]["table"]["shrecknet_world_name"] == "Canonical City"
+        assert turn.request["foundry_context"]["table"]["shrecknet_world_id"] == "city-world"
         message = (await session.execute(select(CompanionMessage).where(CompanionMessage.turn_id == turn.id))).scalar_one()
         assert len(message.manifest) == 2
         assert message.manifest[1]["source_type"] == "foundry"
@@ -151,15 +149,12 @@ async def test_ambiguous_world_never_falls_back_to_companion_ontology(session_ma
             await resolve_foundry_scope(session, value, {"ontology_id": 2})
 
 
-@pytest.mark.asyncio
-async def test_router_does_not_search_other_campaigns_when_foundry_scope_missing(monkeypatch):
-    from app.jobs.companion import runner
-    monkeypatch.setattr(runner, "get_settings", lambda: SimpleNamespace(companion_web_enabled=False,
-        companion_model_routing_enabled=False, model_companion_synthesis=None))
-    turn = SimpleNamespace(request={"text": "Who lives in this world? Read session notes.",
-        "context": {"ontology_id": None}, "foundry_context": snapshot(),
-        "tools": {"allowed": None, "web": "disabled"}})
-    assert await runner.route(turn, None, []) == []
+def test_router_does_not_offer_unscoped_atlas_or_chronicle():
+    from app.jobs.companion.query_pipeline import available_tools
+    settings=Settings()
+    settings.model_companion_web_search.web_search_enabled=False
+    turn=SimpleNamespace(request={'tools':{'allowed':None,'web':'disabled'}})
+    assert available_tools(turn,settings,{})==['character_memory']
 
 
 @pytest.mark.asyncio
@@ -187,7 +182,7 @@ async def test_snapshot_reaches_synthesis_and_committed_history(session_maker, m
     from app.jobs.companion import runner
     from app.services import character_companion_service as service_module
     settings = get_settings().model_copy(update={"companion_query_pipeline_version": "legacy", "companion_enabled": True, "enable_ai_agents": True,
-        "companion_model_routing_enabled": False, "companion_max_evidence_tokens": 10000})
+        "companion_interim_max_messages": 0, "companion_max_evidence_tokens": 10000})
     monkeypatch.setattr(runner, "get_settings", lambda: settings)
     monkeypatch.setattr(service_module, "get_settings", lambda: settings)
 
@@ -206,11 +201,16 @@ async def test_snapshot_reaches_synthesis_and_committed_history(session_maker, m
         def __init__(self, **kwargs):
             pass
 
-        async def stream_chat(self, *, messages, **kwargs):
-            context = json.loads(messages[1]["content"])
+        async def chat(self, *, messages, usage_tag, **kwargs):
+            context = json.loads(messages[1]['content'])
+            if usage_tag=='companion.ontology':
+                return '{"status":"not_needed","ontology_id":null,"reason":"Attached context"}'
+            if usage_tag=='companion.query_planner':
+                return '{"mode":"chat","tasks":[],"clarification_questions":[]}'
             captured.append(context)
-            source = next(row for row in context["evidence"] if row["reference"].get("uuid") == "Actor.hero")
-            yield "The attached snapshot shows 8 Power Points." + source["citation_marker"]
+            source=next(row for row in context['evidence'] if row['structured_evidence'] and row['structured_evidence'].get('fields'))
+            return {'text':'The attached snapshot shows 8 Power Points.[[source:'+source['citation_id']+']]',
+                    'response_metadata':{'finish_reason':'stop'}}
 
         async def aclose(self):
             pass
@@ -230,8 +230,8 @@ async def test_snapshot_reaches_synthesis_and_committed_history(session_maker, m
         turn = SimpleNamespace(**{column.name: getattr(row, column.name) for column in row.__table__.columns})
     await runner.execute_turn(turn, "test-lease")
     assert len(captured) == 1
-    assert captured[0]["evidence"][1]["structured_evidence"]["fields"][0]["value"] == 8
-    assert "house rules" in captured[0]["evidence"][0]["excerpt"]
+    assert any((row.get("structured_evidence") or {}).get("fields", [{}])[0].get("value")==8 for row in captured[0]["evidence"])
+    assert any("house rules" in row["excerpt"] for row in captured[0]["evidence"])
     async with session_maker() as session:
         row = await session.get(CompanionTurn, turn.id)
         assert row.status == "completed"

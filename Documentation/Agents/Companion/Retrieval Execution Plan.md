@@ -1,5 +1,11 @@
 # Companion retrieval execution plan
 
+> Historical design record. Assessment, claim verification, memory voting and
+> recovery-only Web policies below have been superseded by the
+> [conversational simplification](./Conversational%20Simplification%20Plan.md).
+> See [Companion](./Companion.md) for the current execution contract.
+
+
 Status: implemented design record; deployment smoke tests, provider behavior and
 load/grounding benchmarks remain rollout acceptance gates. The runtime contract is
 [Companion](./Companion.md#evidence-first-query-pipeline), and effective timeout

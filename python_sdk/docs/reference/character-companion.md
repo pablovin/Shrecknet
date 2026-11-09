@@ -2,19 +2,14 @@
 
 Private canonical-character conversations; see the Character Companion workflow guide.
 
-Turn results remain raw dictionaries and preserve optional retrieval diagnostics:
-`tool_calls[].retrieval_depth`, `timeout_s`, `timeout_layer`, and
-`result.diagnostics` (including same-context assessment attempts/fallback),
-`tool_calls[].source_readiness` and `sources_requiring_attention`. Final message
-`answer_details.diagnostics` preserves the same assessment trace; `extractive`
-segments attribute quotes without asserting verified claims. Existing records may omit these keys. Server-planned light/
-deep retrieval, conditional memory and assessed public-Web recovery do not add
-required SDK arguments. See the [workflow guide](../character_companion.md#retrieval-recovery-and-long-running-turns).
-
-New `result.assessment` is null or `{sufficient: bool, web_queries: list[str]}`;
-`diagnostics.assessment_contract_version="sufficiency_v1"` identifies this shape.
-Raw historical per-need assessment dictionaries remain unchanged. Recovery and
-assessment-outage results conservatively retain partial coverage.
+Turn results remain raw dictionaries preserving tool depth/deadlines, source
+readiness/attention, complete evidence and owner-only diagnostics. New replies use
+Markdown, one `conversation` segment, `assessment:null` and
+`diagnostics.version="markdown_v3"`. Citation validation counts, truncation and
+optional media outcomes are additive. Historical assessment/segment payloads remain
+readable. The router selects parallel sources including Web; any query may use Web
+when allowed. There is no assessment, memory vote or claim-verifier model call.
+See the [workflow guide](../character_companion.md#markdown-generation-and-failures).
 
 ## Methods
 
@@ -165,14 +160,14 @@ quota enforcement requires a backend rollback. Never delete excess legacy chats.
 Answer origins: `turn()` preserves `result.tool_calls`; `messages()` preserves
 nullable `answer_details` with tool calls, supplied evidence and answer segments.
 New answers use one whole-answer `conversation` segment; its citations are not
-verified claim-level attribution.
+claim-level semantic verification.
 ShreckWorld tool calls can additionally include `source_coverage` and a reason
 of `incompatible_index` or `index_not_ready`.
 See [the workflow guide](../character_companion.md#inspect-answer-origins) for
 matching evidence IDs, cache semantics and compatibility.
 
 
-Evidence v2 model configuration adds `model_companion_web_search` and
+Model configuration retains `model_companion_web_search` and
 `model_companion_evidence`. `send()` accepts optional
 `general_knowledge_opt_in=False`, `use_page_scope=False` and
 `clarification_id=None`; default-valued fields are omitted from requests.

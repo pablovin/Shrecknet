@@ -1,5 +1,11 @@
 # Companion query pipeline redesign plan
 
+> Historical design record. Assessment, claim verification, memory voting and
+> recovery-only Web policies below have been superseded by the
+> [conversational simplification](./Conversational%20Simplification%20Plan.md).
+> See [Companion](./Companion.md) for the current execution contract.
+
+
 The [retrieval execution record](./Retrieval%20Execution%20Plan.md) refines this
 original design with implemented Atlas plan reuse, light/deep ShreckWorld calls,
 conditional personal memories, automatic Web recovery and ten-minute call limits.

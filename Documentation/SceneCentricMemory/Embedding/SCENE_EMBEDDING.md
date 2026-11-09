@@ -17,6 +17,18 @@ V2 and Librarian V2 share:
 
 Their renderers and document graphs remain independent.
 
+The runtime retains the model, inference executor and completed query cache across
+successive Celery tasks. Its queue, async locks, worker and prewarm tasks belong to
+the current event loop. After a task closes that loop (including cancellation), the
+next task recreates this async state before accepting queries; pending jobs from
+the closed loop are discarded. A runtime cannot serve two active event loops at
+once. This prevents Elder/Atlas retrieval from waiting on a worker whose queue was
+bound to an earlier task loop. Existing batching, cache and timeout settings apply.
+
+Deploy runtime fixes by rebuilding and restarting retrieval consumers, including
+the Companion worker. No reindexing or database migration is required. An already
+stalled turn must be cancelled and submitted again after worker restart.
+
 ## SemanticDocument graph
 
 Canonical graph sources use:

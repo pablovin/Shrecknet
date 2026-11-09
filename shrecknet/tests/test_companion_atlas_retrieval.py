@@ -38,7 +38,7 @@ async def test_atlas_reuses_plans_and_returns_evidence(monkeypatch, mode):
     row = SimpleNamespace(
         node_id="node-1", node_label="EntityInstance", node_name="Telmori",
         node_alias=None, text="Telmori are a wolf-people of Glorantha.",
-        properties={"updated_at": "2026-01-01", "description": "A wolf-people of Glorantha."},
+        properties={"updated_at": "2026-01-01", "last_updated_date": "2026-02-01", "description": "A wolf-people of Glorantha."},
     )
 
     async def retrieve_plan(*args, **kwargs):
@@ -61,6 +61,7 @@ async def test_atlas_reuses_plans_and_returns_evidence(monkeypatch, mode):
     assert result["status"] == "ok"
     assert result["evidence"][0]["source_type"] == "atlas"
     assert result["evidence"][0]["source_id"] == "node-1"
+    assert result["evidence"][0]["reference"]["updated_at"] == "2026-02-01"
     assert result["evidence"][0]["structured_evidence"]["description"] == "A wolf-people of Glorantha."
     assert len(planner_calls) == (1 if mode=='deep' else 0)
     if mode=='supplied':
@@ -112,3 +113,67 @@ class _Session:
 
     async def __aexit__(self, *args):
         return False
+
+
+class _AtlasGraph:
+    def __init__(self, nodes):
+        self.nodes = nodes
+
+    async def run(self, query, **params):
+        # Evaluate the typed identity predicate against colliding graph records.
+        label = next(label for label in ('EntityInstance', 'Scene', 'Milestone')
+                     if f'MATCH (n:{label})' in query)
+        assert "n['scene_id']" not in query and 'n.scene_id' not in query
+        assert params['ontology'] == 6
+        rows = []
+        for node in self.nodes:
+            if node['label'] != label or node['ontology_id'] != params['ontology']:
+                continue
+            identifier = (node.get('entity_instance_id') or node.get('id')) if label == 'EntityInstance' else node.get('id')
+            if identifier != params['id']:
+                continue
+            revision = (node.get('last_updated_date') or node.get('updated_at')) if label == 'EntityInstance' else node.get('updated_at')
+            rows.append({'revision': revision, 'image': node.get('node_avatar_url')})
+
+        async def data():
+            return rows[:2]
+        return SimpleNamespace(data=data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('label', ['EntityInstance', 'Scene', 'Milestone'])
+@pytest.mark.parametrize('state', ['unchanged', 'changed', 'deleted', 'duplicate'])
+async def test_atlas_validation_checks_exact_typed_source(monkeypatch, label, state):
+    nodes = [
+        {'label':'EntityInstance', 'entity_instance_id':'same', 'ontology_id':6, 'last_updated_date':'entity'},
+        {'label':'Scene', 'id':'same', 'ontology_id':6, 'updated_at':'scene'},
+        {'label':'Milestone', 'id':'milestone', 'scene_id':'same', 'ontology_id':6, 'updated_at':'milestone'},
+        {'label':'Milestone', 'id':'another', 'scene_id':'same', 'ontology_id':6, 'updated_at':'another'},
+        {'label':label, 'id':'same', 'entity_instance_id':'same', 'ontology_id':99, 'updated_at':'other world'},
+    ]
+    selected = next(node for node in nodes if node['label'] == label)
+    identifier = selected.get('entity_instance_id') or selected['id']
+    revision = selected.get('last_updated_date') or selected.get('updated_at')
+    if state == 'deleted':
+        nodes.remove(selected)
+    elif state == 'duplicate':
+        nodes.append(dict(selected))
+    reference = {'node_id':identifier, 'node_label':label,
+                 'updated_at':'old' if state == 'changed' else revision, 'ontology_id':6}
+    graph = _AtlasGraph(nodes)
+
+    @asynccontextmanager
+    async def session(**kwargs):
+        yield graph
+
+    monkeypatch.setattr(retrieval, 'get_driver', lambda: SimpleNamespace(session=session))
+    adapter = retrieval.CompanionRetrieval(SimpleNamespace(request={'context':{'ontology_id':6}}), None)
+    source = retrieval.evidence('atlas', identifier, 'Evidence', reference=reference, scope={'ontology_id':6})
+    if state == 'unchanged':
+        await adapter.validate_sources([source])
+        from app.integrations.companion import media
+        monkeypatch.setattr(media, 'get_driver', lambda: SimpleNamespace(session=session))
+        assert (await media.atlas_image(reference, adapter.settings))['revision'] == revision
+    else:
+        with pytest.raises(ValueError, match='source_changed'):
+            await adapter.validate_sources([source])

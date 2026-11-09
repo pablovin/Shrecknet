@@ -229,3 +229,88 @@ async def test_semantic_search_uses_embedding_runtime(monkeypatch):
 
     assert result["total"] == 1
     assert result["results"][0]["name"] == "Tamura"
+
+
+@pytest.mark.parametrize('cancel_request', [False, True])
+def test_embedding_runtime_survives_successive_celery_task_loops(monkeypatch, cancel_request):
+    from app.graphrag import embedding_runtime as module
+    from app.utils.async_helpers import run_async
+
+    manager = EmbeddingRuntime(
+        queue_max_size=10, batch_max_size=32, batch_wait_ms=5,
+        cache_size=10, request_timeout_s=0.5, startup_timeout_s=1,
+    )
+    manager._prewarm = lambda: asyncio.sleep(0)
+    calls = []
+
+    def encode(texts):
+        calls.append(list(texts))
+        return [[0.1, 0.2] for _ in texts]
+
+    manager._encode_batch = encode
+    monkeypatch.setattr(module, '_runtime', manager)
+    monkeypatch.setattr(module, '_runtime_loop', None)
+    monkeypatch.setattr(module, '_runtime_lock', asyncio.Lock())
+
+    async def first_turn():
+        runtime = await module.get_ready_embedding_runtime()
+        assert await runtime.embed_query('cached', request_id='first') == [0.1, 0.2]
+        if cancel_request:
+            pending = asyncio.create_task(runtime.embed_query('cancelled', request_id='cancelled'))
+            await asyncio.sleep(0)
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        # Let the idle worker bind its queue to this loop before run_async closes it.
+        await asyncio.sleep(0.01)
+
+    async def next_turn(index):
+        runtime = await module.get_ready_embedding_runtime()
+        assert runtime is manager
+        before = len(calls)
+        assert await runtime.embed_query('cached', request_id='cache') == [0.1, 0.2]
+        assert len(calls) == before
+        results = await asyncio.gather(*[
+            runtime.embed_query(f'turn {index} question {i}', request_id=f'{index}-{i}')
+            for i in range(2)
+        ])
+        assert results == [[0.1, 0.2], [0.1, 0.2]]
+        assert runtime._worker_task is not None and not runtime._worker_task.done()
+        await asyncio.sleep(0.01)
+
+    try:
+        run_async(first_turn())
+        run_async(next_turn(2))
+        run_async(next_turn(3))
+    finally:
+        run_async(module.stop_embedding_runtime())
+
+
+def test_embedding_runtime_recovers_interrupted_prewarm(monkeypatch):
+    from app.graphrag import embedding_runtime as module
+    from app.utils.async_helpers import run_async
+
+    manager = EmbeddingRuntime(
+        queue_max_size=10, batch_max_size=32, batch_wait_ms=5,
+        cache_size=10, request_timeout_s=0.5, startup_timeout_s=1,
+    )
+    manager.startup_timeout_s = 0.01
+    manager._prewarm = lambda: asyncio.sleep(10)
+    manager._encode_batch = lambda texts: [[0.1] for _ in texts]
+    monkeypatch.setattr(module, '_runtime', manager)
+    monkeypatch.setattr(module, '_runtime_loop', None)
+    monkeypatch.setattr(module, '_runtime_lock', asyncio.Lock())
+
+    async def interrupted_turn():
+        assert (await module.ensure_embedding_runtime_started()).status == 'starting'
+
+    async def resumed_turn():
+        manager._prewarm = lambda: asyncio.sleep(0)
+        runtime = await module.get_ready_embedding_runtime()
+        assert await runtime.embed_query('resumed', request_id='resumed') == [0.1]
+
+    try:
+        run_async(interrupted_turn())
+        run_async(resumed_turn())
+    finally:
+        run_async(module.stop_embedding_runtime())

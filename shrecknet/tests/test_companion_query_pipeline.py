@@ -420,3 +420,34 @@ async def test_legacy_web_requirement_does_not_gate_admission_or_planning(harnes
     result=await h.run(tools={'allowed':['atlas'],'web':'require'})
     assert result['status']=='completed',result['error']
     assert [row[0] for row in h.retrievals]==['atlas']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['ambiguous', 'resolver_error', 'invalid_id', 'scope_intent', 'page_conflict'])
+@pytest.mark.parametrize('render_fails', [False, True])
+async def test_world_clarifications_use_user_facing_terminology(harness, case, render_fails):
+    h = harness
+    ontology = None
+    if case == 'ambiguous':
+        h.replies['companion.ontology'] = {'status':'ambiguous','ontology_id':None,'reason':'Two worlds'}
+    elif case == 'resolver_error':
+        h.replies['companion.ontology'] = RuntimeError('unavailable')
+    elif case == 'invalid_id':
+        h.replies['companion.ontology'] = {'status':'resolved','ontology_id':999,'reason':'Unknown world'}
+    else:
+        ontology = 1
+        h.replies['companion.scope_intent'] = {
+            'action':'switch' if case == 'page_conflict' else 'clarify',
+            'ontology_name':'Second' if case == 'page_conflict' else None,
+            'resume_pending':False}
+    h.replies['companion.clarification'] = (
+        RuntimeError('unavailable') if render_fails
+        else lambda tag, data: ' '.join(data['questions']))
+    result = (await h.run(ontology=ontology))['result']
+    assert result['outcome'] == 'needs_clarification'
+    assert 'world' in result['text'].lower()
+    assert 'ontology' not in result['text'].lower()
+    assert result['clarification']['kind'] == ('scope_conflict' if case == 'page_conflict' else 'ontology')
+    assert not h.retrievals
+    if case == 'ambiguous':
+        assert 'First, Second' in result['text']

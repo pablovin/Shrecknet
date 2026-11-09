@@ -11,15 +11,13 @@ from app.core.config_store import get_settings
 from app.graph.neo4j import get_driver
 from app.integrations.companion.references import stable_id, target_for
 from app.services.companion_authorization import grant
+from app.integrations.companion.atlas_sources import read_atlas_source
 
 
 async def atlas_image(reference, settings):
     """Read the admitted graph node's own artwork, never category fallback artwork."""
     async with get_driver().session(database=settings.neo4j_database) as graph:
-        result=await graph.run('MATCH (n) WHERE (n:EntityInstance OR n:Scene OR n:Milestone) AND n.ontology_id=$ontology AND coalesce(n.entity_instance_id,n.scene_id,n.milestone_id,n.id)=$id RETURN n.node_avatar_url AS image, coalesce(n.last_updated_date,n.updated_at) AS revision',
-                               ontology=reference['ontology_id'],id=reference['node_id'])
-        row=await result.single()
-        return dict(row) if row else None
+        return await read_atlas_source(graph, reference, reference['ontology_id'])
 
 
 def local_image(url, settings):

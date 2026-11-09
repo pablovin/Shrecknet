@@ -252,7 +252,7 @@ async def process_outbox(identifier):
                     if type(exc) is ValueError and str(exc) == "empty_synthesis":
                         failure["validation_rule"] = "empty_synthesis"
                     current.metrics = {**(current.metrics or {}), **failure}
-                    logger.warning("companion_turn_failed turn_id=%s stage=%s error_type=%s", aggregate, current.status, type(exc).__name__)
+                    logger.warning("companion_turn_failed turn_id=%s stage=%s error_type=%s error_code=%s", aggregate, current.status, type(exc).__name__, exc.code if isinstance(exc, CompanionExecutionError) else "companion_execution_failed")
                     await CompanionRepository(session).terminal(current, "failed", error={"code": exc.code if isinstance(exc, CompanionExecutionError) else "llm_provider_unavailable" if isinstance(exc, LLMProviderUnavailableError) else "companion_execution_failed", "retryable": exc.retryable if isinstance(exc, CompanionExecutionError) else True}, lease=lease)
                     await session.commit()
         else:

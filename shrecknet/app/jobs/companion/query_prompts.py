@@ -79,7 +79,9 @@ Input JSON: identity_description ({identity_summary,psychological_summary,
 personality_traits}, components may be absent), questions (1..3 nonblank strings,
 each at most 500 characters). Return only those questions in brief natural prose,
 no new facts, promises, answers, source claims or relationship changes. This public
-clarification ends the turn while waiting for the next user message.'''
+clarification ends the turn while waiting for the next user message.
+For world selection, use "world" in user-facing questions, never the technical
+term "ontology". Preserve supplied world names and choices.'''
 
 # Shared evidence fragment for SYNTHESIZE and SYNTHESIZE_SHORT; aliases are backend-owned.
 COMPACT_EVIDENCE_CONTRACT = '''Evidence is a compact array, not full navigation records.

@@ -514,3 +514,11 @@ and `sources`, `clarification_questions`),
 fallback/error/merge counts. `diagnostics.plan` is backend execution data and must
 not be submitted by clients as a router contract. Technical router failure uses
 bounded allowed internal search; it does not automatically call Web.
+
+World-selection clarification text uses “world” (for example, “Which world do you
+mean?”). The internal `ontology` clarification kind and ontology ID fields keep
+their existing names; see [the Companion flow](Companion.md).
+
+Final Atlas validation uses the resolved world, source label and canonical source
+ID; missing, duplicate or revised records fail closed with `source_changed`.
+See [Atlas source identity and final validation](Companion.md#atlas-source-identity-and-final-validation).

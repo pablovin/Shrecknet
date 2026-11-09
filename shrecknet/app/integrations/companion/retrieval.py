@@ -17,6 +17,7 @@ from app.services.character_memory_service import CharacterMemoryService
 from app.services.companion_authorization import grant
 from app.schemas.character_companion import Evidence, SourceReadinessRead
 from app.models.character_companion import utcnow
+from app.integrations.companion.atlas_sources import atlas_revision, read_atlas_source
 
 CATEGORIES = {"foundry": "user_provided", "user_attachment": "user_provided", "atlas": "canonical_world", "shreckworld": "document_evidence", "chronicle": "chronicle_record", "web": "external_web", "character_memory": "subjective_memory"}
 logger = logging.getLogger(__name__)
@@ -152,10 +153,11 @@ class CompanionRetrieval:
             description = row.properties.get('description')
             if isinstance(description, str) and 0 < len(description) <= 300:
                 structured['description'] = description
+            revision = atlas_revision(row.properties, row.node_label)
             projected.append(evidence("atlas", row.node_id, row.text,
                 title=getattr(row, "node_name", None) or getattr(row, "node_alias", None) or "Atlas record",
                 reference={"node_id": row.node_id, "ontology_id": self.scope["ontology_id"], "node_label": row.node_label,
-                           **({'updated_at': str(row.properties['updated_at'])} if row.properties.get('updated_at') else {})},
+                           **({'updated_at': str(revision)} if revision else {})},
                 scope={"ontology_id": self.scope["ontology_id"]}, structured=structured or None))
         return projected
 
@@ -259,9 +261,9 @@ class CompanionRetrieval:
                     for ref in refs:
                         if tool=='character_memory':
                             result=await graph.run('MATCH (a:CharacterAgent {id:$agent})-[:HAS_PERSPECTIVE]->(p:ScenePerspective {id:$id}) RETURN p.updated_at AS revision',agent=self.turn.character_agent_id,id=ref['id'])
+                            row=await result.single()
                         else:
-                            result=await graph.run('MATCH (n) WHERE (n:EntityInstance OR n:Scene OR n:Milestone) AND n.ontology_id=$ontology AND coalesce(n.entity_instance_id,n.scene_id,n.milestone_id,n.id)=$id RETURN n.updated_at AS revision',ontology=self.scope['ontology_id'],id=ref['node_id'])
-                        row=await result.single()
+                            row=await read_atlas_source(graph, ref, self.scope['ontology_id'])
                         if not row or (ref.get('updated_at') and str(row['revision'])!=str(ref['updated_at'])):
                             raise ValueError('source_changed')
             elif tool in {'chronicle','shreckworld'}:

@@ -255,7 +255,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
             intent = ScopeIntent(action='keep',ontology_name=None,resume_pending=False)
         diagnostics['scope_intent'] = intent.model_dump()
         if intent.action == 'clarify':
-            return await clarify(['Which ontology (world name) should I use?'],kind='ontology')
+            return await clarify(['Which world should I use?'],kind='ontology')
         if pending and (intent.resume_pending or turn.request.get('clarification_id')):
             query = pending['query'] + '\nClarification: ' + original_query
         if intent.action == 'switch':
@@ -266,7 +266,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                 return await clarify([f'What is the exact world name for {intent.ontology_name}?'],kind='ontology')
             target = {**matches[0],'source':'scope_intent'}
             if explicit and explicit != target['id'] and not override:
-                return await clarify([f'Your page uses {ontology["name"]}. Switch this chat to {target["name"]}, or keep the page ontology?'],kind='scope_conflict',target_id=target['id'])
+                return await clarify([f'Your page uses {ontology["name"]}. Switch this chat to {target["name"]}, or keep the page world?'],kind='scope_conflict',target_id=target['id'])
             old = ontology
             ontology = target
             scope = scoped_context(scope,ontology,changed=True)
@@ -283,7 +283,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                 OntologyDecision, settings.companion_routing_timeout_s, 'companion.ontology')
         except Exception as exc:
             _diag(turn.id, 'ontology_error', {'error_type': type(exc).__name__})
-            return await clarify(['Which ontology (world name) should I use?'], kind='ontology')
+            return await clarify(['Which world should I use?'], kind='ontology')
         if decision.ontology_name and decision.status == 'unresolved':
             async with database() as session:
                 matches = await CompanionScopeService(session).exact(decision.ontology_name)
@@ -294,7 +294,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
         if decision.status == 'resolved':
             resolution_source = 'clarification' if pending else 'inferred'
             if decision.ontology_id not in {o['id'] for o in candidates}:
-                return await clarify(['Which ontology (world name) should I use?'], kind='ontology')
+                return await clarify(['Which world should I use?'], kind='ontology')
             async with database() as session:
                 ontology = await CompanionScopeService(session).get(decision.ontology_id)
             changed = bool(scope.get('ontology_id') and scope['ontology_id'] != ontology['id'])
@@ -304,7 +304,7 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                 query = pending['query'] + '\nClarification: ' + original_query
         elif decision.status != 'not_needed':
             names = ', '.join(o['name'] for o in candidates[:6])
-            return await clarify([f'Which ontology (world name) do you mean?{(" Available worlds include: " + names) if names else ""}'], kind='ontology')
+            return await clarify([f'Which world do you mean?{(" Available worlds include: " + names) if names else ""}'], kind='ontology')
         else:
             scope.pop('ontology_id', None)
     if ontology:

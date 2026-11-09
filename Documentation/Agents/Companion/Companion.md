@@ -43,7 +43,11 @@ The sole runtime path is:
 2. Reuse an explicit/saved validated ontology. `SCOPE_INTENT` detects switches and
    pending continuation; missing scope uses `ONTOLOGY`. Resolve page conflicts and
    persist authorized scope updates before retrieval. Character identity never
-   substitutes for an unresolved conversational world.
+   substitutes for an unresolved conversational world. World-selection
+   clarifications use “world” rather than the technical term “ontology”, including
+   fallback questions when the model is unavailable. Available world names remain
+   visible as choices. Internal ontology identifiers and clarification kinds retain
+   their existing API contracts.
 3. `PLANNER` returns `mode` (`search`, `chat`, `clarify`), `tasks` and
    `clarification_questions`. Each task has `query` (1–500 characters) and one to
    five `sources`: `atlas`, `shreckworld`, `chronicle`, `character_memory`, `web`.
@@ -366,3 +370,26 @@ character fidelity and applicability require curated regression/model evaluation
 The [simplification design](./Conversational%20Simplification%20Plan.md) records
 milestones and compatibility decisions. [Validation](./Validation.md) distinguishes
 local provider-double regressions from live deployment acceptance.
+
+### Retrieval worker event-loop lifecycle
+
+Atlas uses Elder's shared query embedding runtime. Successive Companion Celery
+tasks recreate loop-bound embedding queues and workers while retaining completed
+query cache entries. A cancelled turn cannot leave a queue bound to its closed loop
+for the next turn. See the [shared embedding runtime](../../SceneCentricMemory/Embedding/SCENE_EMBEDDING.md#shared-embedding-runtime)
+for deployment and recovery of previously stalled “Checking Sources” turns.
+
+### Atlas source identity and final validation
+
+After synthesis, Atlas evidence is rechecked within the resolved world using its
+`node_label` and own canonical ID: `EntityInstance.entity_instance_id` (with `id`
+fallback), `Scene.id`, or `Milestone.id`. A milestone's `scene_id` identifies its
+parent and never identifies the milestone itself. Optional source images use the
+same typed lookup. Entity revisions use `last_updated_date`, falling back to
+`updated_at`; scene and milestone revisions use `updated_at`. Retrieval snapshots
+and final checks use the same revision rule. Missing, duplicate, or changed sources
+fail closed; validation does not select an arbitrary matching record.
+
+Failure logs include the safe `error_code` alongside the turn ID, stage and
+exception type. Rebuild and recreate Companion workers to apply these rules; no
+schema migration or reindexing is needed. Previously failed turns must be resubmitted.

@@ -72,6 +72,7 @@ class EmbeddingRuntime:
         self._cache: OrderedDict[str, list[float]] = OrderedDict()
         self._cache_lock = asyncio.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="embed-runtime")
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._worker_task: asyncio.Task[None] | None = None
         self._prewarm_task: asyncio.Task[None] | None = None
         self._shutdown = False
@@ -84,7 +85,27 @@ class EmbeddingRuntime:
     def _normalize_text(text: str) -> str:
         return " ".join((text or "").strip().lower().split())
 
+    def _bind_loop(self) -> None:
+        """Replace async state after a managed Celery task loop has closed.
+
+        The model, executor and completed cache entries are process-local, but
+        queues, locks, tasks and pending futures belong to a single event loop.
+        """
+        loop = asyncio.get_running_loop()
+        if self._loop is loop:
+            return
+        if self._loop is not None:
+            if not self._loop.is_closed():
+                raise EmbeddingRuntimeError("embedding runtime is active on another event loop")
+            self._queue = asyncio.Queue(maxsize=self.queue_max_size)
+            self._cache_lock = asyncio.Lock()
+            self._worker_task = None
+            self._prewarm_task = None
+            self._inflight_batches = 0
+        self._loop = loop
+
     async def start(self) -> None:
+        self._bind_loop()
         if self._worker_task is not None and not self._worker_task.done():
             return
         if self._prewarm_task is not None and not self._prewarm_task.done():
@@ -115,6 +136,7 @@ class EmbeddingRuntime:
         self.ensure_worker_running()
 
     def ensure_worker_running(self) -> None:
+        self._bind_loop()
         if self.status != "ready" or self._shutdown:
             return
         if self._worker_task is not None and not self._worker_task.done():
@@ -139,6 +161,8 @@ class EmbeddingRuntime:
     def _on_prewarm_done(self, task: asyncio.Task[None]) -> None:
         try:
             task.result()
+        except asyncio.CancelledError:
+            return
         except Exception as exc:  # pragma: no cover
             self._mark_failed(exc)
             return
@@ -329,6 +353,7 @@ class EmbeddingRuntime:
 
 _runtime: EmbeddingRuntime | None = None
 _runtime_lock = asyncio.Lock()
+_runtime_loop: asyncio.AbstractEventLoop | None = None
 _runtime_start_task: asyncio.Task[None] | None = None
 
 
@@ -339,7 +364,13 @@ def get_embedding_runtime_status() -> dict[str, str | None]:
 
 
 async def ensure_embedding_runtime_started() -> EmbeddingRuntime:
-    global _runtime
+    global _runtime, _runtime_lock, _runtime_loop
+    loop = asyncio.get_running_loop()
+    if _runtime_loop is not loop:
+        if _runtime_loop is not None and not _runtime_loop.is_closed():
+            raise EmbeddingRuntimeError("embedding runtime is active on another event loop")
+        _runtime_lock = asyncio.Lock()
+        _runtime_loop = loop
     settings = get_settings()
     async with _runtime_lock:
         if _runtime is None:
@@ -352,8 +383,12 @@ async def ensure_embedding_runtime_started() -> EmbeddingRuntime:
                 startup_timeout_s=float(settings.embedding_runtime_startup_timeout_s),
             )
             await _runtime.start()
-        elif _runtime.status == "ready":
-            _runtime.ensure_worker_running()
+        else:
+            _runtime._bind_loop()
+            if _runtime.status == "ready":
+                _runtime.ensure_worker_running()
+            elif _runtime.status == "starting":
+                await _runtime.start()
         return _runtime
 
 

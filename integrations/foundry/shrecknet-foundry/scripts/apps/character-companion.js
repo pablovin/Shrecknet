@@ -1,3 +1,4 @@
+import { companionMarkdown } from './companion-markdown.js';
 import { richMessage, bindRichMedia, openRichSource } from './companion-rich-response.js';
 import { safeImageUrl } from "./atlas-content.js";
 import { buildSnapshot, documentSnapshot, tableSnapshot, readable, referenceFromDrop, openFoundrySource, contextLimits } from "./foundry-context.js";
@@ -103,7 +104,7 @@ export class CompanionWorkspace {
       availability: ({ none: "Choose a companion", ready: "Ready to talk", identity_pending: "Preparing character", archived: "Archived", unavailable: "Currently unavailable" })[this.selection?.availability] || "Choose a companion",
       candidates: this.candidates.map((c) => ({ ...c, selected: c.id === this.selection?.character_agent_id })),
       chats: this.chats.map((c) => ({ ...c, selected: c.id === this.chat?.id })),
-      messages: this.messages.map((m) => ({ ...m, rich: richMessage(m), isUser: m.role === "user",
+      messages: this.messages.map((m) => ({ ...m, markdown: companionMarkdown(m.content), rich: richMessage(m), isUser: m.role === "user",
         indexWarnings: (m.answer_details?.tool_calls || []).filter((call) => call.reason === "incompatible_index" || call.reason === "index_not_ready").map((call) => ({
           ...call, incompatible: call.reason === "incompatible_index",
         })),

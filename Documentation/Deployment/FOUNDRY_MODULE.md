@@ -107,22 +107,21 @@ origin as above.
 
 ## Release process
 
-The module version is **0.5.0**, adding rich Companion replies (verified source
-cards, images/galleries, property tables and book excerpts), labeled
-general-knowledge opt-in, Foundry context v2 image availability, and richer
-turn-stage/commentary feedback on top of the contextual Companion chat,
-four-menu workspace and guided World setup. See the
-[release notes](../../changelogs/foundry-v0.5.0.md) for rollout requirements and
-known limits. The release workflow uses the matching
+The module version is **0.5.1**. The Shrecknet scene-control launcher uses native
+Foundry control dimensions with a white background and a purple logo. Companion
+replies render safe Markdown in both workspace and compact layouts, including the
+fallback when rich replies are disabled or unavailable. See the
+[release notes](../../changelogs/foundry-v0.5.1.md) for compatibility and rollback.
+The release workflow uses the matching
 `changelogs/foundry-vX.Y.Z.md` as its GitHub Release notes.
 
 To build an installable archive locally from the repository root:
 
 ```bash
 node --test integrations/foundry/shrecknet-foundry/tests/*.test.mjs
-mkdir -p dist/foundry-v0.5.0
-(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.5.0/shrecknet-foundry-v0.5.0.zip . -x '.DS_Store' -x '__MACOSX/*')
-cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.5.0/module.json
+mkdir -p dist/foundry-v0.5.1
+(cd integrations/foundry/shrecknet-foundry && zip -qr ../../../dist/foundry-v0.5.1/shrecknet-foundry-v0.5.1.zip . -x '.DS_Store' -x '__MACOSX/*')
+cp integrations/foundry/shrecknet-foundry/module.json dist/foundry-v0.5.1/module.json
 ```
 
 Use a fresh output directory when rebuilding, so obsolete files cannot remain in
@@ -320,7 +319,8 @@ produce a conflict; **Refresh** reloads current server state. Character choices
 and chat lists follow all pagination cursors. All requests use the signed-in
 player's bearer token and existing owner-only authorization, never the GM setup
 key. No conversations are posted to Foundry chat or shared with other players.
-Message text is escaped rather than rendered as trusted HTML.
+Message Markdown renders through an escaped subset; raw HTML, arbitrary model
+links and model images remain inert text. Source navigation uses typed references.
 
 The HTTP namespace is `/users/me/character-companion`. The module reads
 `GET /selection`, `GET /candidates`, `GET /chats`, `GET /chats/{id}`, and
@@ -534,7 +534,10 @@ and [HTTP/SSE contract](../Agents/Companion/Frontend%20API.md#evidence-v2).
 
 The Companion workspace and compact sidecar render the same optional v1 rich
 response as ShreckOS: narrative, entity cards, images/galleries, structured tables
-and book excerpts. Text remains readable on older servers or unknown versions.
+and book excerpts. Headings, lists, tables, code and basic inline Markdown render
+through `companion-markdown.js`; raw HTML and arbitrary model image/link URLs are
+escaped. Text remains readable on older servers, unknown rich-response versions
+or when rich rendering is disabled.
 Source controls use admitted message evidence/targets; table sorting keeps cells
 and citations together. Expansion opens an inert image dialog, never a macro or
 new generation request. Content remains in the current user's private Companion

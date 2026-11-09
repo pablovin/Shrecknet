@@ -37,3 +37,5 @@ This folder contains release notes by application version.
 - [Foundry v0.5.0](./foundry-v0.5.0.md) - Rich Companion replies, general-knowledge opt-in, Foundry context v2 and richer progress feedback.
 
 - [Unreleased Companion retrieval execution](./unreleased-companion-retrieval.md) — reusable Atlas plans, light/deep book evidence, relevant memories, automatic public-Web recovery and coordinated ten-minute call budgets.
+
+- [Foundry v0.5.1](./foundry-v0.5.1.md) - Native-size white launcher with purple branding and safe Companion Markdown.

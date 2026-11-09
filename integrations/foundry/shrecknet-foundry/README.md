@@ -7,7 +7,7 @@ repository without imports from the Shrecknet backend repository.
 
 ## Install or update
 
-Version **0.5.0** supports Foundry VTT 14. In Foundry Setup → Add-on Modules →
+Version **0.5.1** supports Foundry VTT 14. In Foundry Setup → Add-on Modules →
 Install Module, use this stable manifest URL:
 
 ```text
@@ -15,11 +15,14 @@ https://raw.githubusercontent.com/pablovin/Shrecknet/main/integrations/foundry/s
 ```
 
 For this exact version, use the
-[0.5.0 manifest](https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.5.0/module.json).
-See the [release notes](https://github.com/pablovin/Shrecknet/releases/tag/foundry-v0.5.0).
+[0.5.1 manifest](https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.5.1/module.json).
+See the [release notes](https://github.com/pablovin/Shrecknet/releases/tag/foundry-v0.5.1).
 Deploy the matching backend and Companion workers first for contextual snapshots;
 older servers retain text chat with contextual controls unavailable. Reload the
 Foundry table after updating.
+
+The scene-control launcher uses the native Foundry button dimensions, a white
+background, and a purple Shrecknet mark.
 
 ## Connect a World
 
@@ -197,11 +200,14 @@ revision/asset request contracts, Foundry snapshot isolation/retry/navigation, p
 
 ## Rich Companion replies
 
-With the matching evidence-v2 backend and `companion_rich_response_enabled`,
-workspace and compact chat support verified source cards, images/galleries,
+With the matching conversational backend and `companion_rich_response_enabled`,
+workspace and compact chat support cited-source cards, images/galleries,
 property tables and book excerpts. Sorting preserves citations; expansion opens
 an image dialog. Protected media uses the player's service session, Foundry-local
 artwork rechecks table/document permission and revision, and external web images
-load only on click. Older/unknown envelopes fall back to the saved text.
+load only on click. Headings, lists, tables and basic inline Markdown render safely
+with raw HTML, model links and model images treated as inert text. This applies
+with rich rendering disabled as well. Older/unknown envelopes fall back to the
+saved Markdown. Citation validity establishes references, not semantic truth.
 See the [deployment contract](https://github.com/pablovin/Shrecknet/blob/main/Documentation/Deployment/FOUNDRY_MODULE.md#companion-rich-replies)
 for rollout and remaining real-table acceptance.

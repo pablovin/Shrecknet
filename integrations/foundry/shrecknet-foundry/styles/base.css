@@ -1,19 +1,18 @@
+/* Keep Foundry's native control dimensions, border and interaction states.
+   Paint the logo separately so its background cannot replace the white button. */
 .shrecknet-logo-icon {
-  display: inline-block;
-  width: 1.35em;
-  height: 1.35em;
-  background: url("../assets/shrecknet-logo.svg") center / contain no-repeat;
-  filter: brightness(0);
-  vertical-align: middle;
+  background: #fff;
+  color: #9333ea;
 }
-
-/* Match Foundry's native scene-control glyph footprint and use a dark glyph on
-   its light control button. */
-#controls .shrecknet-logo-icon {
-  width: 2rem;
-  height: 2rem;
-  background-size: 2rem;
-  font-size: 0;
+.shrecknet-logo-icon::before {
+  content: "";
+  display: inline-block;
+  width: 1.5rem;
+  height: 1.5rem;
+  vertical-align: middle;
+  background: currentColor;
+  /* The source artwork includes transparent margins around the mark. */
+  mask: url("../assets/shrecknet-logo.svg") center / 145% no-repeat;
 }
 .shrecknet-connection-status { display: grid; grid-template-columns: max-content 1fr; gap: .45rem .75rem; }
 .shrecknet-connection-status dt { color: var(--shrecknet-muted); }
@@ -495,3 +494,8 @@
 .shrecknet-companion-lightbox { max-width:95vw; max-height:95vh; }
 .shrecknet-companion-lightbox::backdrop { background:#000b; }
 .shrecknet-companion-lightbox img { max-width:85vw; max-height:80vh; object-fit:contain; display:block; }
+
+.shrecknet-companion-message .shrecknet-companion-markdown { white-space:normal; }
+.shrecknet-companion-markdown p { margin:.4rem 0; }
+.shrecknet-companion-markdown pre { white-space:pre-wrap; overflow-x:auto; }
+.shrecknet-companion-markdown th, .shrecknet-companion-markdown td { padding:.25rem .5rem; text-align:left; }

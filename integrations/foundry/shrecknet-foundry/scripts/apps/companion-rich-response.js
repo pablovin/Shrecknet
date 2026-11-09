@@ -1,4 +1,5 @@
-// Versioned, inert view models only. Templates escape every source/model value.
+import { companionMarkdown } from './companion-markdown.js';
+// Versioned, inert view models. Markdown pre-escapes content; templates escape other values.
 import { readable, openFoundrySource } from './foundry-context.js';
 import { knowledgeReaderUrl } from './knowledge-companion.js';
 
@@ -32,7 +33,7 @@ export function richMessage(message) {
       const sources=(ids,target)=>ids.map(eid=>({messageId:message.id,evidenceId:eid,targetId:target,label:details.evidence.find(e=>e.evidence_id===eid)?.title}));
       const visual=(assetId)=>{const asset=rich.assets.find(a=>a.id===assetId);return asset?{messageId:message.id,id:asset.id,attribution:asset.attribution,external:asset.delivery_ref.kind==='external'}:null;};
       blocks.push({...b,messageId:message.id,narrative:b.type==='narrative',entity:b.type==='entity_card',excerpt:b.type==='book_excerpt',table:b.type==='table',image:b.type==='image',gallery:b.type==='gallery',
-        passages:b.type==='narrative'?b.segment_ids.map(id=>{const s=details.segments.find(s=>s.id===id);return {text:s.text,sources:sources(s.evidence_ids,null)};}):[],
+        passages:b.type==='narrative'?b.segment_ids.map(id=>{const s=details.segments.find(s=>s.id===id);return {text:s.text,markdown:companionMarkdown(s.text),sources:sources(s.evidence_ids,null)};}):[],
         visual:visual(b.asset_id),visuals:b.type==='gallery'?b.items.map(i=>visual(i.asset_id)):[],sources:sources(b.evidence_ids,b.target_id),
         columns:b.type==='table'?b.columns.map((c,index)=>({...c,index})):[],
         rows:b.type==='table'?b.rows.map(r=>({...r,cells:r.cells.map(c=>({text:c.value===null?'—':String(c.value),sources:sources(c.evidence_ids,r.target_id)}))})):[]});

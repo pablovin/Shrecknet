@@ -451,3 +451,49 @@ async def test_world_clarifications_use_user_facing_terminology(harness, case, r
     assert not h.retrievals
     if case == 'ambiguous':
         assert 'First, Second' in result['text']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model_status', ['resolved', 'ambiguous'])
+async def test_new_chat_requires_named_world_and_resumes_original_question(harness, model_status):
+    h = harness
+    async with h.sessions() as session:
+        (await session.get(Ontology, 1)).name = 'Ctulhu is Calling'
+        (await session.get(Ontology, 2)).name = 'A Knight in Genova'
+        await session.commit()
+    # Even a valid model guess must not silently select the companion's world.
+    h.replies['companion.ontology'] = {
+        'status':model_status, 'ontology_id':1 if model_status == 'resolved' else None,
+        'reason':'Berlin occult setting'}
+    first = await h.run('What can you tell me about Cwenhild?', ontology=None)
+    assert first['result']['outcome'] == 'needs_clarification'
+    assert not h.retrievals
+    async with h.sessions() as session:
+        chat = await session.get(CompanionChat, h.cid)
+        assert chat.resolved_ontology is None
+        assert chat.pending_clarification['kind'] == 'ontology'
+    # Exact user selection wins over a wrong or ambiguous model response.
+    second = await h.run('A Knight in genova (Pendragon)', ontology=None)
+    assert second['status'] == 'completed', second['error']
+    assert second['execution_context']['ontology_id'] == 2
+    assert all(call[2]['ontology_id'] == 2 for call in h.retrievals)
+    synthesis = next(data for tag, data in h.calls if tag == 'companion.grounded_synthesis')
+    assert 'Cwenhild' in synthesis['query']
+    h.calls.clear()
+    await h.run('And her family?', ontology=None)
+    assert not any(tag == 'companion.ontology' for tag, _ in h.calls)
+
+
+@pytest.mark.asyncio
+async def test_explicit_world_in_first_question_overrides_model_guess(harness):
+    h = harness
+    result = await h.run('In SECOND, who rules?', ontology=None)
+    assert result['execution_context']['ontology_id'] == 2
+    assert h.retrievals and all(call[2]['ontology_id'] == 2 for call in h.retrievals)
+
+
+def test_explicit_world_matching_requires_complete_names():
+    from app.services.companion_scope_service import explicitly_named_worlds
+    worlds = [{'id':1,'name':'A Knight in Genova'}, {'id':2,'name':'Genova'}]
+    assert explicitly_named_worlds('Cwenhild, the Genovan knight', worlds) == []
+    assert explicitly_named_worlds('A KNIGHT  in—Genova (Pendragon)', worlds) == worlds

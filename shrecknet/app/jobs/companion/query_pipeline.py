@@ -24,7 +24,7 @@ from app.jobs.elder.context_budget import estimate_tokens
 from app.integrations.companion.retrieval import CompanionRetrieval, web_available
 from app.models.character_companion import CompanionTurn, CompanionAttachment
 from app.repositories.character_companion_repository import CompanionRepository
-from app.services.companion_scope_service import CompanionScopeService, scoped_context
+from app.services.companion_scope_service import explicitly_named_worlds, CompanionScopeService, scoped_context
 from app.services.companion_foundry_context import foundry_evidence
 
 logger = logging.getLogger(__name__)
@@ -291,6 +291,20 @@ async def run(turn, lease, *, actor, identity, rapport, recent, images, image_so
                 candidates = matches
                 decision.status = 'resolved'
                 decision.ontology_id = matches[0]['id']
+        # A model-selected candidate is not proof that the user selected a world.
+        # Preserve established/page scope above, but never infer fresh scope from
+        # character names, identity, setting descriptions or model knowledge.
+        named = explicitly_named_worlds(original_query, candidates)
+        if len(named) == 1:
+            decision.status = 'resolved'
+            decision.ontology_id = named[0]['id']
+            if pending and pending['kind'] in {'ontology', 'scope_conflict'}:
+                decision.resume_pending = True
+        elif len(named) > 1 or decision.status == 'resolved' and not (
+                pending and pending['kind'] == 'scope_conflict' and decision.resume_pending):
+            diagnostics['scope_guess_rejected'] = True
+            decision.status = 'ambiguous'
+            decision.ontology_id = None
         if decision.status == 'resolved':
             resolution_source = 'clarification' if pending else 'inferred'
             if decision.ontology_id not in {o['id'] for o in candidates}:

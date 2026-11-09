@@ -184,3 +184,13 @@ execution also filters returned parent nodes against pinned ontology and optiona
 instance IDs before admitting evidence, even if generated Cypher mentions a scope
 parameter without applying its predicate correctly. Companion can supply a scoped
 embedding timeout without changing the default for other Elder callers.
+
+## Hybrid source identity
+
+Official and async fallback hybrid queries return `labels(parent) AS parent_labels`
+alongside parent properties. Neo4j `Record.data()` drops graph labels when it
+converts nodes to dictionaries, so grouping reads the explicit labels before
+falling back to native node metadata. Canonical source labels remain available to
+Companion final source validation and navigation. This requires updated retrieval
+consumers, including rebuilt Companion workers; no graph migration or reindexing
+is required.

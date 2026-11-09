@@ -244,3 +244,65 @@ async def test_companion_embedding_deadline_is_forwarded_without_changing_shared
     rows=await HybridNeo4jGraphRetriever(_FakeSession(),embedding_timeout_s=600).search(
         'old promise',ontology_ids=[4],top_k=3,node_scope='entity',candidate_limit=20,rerank_limit=8)
     assert rows
+
+
+@pytest.mark.parametrize('label', ['EntityInstance', 'Scene', 'Milestone'])
+def test_hybrid_grouping_preserves_labels_after_record_data_conversion(label):
+    # Neo4j Record.data() converts Node values into dictionaries without .labels.
+    retriever = HybridNeo4jGraphRetriever(session_factory=lambda: None)
+    props = {'ontology_id':4, 'id':'source', 'name':'Source'}
+    if label == 'EntityInstance':
+        props['entity_instance_id'] = 'source'
+    rows = [{'parent':props, 'parent_labels':[label],
+             'chunk':{'text_chunk':'Evidence'}, 'score':0.9, 'source':'hybrid_cypher'}]
+    result = retriever._group_hybrid_rows(rows=rows, query='Evidence', rerank_limit=5)
+    assert result[0]['node_label'] == label
+    assert result[0]['node_id'] == 'source'
+
+
+@pytest.mark.asyncio
+async def test_official_hybrid_projects_labels_before_record_serialization(monkeypatch):
+    from types import SimpleNamespace
+    import sys
+    from types import ModuleType
+    retrievers = ModuleType("neo4j_graphrag.retrievers")
+
+    class Retriever:
+        def __init__(self, *args, **kwargs):
+            assert 'labels(parent) AS parent_labels' in args[3]
+
+        def get_search_results(self, **kwargs):
+            return SimpleNamespace(records=[SimpleNamespace(data=lambda: {
+                'parent':{'id':'scene', 'ontology_id':4}, 'parent_labels':['Scene'],
+                'chunk':{'text_chunk':'Evidence'}, 'score':0.9, 'source':'hybrid_cypher'})])
+
+    retrievers.HybridCypherRetriever = Retriever
+    monkeypatch.setitem(sys.modules, 'neo4j_graphrag.retrievers', retrievers)
+    retriever = HybridNeo4jGraphRetriever(session_factory=lambda: None)
+    retriever._sync_driver = object()
+    result = await retriever._official_hybrid_anchor_search(
+        query='Evidence', query_embedding=[0.1], ontology_id=4,
+        allowed_labels=['EntityInstance', 'Scene', 'Milestone'], candidate_k=10, rerank_limit=5)
+    assert result[0]['node_label'] == 'Scene'
+
+
+@pytest.mark.asyncio
+async def test_async_hybrid_preserves_labels_in_serialized_records():
+    class SerializedSession(_FakeSession):
+        async def run(self, query, **params):
+            result = await super().run(query, **params)
+            if 'RETURN node AS chunk, parent AS parent' in query:
+                assert 'labels(parent) AS parent_labels' in query
+                for row in result._rows:
+                    row['parent_labels'] = list(row['parent'].labels)
+                    row['parent'] = dict(row['parent'])
+                    row['chunk'] = dict(row['chunk'])
+            return result
+
+    session = SerializedSession()
+    retriever = HybridNeo4jGraphRetriever(session)
+    retriever._sync_driver = None
+    result = await retriever._hybrid_anchor_search(
+        session=session, query='Tamura promise', query_embedding=[0.1], ontology_id=4,
+        allowed_labels=['EntityInstance', 'Scene', 'Milestone'], candidate_k=10, rerank_limit=5)
+    assert {row['node_label'] for row in result} == {'EntityInstance', 'Scene'}

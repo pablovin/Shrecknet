@@ -21,7 +21,14 @@ context (page/Foundry metadata), candidates ([{id,name,description,rpg_system}];
 only authorized IDs), pending (null or {id,query,questions,kind,target_id}).
 For a pending scope conflict, interpret which of the candidate worlds the user
 chooses; unrelated new topics need not resume it. Never guess from character
-identity alone. Return exactly {"status":"resolved","ontology_id":1,"ontology_name":null,"reason":"brief","resume_pending":false}.
+identity alone. Without explicit page/saved scope, resolve only a world whose
+name the current user message explicitly supplies, including a reply naming a
+world from pending clarification choices. Do not select a world from a character
+name, companion identity, RPG system, setting clues or your own lore knowledge.
+If a world-dependent question names no world, return ambiguous. Backend enforces
+explicit full-name matching, ignoring case, spacing and punctuation; a sole
+explicit match resumes a pending world question. Casual/world-independent
+questions may still return not_needed. Return exactly {"status":"resolved","ontology_id":1,"ontology_name":null,"reason":"brief","resume_pending":false}.
 resume_pending is boolean, true only if the user answers pending clarification;
 false for new topics. status is resolved/ambiguous/unresolved/not_needed. ontology_id must be a supplied
 candidate ID for resolved, null otherwise. If the user names a world absent from

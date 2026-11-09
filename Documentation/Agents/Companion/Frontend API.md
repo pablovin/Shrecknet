@@ -522,3 +522,9 @@ their existing names; see [the Companion flow](Companion.md).
 Final Atlas validation uses the resolved world, source label and canonical source
 ID; missing, duplicate or revised records fail closed with `source_changed`.
 See [Atlas source identity and final validation](Companion.md#atlas-source-identity-and-final-validation).
+
+In a new chat without page scope, a model-inferred world ID alone cannot establish
+scope. Questions lacking an explicit world name return `needs_clarification` with
+kind `ontology` and user-facing “world” wording. A reply naming a single offered
+world resumes the original question; later turns retain that scope. See
+[explicit world selection](Companion.md#explicit-world-selection-in-new-chats).

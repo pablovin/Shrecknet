@@ -393,3 +393,26 @@ fail closed; validation does not select an arbitrary matching record.
 Failure logs include the safe `error_code` alongside the turn ID, stage and
 exception type. Rebuild and recreate Companion workers to apply these rules; no
 schema migration or reindexing is needed. Previously failed turns must be resubmitted.
+
+Atlas hybrid retrieval projects `labels(parent)` explicitly before Neo4j record
+serialization, which otherwise converts nodes to property dictionaries and drops
+label metadata. Both official and async fallback retrieval preserve canonical
+labels through evidence projection and final validation; generic `Node` labels
+are not accepted as canonical source identities.
+
+### Explicit world selection in new chats
+
+Without a validated page scope or previously selected chat world, the Companion
+requires the user to name a world before world-scoped retrieval. It asks “Which
+world do you mean?” when a question such as “Tell me about Cwenhild” supplies no
+world. A model guess based on the character, setting, RPG system or companion's
+home world cannot establish scope. Complete world-name matching ignores case,
+spacing and punctuation; multiple matches require clarification. World-independent
+conversation can proceed without a world.
+
+A sole explicitly named world overrides a conflicting model guess. Replying
+“A Knight in genova (Pendragon)” selects `A Knight in Genova` and resumes the
+original pending question. Later turns reuse the confirmed world; existing page
+scope and scope-conflict confirmation behavior remain supported. Chats that already
+saved an incorrect world require an explicit switch (for example, “Switch to
+A Knight in Genova”) or a new chat. No migration rewrites saved world choices.

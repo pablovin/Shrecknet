@@ -1523,7 +1523,7 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
         MATCH (parent)-[:HAS_SEMANTIC_DOCUMENT]->(node)
         WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
           AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
-        RETURN node AS chunk, parent AS parent,
+        RETURN node AS chunk, parent AS parent, labels(parent) AS parent_labels,
                score + CASE WHEN toInteger(parent.entity_definition_id) IN $vocabulary_definition_ids THEN 0.05 ELSE 0.0 END AS score,
                'vector' AS source
         ORDER BY score DESC
@@ -1535,7 +1535,7 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
         MATCH (parent)-[:HAS_SEMANTIC_DOCUMENT]->(node)
         WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
           AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
-        RETURN node AS chunk, parent AS parent,
+        RETURN node AS chunk, parent AS parent, labels(parent) AS parent_labels,
                score + CASE WHEN toInteger(parent.entity_definition_id) IN $vocabulary_definition_ids THEN 0.05 ELSE 0.0 END AS score,
                'fulltext' AS source
         ORDER BY score DESC
@@ -1601,7 +1601,7 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
             chunk = row.get("chunk")
             parent_props = self._as_props(parent)
             chunk_props = self._as_props(chunk)
-            labels = self._as_labels(parent)
+            labels = row.get("parent_labels") or self._as_labels(parent)
             if contains_excluded_label(labels):
                 continue
             node_id = self._node_id(parent_props)
@@ -1682,7 +1682,7 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
         MATCH (parent)-[:HAS_SEMANTIC_DOCUMENT]->(node)
         WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
           AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
-        RETURN node AS chunk, parent AS parent, score AS score, 'hybrid_cypher' AS source
+        RETURN node AS chunk, parent AS parent, labels(parent) AS parent_labels, score AS score, 'hybrid_cypher' AS source
         """
 
         def _run() -> list[dict[str, Any]]:
@@ -1738,7 +1738,7 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
             chunk = row.get("chunk")
             parent_props = self._as_props(parent)
             chunk_props = self._as_props(chunk)
-            labels = self._as_labels(parent)
+            labels = row.get("parent_labels") or self._as_labels(parent)
             node_id = self._node_id(parent_props)
             if not node_id:
                 continue

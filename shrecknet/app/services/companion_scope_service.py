@@ -3,11 +3,22 @@
 Ontology discovery follows ElderScopeService's authenticated-viewer policy. Scope
 updates are fenced by the active turn lease and chat revision, before any grant.
 """
+import re
+
 from sqlalchemy import select, update
 from app.models.ontology import Ontology
 from app.models.character_companion import CompanionChat, CompanionTurn, utcnow
 from app.repositories.character_companion_repository import CompanionRepository, fail
 from app.schemas.character_companion import TERMINAL
+
+
+def explicitly_named_worlds(query, candidates):
+    """Match complete world names, ignoring case, spacing and punctuation."""
+    tokens = re.findall(r'\w+', query.casefold())
+    text = ' ' + ' '.join(tokens) + ' '
+    return [world for world in candidates
+            if (name := ' '.join(re.findall(r'\w+', world['name'].casefold())))
+            and ' ' + name + ' ' in text]
 
 
 def ontology_record(row):

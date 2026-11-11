@@ -55,6 +55,27 @@ PDF, DOCX, Markdown, and text under the legacy `pdf` multipart field. Optional
 as a private cover. See [upload API](../API/SHRECKWORLD_UPLOAD_API.md) and
 [reader API](../API/SHRECKWORLD_READER_API.md) for their complete contracts.
 
+## Ruleset registry and ShreckTables (Phase 1)
+
+ShreckWorld persists ruleset drafts, ontology bindings, immutable published
+definition snapshots, generation setup runs, and ShreckTables in additive SQLite
+tables. Shrecknet remains authoritative for ontology, user, and Character Agent
+identity; ShreckWorld stores stable references. Each table pins one existing
+integer `ontology_id` and one published version ID. A table is a live-game record,
+not a second ontology or a legacy `shreckworlds` row.
+
+The `/api/v1/game-engine` routes require `admin` or `world_builder`; ontology-scoped
+operations resolve access with the caller's Shrecknet bearer token. Review and
+publication require an administrator. Table updates use revision preconditions,
+and archive preserves the record and participant links while blocking further
+changes. Participant associations validate the user and, when present, verify a
+Character Agent's ontology and creator before storing its ID.
+
+Generation runs are persisted and dispatched through Celery, but Phase 1 performs
+no extraction. A successful run explicitly reports `extraction_performed=false`
+and zero candidates. See the [Phase 1 API contract](../API/SHRECKWORLD_GAME_ENGINE_API.md)
+for payloads, errors, roles, source revision checks, and compatibility.
+
 ## Structured indexing pipeline
 
 1. Verify the real sentence-transformer model and source SHA-256 before parsing.

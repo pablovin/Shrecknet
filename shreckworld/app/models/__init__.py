@@ -7,6 +7,16 @@ from app.models.shreckworld import (
     ShreckWorldLibraryItem,
     ShreckWorldSettings,
 )
+from app.models.game_engine import (
+    GameBinding,
+    GameDefinition,
+    GameGenerationRun,
+    GameRuleset,
+    GameRulesetReview,
+    GameRulesetVersion,
+    ShreckTable,
+    ShreckTableParticipant,
+)
 
 __all__ = [
     "ShreckWorldDocument",
@@ -19,4 +29,12 @@ __all__ = [
     "ShreckWorldDocumentChunk",
     "ShreckWorldEmbeddingJob",
     "ShreckWorldSettings",
+    "GameRuleset",
+    "GameRulesetReview",
+    "GameBinding",
+    "GameDefinition",
+    "GameRulesetVersion",
+    "GameGenerationRun",
+    "ShreckTable",
+    "ShreckTableParticipant",
 ]

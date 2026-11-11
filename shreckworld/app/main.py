@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routers import router
 from app.api.routers.ontology_items import router as ontology_items_router
 from app.api.routers.ontology_migration import router as ontology_migration_router
+from app.api.routers.game_engine import router as game_engine_router
 from app.core.config import get_settings
 from app.db.session import create_schema
 from app.services.embedding import EmbeddingUnavailable, get_embedder
@@ -59,5 +60,6 @@ def readiness() -> dict:
 app.include_router(router)
 app.include_router(ontology_items_router)
 app.include_router(ontology_migration_router)
+app.include_router(game_engine_router)
 # Source and cover files are deliberately not mounted as public static media.
 # Their download endpoints must apply the same Shrecknet authorization boundary.

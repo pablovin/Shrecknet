@@ -61,6 +61,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 ## ShreckWorld
 
 - [ShreckWorld Agent](./Agents/ShreckWorld/ShreckWorld%20Agent.md) — independent planned-evidence pipeline, coverage rules, persisted job lifecycle, and operations
+- [ShreckWorld game engine API, Phase 1](./API/SHRECKWORLD_GAME_ENGINE_API.md) — ruleset drafts/publication, ontology bindings, placeholder generation runs, and ShreckTable administration
 
 ## Novelist
 
@@ -124,6 +125,7 @@ Documentation for AI agent systems
 System architecture and design documentation
 - [Shrecknet Architecture](./Architecture/SHRECKNET_ARCHITECTURE.md) - High-level architecture diagram and explanation
 - [ShreckWorld structured knowledge service](./Architecture/SHRECKWORLD.md) - Shared Docling/E5 algorithms, independent SQL/Qdrant storage, model readiness, activation, and citation provenance
+- [ShreckWorld game engine Phase 1 implementation plan](./Architecture/SHRECKWORLD_GAME_ENGINE_PHASE_1_PLAN.md) - Ordered Core backend and ShreckOS UI slices for registry, ontology binding, durable placeholder runs, and ShreckTable administration
 - [GraphRAG](./Architecture/GRAPHRAG.md) - Graph-based retrieval augmented generation
 - [Celery](./Architecture/CELERY.md) - Background job processing
 - [Linking](./Architecture/LINKING.md) - Entity linking system

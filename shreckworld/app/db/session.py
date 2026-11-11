@@ -24,6 +24,8 @@ def create_schema() -> None:
         ShreckWorld, ShreckWorldAgentJob, ShreckWorldDocumentChunk,
         ShreckWorldEmbeddingJob, ShreckWorldLibraryItem,
         ShreckWorldSettings,
+        GameBinding, GameDefinition, GameGenerationRun, GameRuleset, GameRulesetReview,
+        GameRulesetVersion, ShreckTable, ShreckTableParticipant,
     )
     from app.db.base import Base
 

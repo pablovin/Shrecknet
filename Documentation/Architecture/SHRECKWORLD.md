@@ -265,7 +265,9 @@ restart-required parser and embedding settings: PDF parser, parser device,
 table extraction toggle/mode, embedding backend and embedding device. Shrecknet
 publishes the non-secret JSON projection through `shreckconfig.shreckworld`;
 ShreckWorld mounts it read-only and applies it when constructing runtime
-settings. Its configuration database remains independent. A non-empty
+settings. Parser device `auto` resolves against CUDA availability at service
+startup; runtime diagnostics and parser cache identity use the effective CPU or
+CUDA device. Its configuration database remains independent. A non-empty
 `SHRECKWORLD_*` deployment value overrides the corresponding projected setting;
 otherwise the shared file and then service defaults apply. Converted artifacts are separate from the source snapshot.
 Prefetch publishes portable unquantized artifacts, while read-only serving

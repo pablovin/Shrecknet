@@ -13,7 +13,7 @@ def test_runtime_projection_contains_parser_and_embedding_settings_and_replaces_
     publish_runtime_config(path, ShreckWorldRuntimeConfig())
     assert json.loads(path.read_text()) == {
         "embedding_backend": "onnx", "embedding_device": "cpu", "pdf_parser": "docling",
-        "parser_device": "cpu", "parser_table_structure_enabled": True,
+        "parser_device": "auto", "parser_table_structure_enabled": True,
         "parser_table_former_mode": "fast",
     }
     before = path.stat().st_mtime_ns
@@ -32,7 +32,7 @@ def test_legacy_backend_only_projection_keeps_compatible_defaults(tmp_path):
     assert config is not None
     assert config.embedding_backend == "onnx"
     assert config.pdf_parser == "docling"
-    assert config.parser_device == "cpu"
+    assert config.parser_device == "auto"
     assert config.parser_table_former_mode == "fast"
 
 

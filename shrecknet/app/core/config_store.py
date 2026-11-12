@@ -13,8 +13,8 @@ from typing import Any, Literal
 from shreckconfig import CORS_FIELDS, cors_file
 from dotenv import dotenv_values
 from shreckconfig.shreckworld import (
-    DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, EmbeddingDevice, ParserDevice, PdfParser,
-    ShreckWorldRuntimeConfig, TableFormerMode, publish_runtime_config,
+    DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, EmbeddingDevice, PdfParser,
+    ShreckWorldRuntimeConfig, TableFormerMode, ParserDeviceSetting, publish_runtime_config,
 )
 
 from pydantic import BaseModel, Field, model_validator
@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     shreckworld_embedding_backend: EmbeddingBackend = DEFAULT_EMBEDDING_BACKEND
     shreckworld_embedding_device: EmbeddingDevice = "cpu"
     shreckworld_pdf_parser: PdfParser = "docling"
-    shreckworld_parser_device: ParserDevice = "cpu"
+    shreckworld_parser_device: ParserDeviceSetting = "auto"
     shreckworld_parser_table_structure_enabled: bool = True
     shreckworld_parser_table_former_mode: TableFormerMode = "fast"
 

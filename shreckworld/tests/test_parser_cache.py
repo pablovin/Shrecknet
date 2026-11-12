@@ -41,11 +41,31 @@ def test_shared_runtime_config_supplies_settings_but_environment_can_override(tm
     assert config.get_settings().parser_device == "cpu"
 
 
+@pytest.mark.parametrize(("cuda_available", "expected"), [(True, "cuda"), (False, "cpu")])
+def test_auto_parser_device_uses_cuda_when_available_and_cpu_otherwise(tmp_path, monkeypatch, cuda_available, expected):
+    import torch
+    from shreckconfig.shreckworld import ShreckWorldRuntimeConfig
+    from app.core import config
+
+    path = tmp_path / "shreckworld.json"
+    path.write_text(ShreckWorldRuntimeConfig(parser_device="auto").model_dump_json())
+    monkeypatch.setattr(config, "runtime_config_file", lambda: path)
+    monkeypatch.setenv("SHRECKWORLD_PARSER_DEVICE", "")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
+
+    assert config.get_settings().parser_device == expected
+
+
 @pytest.fixture
 def parser(tmp_path, monkeypatch):
+    from shreckconfig.shreckworld import ShreckWorldRuntimeConfig
+    runtime_config = tmp_path / "shreckworld-runtime.json"
+    runtime_config.write_text(ShreckWorldRuntimeConfig(parser_device="cpu").model_dump_json())
+    monkeypatch.setattr("app.core.config.runtime_config_file", lambda: runtime_config)
     source = tmp_path / "source.pdf"
     source.write_bytes(pdf_bytes())
     monkeypatch.setenv("SHRECKWORLD_DOCLING_ARTIFACTS_PATH", str(tmp_path / "models"))
+    monkeypatch.setenv("SHRECKWORLD_PARSER_DEVICE", "cpu")
     monkeypatch.setattr("app.services.document_parsing.version", lambda _: "test-parser")
     calls = []
 

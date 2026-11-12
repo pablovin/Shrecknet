@@ -213,7 +213,7 @@ remains liveness only; Compose uses `/ready` for health.
 | `EMBEDDING_THREADS` | `4`, range 1–32 |
 | `DOCLING_ARTIFACTS_PATH` | `./models/docling`; Compose `/hf-cache/docling` |
 | `PDF_PARSER` | `docling`; configurable in Shrecknet admin. A non-empty environment value overrides it. `pymupdf` requires Python 3.11+ and PyMuPDF 2.1 |
-| `PARSER_DEVICE` | `cpu`; independently configured from `EMBEDDING_DEVICE`. Shrecknet admin offers `cpu` and `cuda`; CUDA requires a GPU-enabled image and explicit accelerator failures are reported |
+| `PARSER_DEVICE` | `auto`; independently configured from `EMBEDDING_DEVICE`. `auto` selects CUDA when available in the container and CPU otherwise. Shrecknet admin also offers explicit `cpu` and `cuda`; explicit CUDA requires a GPU-enabled image |
 | `PARSER_HEARTBEAT_SECONDS` | `5`, range 0.1–60 |
 | `PARSER_TABLE_STRUCTURE_ENABLED` | `true` enables Docling table reconstruction; `false` skips reconstruction while retaining layout analysis and keeping OCR disabled. Configurable in Shrecknet admin |
 | `PARSER_TABLE_FORMER_MODE` | `fast` by default; `accurate` requests the more expensive TableFormer mode. Configurable in Shrecknet admin |
@@ -227,11 +227,12 @@ Sentence Transformers; the old `[semantic]` extra remains accepted but is no
 longer needed. The worker wrapper preflights E5 and parser artifacts before
 starting a single-task threaded Celery worker, avoiding PyTorch prefork issues.
 The GPU Compose overlay builds CUDA-enabled PyTorch and exposes the GPU; the
-selected devices come from the Shrecknet runtime settings. Set parser device to
-CUDA while keeping embedding device CPU and backend ONNX to run Docling on GPU
-with CPU ONNX embeddings. CUDA does not silently fall back to CPU. The parser
-device and table mode are included in cache identity, so changing either triggers
-a fresh parse.
+selected devices come from the Shrecknet runtime settings. The repository's
+`scripts/compose_up.py` probes Docker GPU access and selects the GPU overlay or
+CPU build. With parser device `auto`, Docling uses CUDA when the selected image
+and container expose it, and CPU otherwise. Explicit CUDA does not silently fall
+back. The parser device and table mode are included in cache identity, so changing
+either triggers a fresh parse.
 Semantic readiness does not guarantee perfect document
 recognition or factual correctness, and future hardware/model errors can still
 occur; such errors must be visible instead of generating hash vectors.

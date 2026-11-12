@@ -1,48 +1,6 @@
-# Optional NVIDIA GPU acceleration for local Docling and/or E5 processing.
-# Start with: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+# Optional NVIDIA GPU acceleration for the ShreckWorld Docling parser.
+# The scripts/compose_up.py launcher detects Docker GPU access and selects this overlay.
 services:
-  shrecknet_api:
-    build:
-      args:
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
-    environment:
-      SHRECKNET_EMBEDDING_DEVICE: cuda
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  shrecknet_worker:
-    build:
-      args:
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
-    environment:
-      SHRECKNET_EMBEDDING_DEVICE: cuda
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  shrecknet_model_prefetch:
-    build:
-      args:
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
-    environment:
-      SHRECKNET_EMBEDDING_DEVICE: cuda
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
   shreckworld_api:
     build:
       args:

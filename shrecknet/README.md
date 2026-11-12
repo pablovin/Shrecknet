@@ -37,13 +37,17 @@ for context preflight, PDF provenance, debug files, and worker rollout.
 
 ShreckWorld indexing is configured through the administrator configuration
 frontend's **ShreckWorld Indexing** group. It selects the PDF parser, parser
-device, table reconstruction and TableFormer mode, embedding backend, and
+device (`auto`, `cpu`, or `cuda`), table reconstruction and TableFormer mode, embedding backend, and
 embedding device. Shrecknet publishes the non-secret selections under
 `databases/service-config/shreckworld.json`; the standalone ShreckWorld services
 read it through a read-only mount. Changes require restarting its API/worker;
 parser changes require re-indexing existing sources, and backend/device changes
 may require model prefetch. See the
 [configuration contract](../Documentation/API/SHRECKWORLD_INDEXING_API.md#portable-cpu-backends).
+From the repository root, `./scripts/compose_up.py --build` detects Docker GPU
+access and selects the matching CPU or CUDA image. With `auto`, Docling uses the
+device available in that image; explicit CUDA on a CPU-only host is rejected with
+setup guidance.
 
 ## Browser CORS
 

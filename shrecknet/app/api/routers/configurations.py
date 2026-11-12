@@ -267,9 +267,9 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
         "help": "Docling extracts document structure and tables; PyMuPDF is the faster layout-aware alternative. Existing books must be re-indexed after changing this setting.",
     },
     "shreckworld_parser_device": {
-        "type": "enum", "label": "Parser device", "options": ["cpu", "cuda"],
+        "type": "enum", "label": "Parser device", "options": ["auto", "cpu", "cuda"],
         "requires_restart": True,
-        "help": "CUDA requires the GPU Compose overlay and a CUDA-enabled ShreckWorld image. Parser and embedding devices are independent.",
+        "help": "Auto uses CUDA when available and otherwise CPU. Explicit CUDA requires the GPU Compose overlay and a CUDA-enabled ShreckWorld image. Parser and embedding devices are independent.",
     },
     "shreckworld_parser_table_structure_enabled": {
         "type": "boolean", "label": "Extract table structure", "requires_restart": True,

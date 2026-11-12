@@ -14,6 +14,7 @@ EmbeddingBackend = Literal["onnx", "torch", "openvino"]
 EmbeddingDevice = Literal["cpu", "cuda"]
 PdfParser = Literal["docling", "pymupdf"]
 ParserDevice = Literal["cpu", "cuda"]
+ParserDeviceSetting = Literal["auto", "cpu", "cuda"]
 TableFormerMode = Literal["fast", "accurate"]
 DEFAULT_EMBEDDING_BACKEND: EmbeddingBackend = "onnx"
 
@@ -23,7 +24,7 @@ class ShreckWorldRuntimeConfig(BaseModel):
     embedding_backend: EmbeddingBackend = DEFAULT_EMBEDDING_BACKEND
     embedding_device: EmbeddingDevice = "cpu"
     pdf_parser: PdfParser = "docling"
-    parser_device: ParserDevice = "cpu"
+    parser_device: ParserDeviceSetting = "auto"
     parser_table_structure_enabled: bool = True
     parser_table_former_mode: TableFormerMode = "fast"
 

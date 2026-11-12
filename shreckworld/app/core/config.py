@@ -6,7 +6,7 @@ import os
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shreckconfig.shreckworld import (
-    DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, EmbeddingDevice, ParserDevice, PdfParser,
+    DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, EmbeddingDevice, ParserDevice, ParserDeviceSetting, PdfParser,
     TableFormerMode, read_runtime_config, runtime_config_file,
 )
 
@@ -71,15 +71,29 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     shared = read_runtime_config(runtime_config_file())
-    if shared is None:
-        return Settings()
     runtime_fields = {
-        "embedding_backend", "embedding_device", "pdf_parser", "parser_device",
+        "embedding_backend", "embedding_device", "pdf_parser",
         "parser_table_structure_enabled", "parser_table_former_mode",
     }
     configured = {}
-    for field_name in runtime_fields:
-        environment_key = f"SHRECKWORLD_{field_name.upper()}"
-        if not os.environ.get(environment_key):
-            configured[field_name] = getattr(shared, field_name)
+    if shared is not None:
+        for field_name in runtime_fields:
+            environment_key = f"SHRECKWORLD_{field_name.upper()}"
+            if not os.environ.get(environment_key):
+                configured[field_name] = getattr(shared, field_name)
+
+    parser_device_setting: ParserDeviceSetting = "cpu"
+    if shared is not None:
+        parser_device_setting = shared.parser_device
+    if os.environ.get("SHRECKWORLD_PARSER_DEVICE"):
+        parser_device_setting = os.environ["SHRECKWORLD_PARSER_DEVICE"]  # validated below
+    if parser_device_setting == "auto":
+        try:
+            import torch
+            effective_parser_device: ParserDevice = "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            effective_parser_device = "cpu"
+    else:
+        effective_parser_device = parser_device_setting
+    configured["parser_device"] = effective_parser_device
     return Settings(**configured)

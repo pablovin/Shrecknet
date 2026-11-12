@@ -33,7 +33,7 @@ def test_schema_exposes_editable_restart_required_shreckworld_tab():
     assert meta["options"] == ["onnx", "torch", "openvino"]
     assert meta["frontend_editable"] is True and meta["change_impact"] == "service_restart"
     assert schema["field_meta"]["shreckworld_pdf_parser"]["options"] == ["docling", "pymupdf"]
-    assert schema["field_meta"]["shreckworld_parser_device"]["options"] == ["cpu", "cuda"]
+    assert schema["field_meta"]["shreckworld_parser_device"]["options"] == ["auto", "cpu", "cuda"]
     assert schema["field_meta"]["shreckworld_parser_table_former_mode"]["options"] == ["fast", "accurate"]
     assert not set(expected_fields) & set(schema["ungrouped_fields"])
 
@@ -43,7 +43,7 @@ async def test_config_save_persists_and_publishes_backend(isolated_config):
     assert config.get_settings().shreckworld_embedding_backend == "onnx"
     assert json.loads(isolated_config.read_text()) == {
         "embedding_backend": "onnx", "embedding_device": "cpu", "pdf_parser": "docling",
-        "parser_device": "cpu", "parser_table_structure_enabled": True,
+        "parser_device": "auto", "parser_table_structure_enabled": True,
         "parser_table_former_mode": "fast",
     }
     for backend in ("torch", "openvino", "onnx"):

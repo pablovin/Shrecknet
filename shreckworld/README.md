@@ -41,6 +41,15 @@ time. See [CPU backend setup](../Documentation/API/SHRECKWORLD_INDEXING_API.md#p
 for compatibility and rollout details. Terminal attempts emit a
 `[SHRECKWORLD_INDEXING_SUMMARY]` JSON console log with phase and parser timings.
 
+Docling and embeddings have independent devices. For GPU Docling with CPU ONNX
+embeddings, use the GPU Compose overlay and set `SHRECKWORLD_PDF_PARSER=docling`,
+`SHRECKWORLD_PARSER_DEVICE=cuda`, `SHRECKWORLD_EMBEDDING_DEVICE=cpu`, and
+`SHRECKWORLD_EMBEDDING_BACKEND=onnx`. Set
+`SHRECKWORLD_PARSER_TABLE_FORMER_MODE=accurate` for accurate table reconstruction;
+this is slower than `fast`. OCR remains disabled, and image pixels are not
+identified or embedded. Re-index existing items after changing parser settings
+to apply them to their stored structures and vectors.
+
 For a local installation from the repository root:
 
 ```bash

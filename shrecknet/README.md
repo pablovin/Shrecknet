@@ -35,12 +35,14 @@ for context preflight, PDF provenance, debug files, and worker rollout.
 
 ## Shreckworld indexing
 
-Shreckworld embedding is configured through the administrator configuration
-frontend's `Shreckworld` tab (`shreckworld_embedding_backend`, default `onnx`).
-Shrecknet publishes the non-secret selection under
-`databases/service-config/shreckworld.json`; the standalone Shreckworld services
-read it through a read-only mount. Changes require prefetch, restarting its
-API/worker, and reindexing. See the
+ShreckWorld indexing is configured through the administrator configuration
+frontend's **ShreckWorld Indexing** group. It selects the PDF parser, parser
+device, table reconstruction and TableFormer mode, embedding backend, and
+embedding device. Shrecknet publishes the non-secret selections under
+`databases/service-config/shreckworld.json`; the standalone ShreckWorld services
+read it through a read-only mount. Changes require restarting its API/worker;
+parser changes require re-indexing existing sources, and backend/device changes
+may require model prefetch. See the
 [configuration contract](../Documentation/API/SHRECKWORLD_INDEXING_API.md#portable-cpu-backends).
 
 ## Browser CORS

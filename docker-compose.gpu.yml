@@ -1,4 +1,4 @@
-# Optional NVIDIA GPU acceleration for local Docling and E5 processing.
+# Optional NVIDIA GPU acceleration for local Docling and/or E5 processing.
 # Start with: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 services:
   shrecknet_api:
@@ -48,8 +48,9 @@ services:
       args:
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
     environment:
-      SHRECKWORLD_EMBEDDING_DEVICE: cuda
-      SHRECKWORLD_EMBEDDING_BACKEND: torch
+      SHRECKWORLD_PARSER_DEVICE: ${SHRECKWORLD_PARSER_DEVICE:-}
+      SHRECKWORLD_EMBEDDING_DEVICE: ${SHRECKWORLD_EMBEDDING_DEVICE:-}
+      SHRECKWORLD_EMBEDDING_BACKEND: ${SHRECKWORLD_EMBEDDING_BACKEND:-}
     deploy:
       resources:
         reservations:
@@ -63,8 +64,9 @@ services:
       args:
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
     environment:
-      SHRECKWORLD_EMBEDDING_DEVICE: cuda
-      SHRECKWORLD_EMBEDDING_BACKEND: torch
+      SHRECKWORLD_PARSER_DEVICE: ${SHRECKWORLD_PARSER_DEVICE:-}
+      SHRECKWORLD_EMBEDDING_DEVICE: ${SHRECKWORLD_EMBEDDING_DEVICE:-}
+      SHRECKWORLD_EMBEDDING_BACKEND: ${SHRECKWORLD_EMBEDDING_BACKEND:-}
     deploy:
       resources:
         reservations:
@@ -78,8 +80,9 @@ services:
       args:
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
     environment:
-      SHRECKWORLD_EMBEDDING_DEVICE: cuda
-      SHRECKWORLD_EMBEDDING_BACKEND: torch
+      SHRECKWORLD_PARSER_DEVICE: ${SHRECKWORLD_PARSER_DEVICE:-}
+      SHRECKWORLD_EMBEDDING_DEVICE: ${SHRECKWORLD_EMBEDDING_DEVICE:-}
+      SHRECKWORLD_EMBEDDING_BACKEND: ${SHRECKWORLD_EMBEDDING_BACKEND:-}
     deploy:
       resources:
         reservations:

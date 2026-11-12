@@ -261,11 +261,13 @@ The cache can be shared with Shrecknet without sharing its runtime/storage.
 
 `app.services.embedding` owns ONNX Runtime (default), PyTorch, and OpenVINO loading
 and prefetch export. The Shrecknet `/config/schema` group `shreckworld` exposes
-`shreckworld_embedding_backend` as a restart-required enum. Shrecknet publishes a
-non-secret JSON projection through `shreckconfig.shreckworld`; Shreckworld mounts
-it read-only and uses it at encoder initialization. Its configuration database
-remains independent. An explicit `SHRECKWORLD_EMBEDDING_BACKEND` deployment value
-overrides that selection; otherwise ONNX is the fallback. Converted artifacts are separate from the source snapshot.
+restart-required parser and embedding settings: PDF parser, parser device,
+table extraction toggle/mode, embedding backend and embedding device. Shrecknet
+publishes the non-secret JSON projection through `shreckconfig.shreckworld`;
+ShreckWorld mounts it read-only and applies it when constructing runtime
+settings. Its configuration database remains independent. A non-empty
+`SHRECKWORLD_*` deployment value overrides the corresponding projected setting;
+otherwise the shared file and then service defaults apply. Converted artifacts are separate from the source snapshot.
 Prefetch publishes portable unquantized artifacts, while read-only serving
 processes apply CPU optimizations locally. Converted artifact bytes and backend
 participate in encoder identity; switching backend requires reindexing and matching

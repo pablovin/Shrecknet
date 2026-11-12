@@ -8,15 +8,30 @@ from typing import Literal
 import os
 import tempfile
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 EmbeddingBackend = Literal["onnx", "torch", "openvino"]
+EmbeddingDevice = Literal["cpu", "cuda"]
+PdfParser = Literal["docling", "pymupdf"]
+ParserDevice = Literal["cpu", "cuda"]
+TableFormerMode = Literal["fast", "accurate"]
 DEFAULT_EMBEDDING_BACKEND: EmbeddingBackend = "onnx"
 
 
 class ShreckWorldRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     embedding_backend: EmbeddingBackend = DEFAULT_EMBEDDING_BACKEND
+    embedding_device: EmbeddingDevice = "cpu"
+    pdf_parser: PdfParser = "docling"
+    parser_device: ParserDevice = "cpu"
+    parser_table_structure_enabled: bool = True
+    parser_table_former_mode: TableFormerMode = "fast"
+
+    @model_validator(mode="after")
+    def validate_embedding_device(self) -> "ShreckWorldRuntimeConfig":
+        if self.embedding_backend != "torch" and self.embedding_device != "cpu":
+            raise ValueError("ONNX and OpenVINO embedding backends require embedding_device=cpu")
+        return self
 
 
 def runtime_config_file() -> Path:

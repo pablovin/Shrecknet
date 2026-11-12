@@ -101,7 +101,10 @@ def _reconcile_llm_targets(
     return reconciled
 
 SETTINGS_GROUPS: list[dict[str, Any]] = [
-    {"id": "shreckworld", "label": "Shreckworld", "fields": ["shreckworld_embedding_backend"]},
+    {"id": "shreckworld", "label": "ShreckWorld Indexing", "fields": [
+        "shreckworld_pdf_parser", "shreckworld_parser_device", "shreckworld_parser_table_structure_enabled",
+        "shreckworld_parser_table_former_mode", "shreckworld_embedding_backend", "shreckworld_embedding_device",
+    ]},
     {
         "id": "runtime",
         "label": "Runtime",
@@ -251,7 +254,31 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "shreckworld_embedding_backend": {
         "type": "enum", "label": "Embedding backend", "options": ["onnx", "torch", "openvino"],
         "requires_restart": True,
-        "help": "ONNX is the default CPU backend. After changing, drain indexing, run Shreckworld model prefetch, restart its API/worker, then reindex sources. ONNX/OpenVINO require CPU. An explicit SHRECKWORLD_EMBEDDING_BACKEND deployment override takes precedence.",
+        "help": "ONNX is the default CPU backend. Torch can use CPU or CUDA. ONNX/OpenVINO require CPU. After changing, stop indexing, restart ShreckWorld API/worker, then reindex sources. A non-empty SHRECKWORLD_EMBEDDING_BACKEND deployment override takes precedence.",
+    },
+    "shreckworld_embedding_device": {
+        "type": "enum", "label": "Embedding device", "options": ["cpu", "cuda"],
+        "requires_restart": True,
+        "help": "ONNX and OpenVINO require CPU. CUDA requires the Torch backend and a GPU-enabled ShreckWorld deployment.",
+    },
+    "shreckworld_pdf_parser": {
+        "type": "enum", "label": "PDF parser", "options": ["docling", "pymupdf"],
+        "requires_restart": True,
+        "help": "Docling extracts document structure and tables; PyMuPDF is the faster layout-aware alternative. Existing books must be re-indexed after changing this setting.",
+    },
+    "shreckworld_parser_device": {
+        "type": "enum", "label": "Parser device", "options": ["cpu", "cuda"],
+        "requires_restart": True,
+        "help": "CUDA requires the GPU Compose overlay and a CUDA-enabled ShreckWorld image. Parser and embedding devices are independent.",
+    },
+    "shreckworld_parser_table_structure_enabled": {
+        "type": "boolean", "label": "Extract table structure", "requires_restart": True,
+        "help": "Enable Docling table reconstruction. This does not turn on OCR or image identification. Re-index existing books to apply.",
+    },
+    "shreckworld_parser_table_former_mode": {
+        "type": "enum", "label": "Table extraction mode", "options": ["fast", "accurate"],
+        "requires_restart": True,
+        "help": "Accurate mode is slower and may improve table reconstruction; review parser diagnostics because no mode guarantees perfect extraction.",
     },
     "app_name": {"type": "string", "help": "Application name shown in logs and diagnostics."},
     "debug": {"type": "boolean", "help": "Enable debug behavior and verbose internals."},
@@ -471,11 +498,15 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
                 raise HTTPException(400, detail="Companion turn deadline must cover sequential stages and truncation retry; update timeout settings together")
         if not validated.companion_web_search_url and validated.model_companion_web_search.web_search_enabled and validated.model_companion_web_search.provider != "openrouter":
             raise HTTPException(400, detail="Companion model web search requires an OpenRouter target; disable search to make the tool unavailable")
-    if "shreckworld_embedding_backend" in payload:
+    if set(payload) & {
+        "shreckworld_embedding_backend", "shreckworld_embedding_device", "shreckworld_pdf_parser",
+        "shreckworld_parser_device", "shreckworld_parser_table_structure_enabled",
+        "shreckworld_parser_table_former_mode",
+    }:
         try:
             Settings(**merged)
         except ValidationError as exc:
-            raise HTTPException(400, detail="shreckworld_embedding_backend must be onnx, torch, or openvino") from exc
+            raise HTTPException(400, detail="Invalid ShreckWorld parser or embedding configuration") from exc
     if VALIDATION_RETRIES in payload:
         try:
             Settings(**merged)
@@ -643,7 +674,10 @@ def get_config_schema() -> dict[str, Any]:
     restart_required_fields = sorted(editable_fields & RESTART_REQUIRED_FIELDS)
 
     group_definitions: list[dict[str, Any]] = [
-        {"id": "shreckworld", "label": "Shreckworld", "fields": ["shreckworld_embedding_backend"]},
+        {"id": "shreckworld", "label": "ShreckWorld Indexing", "fields": [
+            "shreckworld_pdf_parser", "shreckworld_parser_device", "shreckworld_parser_table_structure_enabled",
+            "shreckworld_parser_table_former_mode", "shreckworld_embedding_backend", "shreckworld_embedding_device",
+        ]},
         {"id": "app_runtime", "label": "App Runtime", "fields": ["app_name", "debug", "event_publisher_mode", "event_webhook_url"]},
         {"id": "user_access", "label": "User Access", "fields": ["user_creation_mode", "email_verification_enabled", "email_service_configured", "smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_tls_mode", "smtp_sender_email", "smtp_sender_name", "email_verification_frontend_url", "email_verification_subject", "email_verification_text_template", "email_verification_html_template"]},
         {"id": "media_uploads", "label": "Media & Uploads", "fields": ["media_root", "media_base_url", "media_public_url", "max_image_upload_bytes", "image_max_width", "image_max_height", "max_pdf_upload_bytes", "library_max_pdf_bytes"]},

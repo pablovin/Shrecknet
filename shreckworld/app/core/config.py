@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 import os
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from shreckconfig.shreckworld import DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, read_runtime_config, runtime_config_file
-
-PARSER_TABLE_MODE: Literal["fast"] = "fast"
-
+from shreckconfig.shreckworld import (
+    DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, EmbeddingDevice, ParserDevice, PdfParser,
+    TableFormerMode, read_runtime_config, runtime_config_file,
+)
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SHRECKWORLD_", extra="ignore", env_ignore_empty=True)
@@ -30,7 +29,7 @@ class Settings(BaseSettings):
     celery_task_always_eager: bool = False
     embedding_model_id: str = "intfloat/multilingual-e5-small"
     embedding_dimension: int = 384
-    embedding_device: str = "cpu"
+    embedding_device: EmbeddingDevice = "cpu"
     embedding_backend: EmbeddingBackend = DEFAULT_EMBEDDING_BACKEND
     embedding_artifacts_path: Path = Path("./models/embedding")
     embedding_revision: str | None = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
@@ -38,7 +37,8 @@ class Settings(BaseSettings):
     embedding_batch_size: int = Field(default=16, ge=1, le=128)
     embedding_threads: int = Field(default=4, ge=1, le=32)
     docling_artifacts_path: Path = Path("./models/docling")
-    pdf_parser: Literal["docling", "pymupdf"] = "docling"
+    pdf_parser: PdfParser = "docling"
+    parser_device: ParserDevice = "cpu"
     parser_heartbeat_seconds: float = Field(default=5, ge=0.1, le=60)
     parser_cache_enabled: bool = True
     parser_export_markdown: bool = False
@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     parser_layout_batch_size: int = Field(default=4, ge=1, le=64)
     parser_table_batch_size: int = Field(default=4, ge=1, le=64)
     parser_table_structure_enabled: bool = True
+    parser_table_former_mode: TableFormerMode = "fast"
     reranker_model_id: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     reranker_enabled: bool = True
     qdrant_url: str = "http://qdrant:6333"
@@ -69,8 +70,16 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
-    if not os.environ.get("SHRECKWORLD_EMBEDDING_BACKEND"):
-        shared = read_runtime_config(runtime_config_file())
-        if shared is not None:
-            return Settings(embedding_backend=shared.embedding_backend)
-    return Settings()
+    shared = read_runtime_config(runtime_config_file())
+    if shared is None:
+        return Settings()
+    runtime_fields = {
+        "embedding_backend", "embedding_device", "pdf_parser", "parser_device",
+        "parser_table_structure_enabled", "parser_table_former_mode",
+    }
+    configured = {}
+    for field_name in runtime_fields:
+        environment_key = f"SHRECKWORLD_{field_name.upper()}"
+        if not os.environ.get(environment_key):
+            configured[field_name] = getattr(shared, field_name)
+    return Settings(**configured)

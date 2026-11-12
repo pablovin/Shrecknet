@@ -42,7 +42,7 @@ Compose defaults to experimental PyMuPDF `to_chunks()`; standalone defaults to
 Docling. DOCX/Markdown use Docling, and plain text uses paragraph blocks.
 Parsers attempt to preserve headings, tables, lists, reading order, and available
 provenance; extraction is heuristic and cannot guarantee complete recognition.
-Docling PDF table structure uses TableFormer fast mode when enabled (the default),
+Docling PDF table structure uses the configured TableFormer mode (`fast` by default),
 heading inference is enabled where supported, and OCR is disabled. DOCX/Markdown/
 text have logical page 1; no PDF coordinates are invented for them.
 
@@ -186,7 +186,8 @@ or a guarantee of worker liveness.
 ## Readiness and configuration
 
 `GET /ready` returns `status=ready`, `parser=docling`,
-`pdf_parser` (`docling` or `pymupdf`), `parser_artifacts_present=true`, and `embedding` containing `ready`, `backend`,
+`pdf_parser` (`docling` or `pymupdf`), configured `parser_device`, table-structure
+toggle and TableFormer mode, `parser_artifacts_present=true`, and `embedding` containing `ready`, `backend`,
 `model`, actual `fingerprint`, resolved snapshot `revision`, `dimension`, and
 `device`. A local model directory uses its directory name as revision label and
 still receives a content fingerprint. Readiness requires real inference with
@@ -203,17 +204,19 @@ remains liveness only; Compose uses `/ready` for health.
 | `EMBEDDING_MODEL_ID` | `intfloat/multilingual-e5-small` |
 | `EMBEDDING_REVISION` | `614241f622f53c4eeff9890bdc4f31cfecc418b3`; change deliberately with model ID |
 | `EMBEDDING_DIMENSION` | `384`; must match actual model and Qdrant collection |
-| `EMBEDDING_DEVICE` | `cpu`; unavailable requested CUDA fails explicitly |
-| `EMBEDDING_BACKEND` | `onnx`; accepts `onnx`, `torch`, `openvino`. An explicit nonempty environment value overrides the shared frontend setting. ONNX/OpenVINO require `EMBEDDING_DEVICE=cpu` |
+| `EMBEDDING_DEVICE` | `cpu`; default comes from the Shrecknet admin runtime config; a non-empty `SHRECKWORLD_EMBEDDING_DEVICE` overrides it. CUDA requires the `torch` backend and a GPU-enabled deployment |
+| `EMBEDDING_BACKEND` | `onnx`; accepts `onnx`, `torch`, `openvino`. Default comes from the Shrecknet admin runtime config; a non-empty environment value overrides it. ONNX/OpenVINO require CPU |
 | `RUNTIME_CONFIG_FILE` | Shared non-secret Shrecknet projection; Compose `/service-config/shreckworld.json`, local repository `shrecknet/databases/service-config/shreckworld.json` |
 | `EMBEDDING_ARTIFACTS_PATH` | `./models/embedding`; Compose `/hf-cache/shreckworld-embedding`; converted model cache, writable only during prefetch |
 | `EMBEDDING_LOCAL_FILES_ONLY` | `true`; runtime uses prefetched local snapshots |
 | `EMBEDDING_BATCH_SIZE` | `16`, range 1–128 |
 | `EMBEDDING_THREADS` | `4`, range 1–32 |
 | `DOCLING_ARTIFACTS_PATH` | `./models/docling`; Compose `/hf-cache/docling` |
-| `PDF_PARSER` | `docling` standalone; Compose `pymupdf`. Set to `docling` to restore the prior PDF parser; restart API and worker. `pymupdf` requires Python 3.11+ and PyMuPDF 2.1 |
+| `PDF_PARSER` | `docling`; configurable in Shrecknet admin. A non-empty environment value overrides it. `pymupdf` requires Python 3.11+ and PyMuPDF 2.1 |
+| `PARSER_DEVICE` | `cpu`; independently configured from `EMBEDDING_DEVICE`. Shrecknet admin offers `cpu` and `cuda`; CUDA requires a GPU-enabled image and explicit accelerator failures are reported |
 | `PARSER_HEARTBEAT_SECONDS` | `5`, range 0.1–60 |
-| `PARSER_TABLE_STRUCTURE_ENABLED` | `true` enables Docling `do_table_structure=True` with TableFormer fast mode; `false` skips reconstruction while retaining layout analysis and keeping OCR disabled. Restart API/worker after changing |
+| `PARSER_TABLE_STRUCTURE_ENABLED` | `true` enables Docling table reconstruction; `false` skips reconstruction while retaining layout analysis and keeping OCR disabled. Configurable in Shrecknet admin |
+| `PARSER_TABLE_FORMER_MODE` | `fast` by default; `accurate` requests the more expensive TableFormer mode. Configurable in Shrecknet admin |
 | `RERANKER_MODEL_ID` | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `RERANKER_ENABLED` | `true`; failed optional reranking retains RRF order and trace warning |
 | `QDRANT_COLLECTION` | `shreckworld_semantic_v2` |
@@ -223,8 +226,13 @@ cache read-only and disable runtime downloads. Both images require Docling and
 Sentence Transformers; the old `[semantic]` extra remains accepted but is no
 longer needed. The worker wrapper preflights E5 and parser artifacts before
 starting a single-task threaded Celery worker, avoiding PyTorch prefork issues.
-The existing GPU overlay also configures ShreckWorld; CUDA does not silently
-fall back to CPU. Semantic readiness does not guarantee perfect document
+The GPU Compose overlay builds CUDA-enabled PyTorch and exposes the GPU; the
+selected devices come from the Shrecknet runtime settings. Set parser device to
+CUDA while keeping embedding device CPU and backend ONNX to run Docling on GPU
+with CPU ONNX embeddings. CUDA does not silently fall back to CPU. The parser
+device and table mode are included in cache identity, so changing either triggers
+a fresh parse.
+Semantic readiness does not guarantee perfect document
 recognition or factual correctness, and future hardware/model errors can still
 occur; such errors must be visible instead of generating hash vectors.
 
@@ -294,31 +302,36 @@ for hosts with different CPU vendors. OpenVINO is primarily optimized for Intel
 hardware; verify its supported CPU/OS requirements on each host. Neither backend
 guarantees a speedup for a particular document or machine.
 
-The Shrecknet administrator configuration frontend renders the `Shreckworld` tab
-from `GET /config/schema`, with an editable `Embedding backend` enum. Save through
-the existing administrator-only `PUT /config/` route:
+The Shrecknet administrator configuration frontend renders the `ShreckWorld
+Indexing` group from `GET /config/schema`. It provides dropdowns for PDF parser,
+parser device, TableFormer mode, embedding backend and device, plus a switch for
+table extraction. Save selections through the existing administrator-only
+`PUT /config/` route:
 
 ```json
-{"shreckworld_embedding_backend": "onnx"}
+{"shreckworld_pdf_parser":"docling","shreckworld_parser_device":"cuda","shreckworld_parser_table_structure_enabled":true,"shreckworld_parser_table_former_mode":"accurate","shreckworld_embedding_backend":"onnx","shreckworld_embedding_device":"cpu"}
 ```
 
-The default is `onnx`; allowed alternatives are `torch` and `openvino`. Invalid
-values return `400`; reads, schema, and saves retain the existing administrator
-authorization. This field has `change_impact=service_restart`, not hot reload.
-Shrecknet's configuration database remains authoritative. Loading/reloading or
-saving settings atomically publishes only `embedding_backend` into
-`shrecknet/databases/service-config/shreckworld.json`. Shreckworld reads this
+Defaults are Docling, CPU parser, table reconstruction enabled, fast TableFormer,
+ONNX and CPU embeddings. ONNX/OpenVINO with CUDA embeddings are rejected; the
+admin form disables that incompatible device choice and switches back to CPU
+when selecting a CPU-only backend. Invalid values return `400`; reads, schema,
+and saves retain existing administrator authorization. All these settings have
+`change_impact=service_restart`; restart the ShreckWorld API and worker after
+saving. Re-index sources after parser changes; prefetch model artifacts before
+switching to a backend/device that needs new artifacts. Shrecknet's configuration
+database remains authoritative. Loading/reloading or saving settings atomically
+publishes all six non-secret values into
+`shrecknet/databases/service-config/shreckworld.json`. ShreckWorld reads this
 projection without accessing Shrecknet's databases. Do not edit the generated
 file; use the frontend/API or the initial seed `configs/shrecknet.initial.json`.
-A missing projection uses ONNX; an invalid projection fails configuration
-explicitly. A publication error fails the configuration operation. The database
-may already contain the saved value; reload repairs the projection before restarting services.
+A missing projection uses the defaults above; an invalid projection fails
+configuration explicitly. A publication error fails the configuration operation.
 
-Precedence is a nonempty `SHRECKWORLD_EMBEDDING_BACKEND` environment override,
-then the shared file, then ONNX. Compose leaves that override empty by default
-so frontend changes take effect. Clear a previous explicit `.env` backend value
-when moving control to the frontend. The GPU overlay explicitly selects `torch`
-with `cuda` and overrides the frontend CPU selection.
+For each setting, a non-empty `SHRECKWORLD_*` environment variable overrides the
+shared file, which overrides the service default. Compose leaves these managed
+values empty by default so admin selections apply. Remove explicit deployment
+overrides when moving control to the frontend.
 
 On first deployment, rebuild Shrecknet and all Shreckworld images to install the
 shared configuration module and runtime dependencies. Compose's Shreckworld

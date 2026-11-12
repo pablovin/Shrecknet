@@ -29,6 +29,8 @@ def _log_indexing_summary(job: ShreckWorldEmbeddingJob, metrics: IndexingJobMetr
         "job_id": job.id, "library_item_id": job.library_item_id, "status": job.status,
         "embedding_backend": metrics.embedding_backend,
         "parser_name": metrics.parser_name, "parser_version": metrics.parser_version,
+        "parser_device": metrics.parser_device, "parser_table_former_mode": metrics.parser_table_former_mode,
+        "embedding_device": metrics.embedding_device,
         "elapsed_seconds": result.elapsed_seconds, "queue_wait_seconds": result.queue_wait_seconds,
         "processing_seconds": result.processing_seconds,
         "phase_seconds": metrics.phase_seconds, "parser_seconds": metrics.parser_seconds,
@@ -81,6 +83,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         settings = get_settings()
         metrics.embedding_backend = embedder.backend
         metrics.embedding_model = embedder.settings.embedding_model_id
+        metrics.embedding_device = settings.embedding_device
         metrics.embedding_fingerprint = str(health["fingerprint"])
         metrics.embedding_revision = str(health["revision"])
         metrics.tokenizer_limit = embedder.token_limit
@@ -90,6 +93,8 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         world = session.get(ShreckWorld, item.shreckworld_id) if item.shreckworld_id else None
         parser = settings.pdf_parser if path.suffix.lower() == ".pdf" else ("plain text" if path.suffix.lower() == ".txt" else "docling")
         metrics.parser_name = parser.replace(" ", "_")
+        metrics.parser_device = settings.parser_device if parser != "pymupdf" else None
+        metrics.parser_table_former_mode = settings.parser_table_former_mode if parser != "pymupdf" else None
         metrics.parser_table_structure_enabled = settings.parser_table_structure_enabled if parser != "pymupdf" else None
         phase("parsing", 5, f"Parsing structure with {parser}; OCR disabled", indeterminate=True)
 

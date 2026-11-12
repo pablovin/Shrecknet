@@ -158,6 +158,8 @@ class IndexingJobMetrics(BaseModel):
     progress_mode: Literal["determinate", "indeterminate"] = "determinate"
     parser_name: str | None = None
     parser_version: str | None = None
+    parser_device: str | None = None
+    parser_table_former_mode: Literal["fast", "accurate"] | None = None
     parse_quality: dict[str, int | None] = Field(default_factory=dict)
     sections: int = 0
     blocks: int = 0
@@ -173,6 +175,7 @@ class IndexingJobMetrics(BaseModel):
     processed_chunks: int = 0
     total_chunks: int | None = None
     embedding_backend: Literal["sentence_transformers", "onnx", "openvino", "hash"] | None = None
+    embedding_device: str | None = None
     embedding_model: str | None = None
     warnings: list[str] = Field(default_factory=list)
     phase_seconds: dict[str, float] = Field(default_factory=dict)

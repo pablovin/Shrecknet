@@ -12,7 +12,10 @@ from typing import Any, Literal
 
 from shreckconfig import CORS_FIELDS, cors_file
 from dotenv import dotenv_values
-from shreckconfig.shreckworld import DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, ShreckWorldRuntimeConfig, publish_runtime_config
+from shreckconfig.shreckworld import (
+    DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, EmbeddingDevice, ParserDevice, PdfParser,
+    ShreckWorldRuntimeConfig, TableFormerMode, publish_runtime_config,
+)
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -215,6 +218,11 @@ def normalize_validation_retry_settings(values: dict[str, Any]) -> dict[str, Any
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SHRECKNET_", extra="ignore", env_ignore_empty=True)
     shreckworld_embedding_backend: EmbeddingBackend = DEFAULT_EMBEDDING_BACKEND
+    shreckworld_embedding_device: EmbeddingDevice = "cpu"
+    shreckworld_pdf_parser: PdfParser = "docling"
+    shreckworld_parser_device: ParserDevice = "cpu"
+    shreckworld_parser_table_structure_enabled: bool = True
+    shreckworld_parser_table_former_mode: TableFormerMode = "fast"
 
     @model_validator(mode="before")
     @classmethod
@@ -235,6 +243,12 @@ class Settings(BaseSettings):
             raise ValueError("Configure both SHRECKNET_JWT_PRIVATE_KEY_PEM and SHRECKNET_JWT_PUBLIC_KEY_PEM")
         if self.jwt_private_key_pem:
             validate_jwt_keypair(self.jwt_private_key_pem, self.jwt_public_key_pem)
+        return self
+
+    @model_validator(mode="after")
+    def validate_shreckworld_embedding_device(self) -> "Settings":
+        if self.shreckworld_embedding_backend != "torch" and self.shreckworld_embedding_device != "cpu":
+            raise ValueError("ONNX and OpenVINO ShreckWorld embeddings require CPU")
         return self
 
     @property
@@ -835,7 +849,14 @@ def load_settings() -> Settings:
 def _publish_shreckworld_config(settings: Settings) -> None:
     publish_runtime_config(
         _default_data_dir() / "service-config" / "shreckworld.json",
-        ShreckWorldRuntimeConfig(embedding_backend=settings.shreckworld_embedding_backend),
+        ShreckWorldRuntimeConfig(
+            embedding_backend=settings.shreckworld_embedding_backend,
+            embedding_device=settings.shreckworld_embedding_device,
+            pdf_parser=settings.shreckworld_pdf_parser,
+            parser_device=settings.shreckworld_parser_device,
+            parser_table_structure_enabled=settings.shreckworld_parser_table_structure_enabled,
+            parser_table_former_mode=settings.shreckworld_parser_table_former_mode,
+        ),
     )
 
 

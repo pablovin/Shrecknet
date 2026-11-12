@@ -16,7 +16,7 @@ from shreckdoc.pipeline import (
     _parse_quality_summary, _atomic_text, normalize_document,
 )
 
-from app.core.config import PARSER_TABLE_MODE, get_settings
+from app.core.config import get_settings
 from app.services.parser_cache import ParserPayload, cache_identity, read_cache, write_cache
 from app.services.pymupdf_parsing import parse_pdf
 
@@ -135,12 +135,12 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
             timings["cache_lookup"] = monotonic() - started
         adapter = DoclingAdapter(
             str(settings.docling_artifacts_path) if settings.docling_artifacts_path else None,
-            device=settings.embedding_device, log_prefix="[SHRECKWORLD_INDEX]", require_complete=True,
+            device=settings.parser_device, log_prefix="[SHRECKWORLD_INDEX]", require_complete=True,
             num_threads=settings.parser_threads, layout_batch_size=settings.parser_layout_batch_size,
             table_batch_size=settings.parser_table_batch_size, export_markdown=settings.parser_export_markdown,
             on_page_progress=lambda done, total: pages.put((done, total)),
             table_structure_enabled=settings.parser_table_structure_enabled,
-            table_former_mode=PARSER_TABLE_MODE,
+            table_former_mode=settings.parser_table_former_mode,
         )
         if cached is not None:
             canonical, items, diagnostics = cached.canonical, cached.items, cached.diagnostics

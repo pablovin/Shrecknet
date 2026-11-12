@@ -72,6 +72,13 @@ def test_adapter_uses_memory_exports_and_preserves_quality_options(tmp_path, doc
     assert set(adapter.phase_seconds) >= {"conversion", "canonical_export", "primitive_extraction"}
 
 
+def test_adapter_can_run_docling_on_cuda(tmp_path, docling):
+    DoclingAdapter(device="cuda", table_former_mode="accurate").parse(tmp_path / "source.pdf", tmp_path)
+    options = docling["options"]
+    assert options.accelerator_options.device == "cuda"
+    assert options.table_structure_options.mode == "accurate"
+
+
 def test_incomplete_conversion_does_not_export(tmp_path, docling):
     docling["status"] = "partial_success"
     with pytest.raises(RuntimeError, match="partial_success"):

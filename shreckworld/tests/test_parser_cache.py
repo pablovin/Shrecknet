@@ -10,6 +10,37 @@ from app.core.config import Settings
 from test_document_metadata import pdf_bytes
 
 
+def test_parser_and_embedding_devices_can_be_configured_independently():
+    settings = Settings(parser_device="cuda", embedding_device="cpu", embedding_backend="onnx")
+    assert settings.parser_device == "cuda"
+    assert settings.embedding_device == "cpu"
+    assert settings.embedding_backend == "onnx"
+
+
+def test_shared_runtime_config_supplies_settings_but_environment_can_override(tmp_path, monkeypatch):
+    from shreckconfig.shreckworld import ShreckWorldRuntimeConfig
+    from app.core import config
+
+    path = tmp_path / "shreckworld.json"
+    path.write_text(ShreckWorldRuntimeConfig(
+        embedding_backend="onnx", embedding_device="cpu", pdf_parser="docling",
+        parser_device="cuda", parser_table_structure_enabled=True, parser_table_former_mode="accurate",
+    ).model_dump_json())
+    monkeypatch.setattr(config, "runtime_config_file", lambda: path)
+    for key in (
+        "SHRECKWORLD_EMBEDDING_BACKEND", "SHRECKWORLD_EMBEDDING_DEVICE", "SHRECKWORLD_PDF_PARSER",
+        "SHRECKWORLD_PARSER_DEVICE", "SHRECKWORLD_PARSER_TABLE_STRUCTURE_ENABLED",
+        "SHRECKWORLD_PARSER_TABLE_FORMER_MODE",
+    ):
+        monkeypatch.setenv(key, "")
+    settings = config.get_settings()
+    assert settings.parser_device == "cuda" and settings.parser_table_former_mode == "accurate"
+    assert settings.embedding_backend == "onnx" and settings.embedding_device == "cpu"
+
+    monkeypatch.setenv("SHRECKWORLD_PARSER_DEVICE", "cpu")
+    assert config.get_settings().parser_device == "cpu"
+
+
 @pytest.fixture
 def parser(tmp_path, monkeypatch):
     source = tmp_path / "source.pdf"
@@ -23,6 +54,7 @@ def parser(tmp_path, monkeypatch):
             assert kwargs["require_complete"] and not kwargs["export_markdown"]
             assert kwargs["num_threads"] == 4
             assert kwargs["table_former_mode"] == "fast"
+            assert kwargs["device"] == Settings().parser_device
             assert kwargs["table_structure_enabled"] is Settings().parser_table_structure_enabled
             self.phase_seconds = {"conversion": 0.25}
             self.progress = kwargs["on_page_progress"]
@@ -94,7 +126,7 @@ def test_reindex_reuses_parse_with_fresh_ids_and_identical_evidence(parser, tmp_
     assert (tmp_path / "parsed" / "second" / "normalized_document.json").exists()
 
 
-@pytest.mark.parametrize("change", ["source", "parser", "threads", "layout_batch", "table_batch", "table_structure", "artifacts", "corrupt", "checksum", "disabled"])
+@pytest.mark.parametrize("change", ["source", "parser", "threads", "layout_batch", "table_batch", "table_structure", "parser_device", "table_mode", "artifacts", "corrupt", "checksum", "disabled"])
 def test_cache_invalidates_or_reparses_safely(parser, tmp_path, monkeypatch, change):
     source, calls, run = parser
     run("first")
@@ -106,6 +138,14 @@ def test_cache_invalidates_or_reparses_safely(parser, tmp_path, monkeypatch, cha
         # Use identity directly: the parser double deliberately expects 4 threads.
         original = cache_identity(source, Settings(), "test-parser")
         assert cache_identity(source, Settings(parser_threads=8), "test-parser") != original
+        return
+    elif change == "parser_device":
+        original = cache_identity(source, Settings(parser_device="cpu"), "test-parser")
+        assert cache_identity(source, Settings(parser_device="cuda"), "test-parser") != original
+        return
+    elif change == "table_mode":
+        original = cache_identity(source, Settings(parser_table_former_mode="fast"), "test-parser")
+        assert cache_identity(source, Settings(parser_table_former_mode="accurate"), "test-parser") != original
         return
     elif change in {"layout_batch", "table_batch"}:
         monkeypatch.setenv(f"SHRECKWORLD_PARSER_{change.upper()}_SIZE", "8")

@@ -70,7 +70,10 @@ def readiness() -> dict:
         except (ImportError, RuntimeError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "ready", "embedding": embedding, "parser": "docling",
-            "pdf_parser": settings.pdf_parser, "parser_artifacts_present": True}
+            "pdf_parser": settings.pdf_parser, "parser_device": settings.parser_device,
+            "parser_table_structure_enabled": settings.parser_table_structure_enabled,
+            "parser_table_former_mode": settings.parser_table_former_mode,
+            "parser_artifacts_present": True}
 
 
 app.include_router(router)

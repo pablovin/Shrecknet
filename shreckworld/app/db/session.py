@@ -22,7 +22,7 @@ def _engine():
 def create_schema() -> None:
     from app.models import (  # noqa: F401
         ShreckWorld, ShreckWorldAgentJob, ShreckWorldDocumentChunk,
-        ShreckWorldEmbeddingJob, ShreckWorldLibraryItem,
+        ShreckWorldDocumentBookMap, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem,
         ShreckWorldSettings,
         GameBinding, GameDefinition, GameGenerationRun, GameRuleset, GameRulesetReview,
         GameRulesetVersion, ShreckTable, ShreckTableParticipant,

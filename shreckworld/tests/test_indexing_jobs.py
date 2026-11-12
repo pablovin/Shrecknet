@@ -6,6 +6,7 @@ from sqlalchemy import select, text
 
 from app.db.session import session_factory
 from app.models import ShreckWorldDocument, ShreckWorldDocumentChunk, ShreckWorldDocumentBlock, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem
+from app.models import ShreckWorldDocumentBookMap
 from app.schemas.shreckworld import EmbeddingJobRead
 from app.services.embedding import EmbeddingUnavailable
 from app.services.ingestion import embed_library_item
@@ -102,6 +103,9 @@ def test_live_progress_structural_chunks_and_final_metrics(api, runtime, monkeyp
         blocks = list(session.scalars(select(ShreckWorldDocumentBlock)))
         assert next(block for block in blocks if block.block_type == "paragraph").provenance[0]["page_no"] == 2
         assert session.get(ShreckWorldDocument, job_id).is_active
+        book_map = session.get(ShreckWorldDocumentBookMap, job_id)
+        assert book_map.payload["document_id"] == job_id
+        assert book_map.payload["quality"]["coverage"] == 1
         assert session.execute(text("SELECT count(*) FROM shreckworld_chunk_fts")).scalar_one() == metrics["total_chunks"]
 
 
@@ -139,7 +143,7 @@ def test_pymupdf_indexing_persists_parser_provenance_and_children(api, runtime, 
     with session_factory()() as session:
         document = session.get(ShreckWorldDocument, job_id)
         assert document.parser_name == "pymupdf"
-        assert document.embedding_version == "pymupdf-e5-context-v1"
+        assert document.embedding_version == "pymupdf-e5-context-v2"
         blocks = list(session.scalars(select(ShreckWorldDocumentBlock)))
         assert next(block for block in blocks if block.docling_reference == "c0").block_metadata["pymupdf_chunk"]["element_ids"] == ["p1.b0"]
         children = list(session.scalars(select(ShreckWorldDocumentChunk).where(ShreckWorldDocumentChunk.chunk_role == "child")))

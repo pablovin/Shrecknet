@@ -1,7 +1,8 @@
 """Ontology-owned source transport; uses the same source lifecycle as legacy reads."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, Path
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, Path
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_world_manager, oauth2_scheme, get_current_user, ShrecknetPrincipal
@@ -14,6 +15,8 @@ from app.schemas.shreckworld import (
     ActionResolutionRequest, ActionResolutionResponse, ShreckWorldAgentJobRead,
 )
 from app.schemas.document_media import MediaRequest, MediaList
+from app.models import ShreckWorldDocument, ShreckWorldDocumentBookMap
+from app.schemas.shreckworld import BookMapRead
 from app.repositories.source_scope import OntologyScope
 
 router = APIRouter(prefix="/ontologies/{ontology_id}", tags=["Ontology sources"])
@@ -57,6 +60,24 @@ def delete_item(item_id: str, scope: OntologyScope = Depends(authorized_ontology
 @router.get("/items/{item_id}/content")
 def content(item_id: str, request: Request, scope: OntologyScope = Depends(authorized_ontology), session: Session = Depends(get_db)):
     return sources.download_library_item(scope, item_id, request, session)
+
+
+@router.get("/items/{item_id}/book-map", response_model=BookMapRead)
+def book_map(item_id: str, document_id: str | None = None,
+             scope: OntologyScope = Depends(authorized_ontology), session: Session = Depends(get_db)):
+    item = sources._item_or_404(session, scope, item_id)
+    statement = select(ShreckWorldDocument).where(ShreckWorldDocument.library_item_id == item.id)
+    if document_id is not None:
+        statement = statement.where(ShreckWorldDocument.id == document_id)
+    else:
+        statement = statement.where(ShreckWorldDocument.is_active.is_(True))
+    document = session.scalar(statement.order_by(ShreckWorldDocument.created_at.desc()).limit(1))
+    if document is None:
+        raise HTTPException(status_code=404, detail="Indexed document generation not found")
+    record = session.get(ShreckWorldDocumentBookMap, document.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Book Map is not ready for this document generation")
+    return record.payload
 
 
 @router.get("/items/{item_id}/cover")

@@ -21,7 +21,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 logger = logging.getLogger(__name__)
 PARSER_NAME = "docling"
-EMBEDDING_VERSION = "docling-e5-context-v1"
+EMBEDDING_VERSION = "docling-e5-context-v2"
 TARGET_EMBEDDING_TOKENS = 400
 MAX_EMBEDDING_TOKENS = 500
 
@@ -746,7 +746,7 @@ def build_chunks(
         owned = [block_map[block_id] for block_id in section.block_ids if block_id in block_map]
         evidence = [
             block for block in owned
-            if block.block_type not in {"page_header", "page_footer", "heading"}
+            if block.block_type != "heading"
             and (block.display_text or block.block_type == "picture")
         ]
         if not evidence:
@@ -801,17 +801,12 @@ def build_chunks(
         # only at paragraphs, list items, table rows, or sentence boundaries.
         child_units = evidence
         for unit in child_units:
+            # Image pixels are not embedded. A text-bearing parser block may
+            # still be embedded; caption blocks remain the normal path.
+            if unit.block_type == "picture" and not unit.display_text.strip():
+                continue
             unit_text = unit.display_text
             source_ids = [unit.block_id]
-            if unit.block_type == "picture" and not unit_text:
-                nearby_captions = [
-                    candidate for candidate in evidence
-                    if candidate.block_type == "caption"
-                    and abs(candidate.reading_order - unit.reading_order) <= 2
-                    and (not unit.page_numbers or set(candidate.page_numbers) & set(unit.page_numbers))
-                ]
-                unit_text = "\n".join(candidate.display_text for candidate in nearby_captions).strip()
-                source_ids.extend(candidate.block_id for candidate in nearby_captions)
             if not unit_text:
                 continue
             prototype = NormalizedChunk(

@@ -1,5 +1,63 @@
 # ShreckWorld reader and rule-review API
 
+## Book Map
+
+`GET /ontologies/{ontology_id}/items/{item_id}/book-map` returns the deterministic
+structural map for the item's active indexed document generation. The endpoint
+uses the same ontology authorization and item scoping as source content reads.
+The response includes `document_id`, `map_version`, flat hierarchical
+`sections` (parent IDs, heading paths, physical/displayed page ranges, block and
+chunk IDs, content types, `node_type`, a 0–1 `confidence`, and `mapping_status`).
+Sections retain stable generation-scoped IDs and direct `source_block_ids`;
+detected tables are child nodes linked to their parser evidence block.
+`mapping_status` is `verified`, `tentative`, or `unresolved`; confidence is
+deterministic structural evidence, not semantic correctness. Missing headings
+or page evidence remain visible as tentative or unresolved nodes and appear in
+`quality.uncertain_section_ids`. Unmapped block IDs and coverage counts are also
+returned.
+Pass `?document_id={generation_id}` to inspect a specific generation belonging
+to that item. Missing or not-yet-backfilled maps return 404; clients should keep
+the existing reader navigation available in that case. The map contains
+references and structural metadata, not copied source passages or summaries.
+
+Maps are created from normalized parser pages, blocks, sections, and chunks
+stored for one document generation. Parser headings, page provenance, and
+available heading geometry inform confidence. The current parser contract does
+not persist PDF bookmark/outline entries or a separately recognized printed
+table of contents, so those signals are not part of this version's confidence.
+Indexing activates a map in the same SQL
+transaction as those records. Backfill existing generations with
+`cd shreckworld && ../.venv/bin/python -m scripts.backfill_book_maps --dry-run`
+to preview counts, then omit `--dry-run` to write maps. The command is
+repeatable and accepts `--batch-size`; it reads no source files and performs no
+embedding inference or vector writes.
+
+On service startup, ShreckWorld checks for document generations without a map
+or with an older map version and enqueues the same idempotent rebuild on the
+existing agent worker queue.
+The API startup does not wait for the backfill. If the broker is unavailable,
+the service logs a safe warning and checks again on its next startup; operators
+can run the command above to backfill immediately.
+
+Text-bearing chunks include the resolved parser heading path and all extracted
+text blocks, including table content and captions. Tables are isolated as
+retrieval units when present. Image nodes retain their page/block locator and
+link a nearby caption only when the caption has a unique same-page reading-order
+match; caption text is embedded as ordinary text evidence. Image pixels are not
+embedded, and this pipeline does not run OCR or image identification. Indexes
+created with the v1 chunk recipe are not considered compatible with the v2
+recipe; explicitly reindex sources to regenerate vectors. Map-only backfill
+does not regenerate embeddings.
+
+`POST /ontologies/{ontology_id}/query` may include `book_map_node_id` together
+with one `library_item_id` and `retrieval_strategy="single"`. The service
+resolves that node and its descendants against the item's active compatible
+generation, then limits vector, lexical, and exact search to the map's referenced
+chunks. Unknown nodes return 404; a map or compatible index that is not ready
+returns 409. Multi-source and planned queries do not accept a node scope. A
+node with no text-bearing descendant chunks returns no citations; its image
+page remains available through the map reader.
+
 ## Direct ontology item routes
 
 The authoritative world is a Shrecknet ontology. Discover it through Shrecknet `/ontologies/`; ShreckWorld stores items directly under its integer `ontology_id`. No create-world call or library provisioning is needed, including for the first source. The direct API validates the caller's Shrecknet token and checks `/ontologies/{ontology_id}` on its trusted owner before source operations. Missing/denied ontologies retain 404/403; identity or ontology-service outages return 503, not an empty library. Management also requires `admin` or `world_builder`.

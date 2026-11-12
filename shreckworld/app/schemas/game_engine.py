@@ -130,6 +130,18 @@ class RunCreate(StrictModel):
     source_refs: list[SourceReference] = Field(default_factory=list, max_length=100)
 
 
+class EntityDiscoveryCreate(StrictModel):
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    binding_id: str = Field(min_length=1, max_length=36)
+    source_ids: list[str] = Field(min_length=1, max_length=20)
+
+
+class EntityDiscoveryReview(StrictModel):
+    decision: Literal["approve", "reject"]
+    reason: str | None = Field(default=None, max_length=2000)
+    candidate_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
 class RunRead(StrictModel):
     id: str
     ruleset_id: str

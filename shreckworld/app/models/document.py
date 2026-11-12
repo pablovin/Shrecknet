@@ -62,3 +62,13 @@ class ShreckWorldDocumentBlock(Base):
     docling_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
     provenance: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     block_metadata: Mapped[dict[str, Any]] = mapped_column(JSON)
+
+
+class ShreckWorldDocumentBookMap(Base):
+    """Deterministic structural map pinned to one indexed document generation."""
+    __tablename__ = "shreckworld_document_book_maps"
+
+    document_id: Mapped[str] = mapped_column(ForeignKey("shreckworld_documents.id", ondelete="CASCADE"), primary_key=True)
+    map_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

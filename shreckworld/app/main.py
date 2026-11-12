@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from threading import Thread
 
 from shreckconfig import load_cors_policy
 
@@ -15,6 +16,7 @@ from app.core.config import get_settings
 from app.db.session import create_schema
 from app.services.embedding import EmbeddingUnavailable, get_embedder
 from app.services.pymupdf_parsing import validate_parser
+from app.services.book_map import has_missing_book_maps
 
 settings = get_settings()
 settings.media_root.mkdir(parents=True, exist_ok=True)
@@ -23,10 +25,24 @@ cors_policy = load_cors_policy()
 app.add_middleware(CORSMiddleware, **cors_policy.model_dump(), expose_headers=["Accept-Ranges", "Content-Length", "Content-Range", "ETag"])
 
 
+def _queue_startup_book_map_backfill() -> None:
+    try:
+        from app.db.session import session_factory
+        with session_factory()() as session:
+            backfill_needed = has_missing_book_maps(session)
+        if backfill_needed:
+            from app.tasks.book_map import backfill_book_maps_on_startup
+            backfill_book_maps_on_startup.apply_async(retry=False)
+    except Exception as exc:
+        # The next service start will repeat this idempotent check.
+        logging.getLogger(__name__).warning("Unable to queue startup Book Map backfill (%s)", type(exc).__name__)
+
+
 @app.on_event("startup")
 def startup() -> None:
     settings.media_root.mkdir(parents=True, exist_ok=True)
     create_schema()
+    Thread(target=_queue_startup_book_map_backfill, name="book-map-backfill-check", daemon=True).start()
     try:
         get_embedder().ensure_ready()
     except EmbeddingUnavailable as exc:

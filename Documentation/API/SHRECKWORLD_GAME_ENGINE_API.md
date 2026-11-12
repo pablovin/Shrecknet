@@ -33,7 +33,11 @@ Publication requires at least one validated definition. Published snapshots cann
 | `POST /runs/{id}/retries` | `Idempotency-Key: <key>` header | `202` new attempt linked to the failed/cancelled run; only eligible terminal runs can retry. |
 | `POST /runs/{id}/cancel` | — | Cancels queued work or requests cancellation for a running task. |
 
-Phase 1's Celery task is deliberately a placeholder: it records `execution_mode="placeholder"`, `candidates_created=0`, `extraction_performed=false`, and diagnostic code `extraction_not_implemented`. It does not call a model or create rules. The ShreckOS UI must describe this status plainly. Safe errors include `dispatch_failed` and `placeholder_run_failed`; tokens, source excerpts, and raw exception text are not stored as diagnostics.
+Runs created through `POST /rulesets/{id}/runs` retain the Phase 1 placeholder behavior. Entity Discovery uses the separate `POST /rulesets/{id}/entity-discovery` endpoint with `{idempotency_key, binding_id, source_ids}`. Each source ID must be an indexed item in the bound ontology with an active Book Map. The service pins the active document ID and source digest before queueing; the worker reads that generation's Book Map and blocks and does not re-index the source.
+
+Entity discovery progresses through `queued`, `running`, `awaiting_review`, and a terminal reviewed state (`succeeded`). Its run result stores provisional candidate categories (`entity_type`, `specialization`, `relationship`, `field_resource`, `catalog`, `procedure`), descriptions, aliases, relationships, uncertainty, confidence, and exact document/block evidence references. Candidate descriptions are not copied into ruleset definitions and do not mutate the Shrecknet ontology. `POST /runs/{id}/entity-review` is administrator-only and accepts `{decision: "approve"|"reject", reason?, candidate_ids?}`; omitted candidate IDs apply the decision to all candidates. Review updates only candidate review metadata. Failed runs expose the safe diagnostic `entity_discovery_failed`; source passages and raw exceptions are not stored in diagnostics.
+
+The initial entity-discovery model target is `openrouter/deepseek/deepseek-v4.1-flash`, invoked via the existing ShreckLLM structured-output integration. Independent persisted model-target administration is not yet available. Safe errors include `dispatch_failed` and `placeholder_run_failed`; tokens, source excerpts, and raw exception text are not stored as diagnostics.
 
 ## ShreckTables
 

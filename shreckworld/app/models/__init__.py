@@ -1,4 +1,4 @@
-from app.models.document import (ShreckWorldDocument, ShreckWorldDocumentPage, ShreckWorldDocumentSection, ShreckWorldDocumentBlock)
+from app.models.document import (ShreckWorldDocument, ShreckWorldDocumentPage, ShreckWorldDocumentSection, ShreckWorldDocumentBlock, ShreckWorldDocumentBookMap)
 from app.models.shreckworld import (
     ShreckWorld,
     ShreckWorldAgentJob,
@@ -23,6 +23,7 @@ __all__ = [
     "ShreckWorldDocumentPage",
     "ShreckWorldDocumentSection",
     "ShreckWorldDocumentBlock",
+    "ShreckWorldDocumentBookMap",
     "ShreckWorld",
     "ShreckWorldAgentJob",
     "ShreckWorldLibraryItem",

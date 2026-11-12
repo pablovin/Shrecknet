@@ -34,7 +34,7 @@ from app.schemas.shreckworld import (
 )
 from app.repositories.source_scope import OntologyScope, source_scope, item_scope_clause, item_in_scope
 from app.schemas.document_media import MediaRequest, MediaList
-from app.services.query import query_shreckworld
+from app.services.query import BookMapScopeError, query_shreckworld
 from app.services.rule_resolution import resolve_action
 from app.services.embedding import EmbeddingInputError, EmbeddingUnavailable, get_embedder
 from app.services.document_metadata import resolve_upload_metadata
@@ -369,9 +369,13 @@ def query(shreckworld_id: str, payload: ShreckWorldQueryRequest, session: Sessio
     # Selection supplies untrusted retrieval context, never model instructions.
     retrieval_query = payload.query + (" " + payload.selection.text if payload.selection else "")
     with _semantic_errors():
-        citations, trace = query_shreckworld(session, shreckworld_id=shreckworld_id, query=retrieval_query,
-                                           top_k=payload.top_k, library_item_id=payload.library_item_id,
-                                           library_item_ids=payload.library_item_ids)
+        try:
+            citations, trace = query_shreckworld(session, shreckworld_id=shreckworld_id, query=retrieval_query,
+                                               top_k=payload.top_k, library_item_id=payload.library_item_id,
+                                               library_item_ids=payload.library_item_ids,
+                                               book_map_node_id=payload.book_map_node_id)
+        except BookMapScopeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     answer_status: Literal["complete", "partial", "unsupported"] | None = None
     claims: list[GroundedClaim] = []
     missing_information: list[str] = []

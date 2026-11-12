@@ -17,7 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from shreckdoc.retrieval import extract_named_terms, reciprocal_rank_fusion, select_diverse
 
-from app.models import ShreckWorldDocument, ShreckWorldDocumentChunk, ShreckWorldLibraryItem
+from app.models import (ShreckWorldDocument, ShreckWorldDocumentBookMap,
+                        ShreckWorldDocumentChunk, ShreckWorldLibraryItem)
 from app.repositories.documents import active_documents, child_rows, citation_provenance, lexical_candidates
 from app.schemas.shreckworld import ShreckWorldCitation
 from app.services.embedding import cosine_similarity, get_embedder
@@ -35,11 +36,20 @@ class RetrievalScope:
     rows: list
     by_id: dict[str, tuple[ShreckWorldDocumentChunk, ShreckWorldLibraryItem]]
     trace: dict[str, Any]
+    chunk_ids: set[str] | None = None
+
+
+class BookMapScopeError(ValueError):
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
 
 
 def resolve_retrieval_scope(session: Session, *, shreckworld_id: str,
                             library_item_id: str | None = None,
-                            library_item_ids: list[str] | None = None) -> RetrievalScope:
+                            library_item_ids: list[str] | None = None,
+                            book_map_node_id: str | None = None) -> RetrievalScope:
     """Resolve active generations and eligible sources once per query."""
     if library_item_id is not None and library_item_ids is not None:
         raise ValueError("Specify either library_item_id or library_item_ids, not both")
@@ -48,6 +58,30 @@ def resolve_retrieval_scope(session: Session, *, shreckworld_id: str,
     documents = active_documents(session, shreckworld_id, fingerprint, library_item_id, library_item_ids)
     document_ids = [document.id for document in documents]
     rows = child_rows(session, document_ids)
+    chunk_ids: set[str] | None = None
+    if book_map_node_id is not None:
+        matching_documents = [document for document in documents if document.library_item_id == library_item_id]
+        if not matching_documents:
+            raise BookMapScopeError(409, "This book needs a compatible active index before its Book Map can scope a query")
+        document = matching_documents[0]
+        book_map = session.get(ShreckWorldDocumentBookMap, document.id)
+        if book_map is None:
+            raise BookMapScopeError(409, "The Book Map is not ready for this indexed generation")
+        nodes = book_map.payload.get("sections", [])
+        node_by_id = {node.get("id"): node for node in nodes if isinstance(node, dict)}
+        if book_map_node_id not in node_by_id:
+            raise BookMapScopeError(404, "Book Map node not found")
+        descendants = {book_map_node_id}
+        while True:
+            children = {node.get("id") for node in nodes
+                        if node.get("parent_id") in descendants and node.get("id")}
+            new_descendants = children - descendants
+            if not new_descendants:
+                break
+            descendants.update(new_descendants)
+        chunk_ids = {chunk_id for node_id in descendants
+                     for chunk_id in (node_by_id[node_id].get("chunk_ids") or [])}
+        rows = [row for row in rows if row[0].id in chunk_ids]
     by_id = {chunk.id: (chunk, item) for chunk, item in rows}
     eligible_items = {document.library_item_id for document in documents}
     statement = select(ShreckWorldLibraryItem.id, ShreckWorldLibraryItem.title,
@@ -74,14 +108,17 @@ def resolve_retrieval_scope(session: Session, *, shreckworld_id: str,
         "embedding_fingerprint": fingerprint, "sources_requiring_reindex": len(reindex_items),
         "sources_without_ready_index": len(without_ready_index), "requested_sources": len(scoped_items),
         "sources_searched": len(searched_items), "qdrant_fallback": False, "reranker_fallback": False,
+        "book_map_scoped": book_map_node_id is not None,
     }
+    if book_map_node_id is not None:
+        trace.update(book_map_node_id=book_map_node_id, book_map_scope_empty=not rows)
     trace['sources_requiring_attention'] = [
         {'library_item_id': item.id, 'title': item.title,
          'reason': 'incompatible_index' if item.id in reindex_items else
                    'empty_index' if item.id in eligible_items else 'index_not_ready'}
         for item in sorted(source_rows, key=lambda row: row.id) if item.id not in searched_items
     ]
-    return RetrievalScope(session, shreckworld_id, fingerprint, document_ids, rows, by_id, trace)
+    return RetrievalScope(session, shreckworld_id, fingerprint, document_ids, rows, by_id, trace, chunk_ids)
 
 
 def search_candidates(scope: RetrievalScope, query: str, *, limit: int = 40) -> tuple[list[dict[str, Any]], dict[str, int | bool]]:
@@ -95,7 +132,7 @@ def search_candidates(scope: RetrievalScope, query: str, *, limit: int = 40) -> 
     try:
         vector_ids = search_chunks(
             world_id=scope.shreckworld_id, document_ids=scope.document_ids,
-            fingerprint=scope.fingerprint, vector=vector,
+            fingerprint=scope.fingerprint, vector=vector, chunk_ids=scope.chunk_ids,
         )
         qdrant_fallback = False
     except Exception:
@@ -103,7 +140,8 @@ def search_candidates(scope: RetrievalScope, query: str, *, limit: int = 40) -> 
             -cosine_similarity(vector, json.loads(row[0].embedding_json)), row[1].authority_priority, row[0].id
         ))[:limit]]
         qdrant_fallback = True
-    lexical_ids = lexical_candidates(scope.session, query, scope.document_ids, limit=limit)
+    lexical_ids = lexical_candidates(scope.session, query, scope.document_ids, limit=limit,
+                                     chunk_ids=scope.chunk_ids)
     terms = extract_named_terms(query)
     exact = []
     for chunk, item in scope.rows:
@@ -175,11 +213,13 @@ def hydrate_candidate(scope: RetrievalScope, candidate: dict[str, Any], *, numbe
 
 def query_shreckworld(session: Session, *, shreckworld_id: str, query: str, top_k: int,
                       library_item_id: str | None = None,
-                      library_item_ids: list[str] | None = None) -> tuple[list[ShreckWorldCitation], dict]:
+                      library_item_ids: list[str] | None = None,
+                      book_map_node_id: str | None = None) -> tuple[list[ShreckWorldCitation], dict]:
     started = time.perf_counter()
     scope = resolve_retrieval_scope(
         session, shreckworld_id=shreckworld_id,
         library_item_id=library_item_id, library_item_ids=library_item_ids,
+        book_map_node_id=book_map_node_id,
     )
     trace = scope.trace
     if not scope.rows:

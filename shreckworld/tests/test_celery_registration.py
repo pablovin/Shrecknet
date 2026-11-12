@@ -20,6 +20,11 @@ assert agent in celery_app.tasks, list(celery_app.tasks)
 assert celery_app.tasks[agent].run.__module__ == "app.tasks.agent"
 agent_route = celery_app.amqp.router.route({}, agent, args=("job",))
 assert agent_route["queue"].name == "shreckworld_agent", agent_route
+book_map = "shreckworld.book_map.backfill"
+assert book_map in celery_app.tasks, list(celery_app.tasks)
+assert celery_app.tasks[book_map].run.__module__ == "app.tasks.book_map"
+book_map_route = celery_app.amqp.router.route({}, book_map, args=())
+assert book_map_route["queue"].name == "shreckworld_agent", book_map_route
 '''],
         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
         timeout=30,

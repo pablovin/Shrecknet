@@ -7,7 +7,8 @@ from qdrant_client import QdrantClient
 from sqlalchemy import select, text
 
 from app.db.session import session_factory
-from app.models import ShreckWorldDocument, ShreckWorldDocumentChunk, ShreckWorldLibraryItem
+from app.models import (ShreckWorldDocument, ShreckWorldDocumentBookMap,
+                        ShreckWorldDocumentChunk, ShreckWorldLibraryItem)
 from app.services.embedding import EmbeddingUnavailable
 from app.services.citation_regions import citation_rectangles
 from test_indexing_jobs import api, queued_job, run, runtime
@@ -43,6 +44,55 @@ def test_hybrid_retrieval_parent_evidence_and_viewer_provenance(api, runtime, mo
     client, headers, _ = api
     assert client.post(f"{prefix}/index", headers=headers).status_code == 202
     assert query(api, library_item_id=item_id).json()["citations"][0]["document_id"] == job_id
+
+
+def test_book_map_node_query_limits_vector_lexical_and_exact_candidates_to_descendants(api, runtime, monkeypatch):
+    _, item_id, job_id = queued_job(api, monkeypatch, content=b"Characteristics use strength. Skills use training.")
+    run(item_id, job_id)
+    with session_factory()() as session:
+        record = session.get(ShreckWorldDocumentBookMap, job_id)
+        target = next(node for node in record.payload["sections"] if node["title"] == "Combat")
+        selected_chunk_id = target["chunk_ids"][0]
+        sibling_chunk_id = "00000000-0000-0000-0000-000000000001"
+        session.add(ShreckWorldDocumentChunk(
+            id=sibling_chunk_id, document_id=job_id, library_item_id=item_id,
+            page_number=2, ordinal=999, text="Unrelated sibling section.",
+            embedding_json=json.dumps([1.0, 0.0]), chunk_role="child", section_id="sibling-section",
+            content_type="narrative", embedding_text="Unrelated sibling section.",
+            heading_path=["Other"], source_block_ids=target["source_block_ids"], page_numbers=[2],
+        ))
+        record.payload = {
+            **record.payload,
+            "sections": [*record.payload["sections"], {
+                "id": "sibling-node", "title": "Other", "node_type": "section", "level": 1,
+                "parent_id": None, "heading_path": ["Other"], "pages": {"start": 2, "end": 2,
+                    "start_label": None, "end_label": None}, "block_ids": [], "source_block_ids": [],
+                "caption_block_ids": [], "chunk_ids": [sibling_chunk_id], "content_types": ["text"],
+                "confidence": 1.0, "mapping_status": "verified",
+            }],
+        }
+        session.commit()
+
+    vector_scope = []
+    def vectors(**kwargs):
+        vector_scope.append(kwargs["chunk_ids"])
+        return [selected_chunk_id, sibling_chunk_id]
+    monkeypatch.setattr("app.services.query.search_chunks", vectors)
+    result = query(api, library_item_id=item_id, book_map_node_id=target["id"]).json()
+    assert vector_scope == [{selected_chunk_id}]
+    assert result["trace"]["book_map_scoped"] and result["trace"]["book_map_node_id"] == target["id"]
+    assert {citation["chunk_id"] for citation in result["citations"]} == {selected_chunk_id}
+
+
+def test_book_map_node_query_requires_one_item_and_rejects_unknown_node(api, runtime, monkeypatch):
+    _, item_id, job_id = queued_job(api, monkeypatch)
+    run(item_id, job_id)
+    client, headers, world_id = api
+    missing_item = client.post(f"/shreckworlds/{world_id}/query", headers=headers,
+        json={"query": "Combat", "book_map_node_id": "node"})
+    assert missing_item.status_code == 422
+    unknown = query(api, library_item_id=item_id, book_map_node_id="unknown-node")
+    assert unknown.status_code == 404
 
 
 def test_legacy_and_wrong_model_vectors_require_reindex(api, runtime, monkeypatch):

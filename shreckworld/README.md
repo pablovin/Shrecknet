@@ -27,6 +27,8 @@ and Docling artifacts; API/worker runtime uses the local cache. The optional GPU
 overlay also supports ShreckWorld. See the
 [indexing API](../Documentation/API/SHRECKWORLD_INDEXING_API.md) for rollout,
 configuration, failure states, progress/timing fields, and rollback.
+The authenticated [Book Map reader contract](../Documentation/API/SHRECKWORLD_READER_API.md#book-map)
+documents structural navigation and the embedding-free backfill command.
 
 CPU embedding uses ONNX Runtime by default. In Shrecknet's configuration frontend,
 select `Shreckworld → Embedding backend` to choose `onnx`, `torch`, or `openvino`.

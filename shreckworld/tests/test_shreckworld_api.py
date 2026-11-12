@@ -62,7 +62,7 @@ def test_query_isolated_to_its_shreckworld(monkeypatch, tmp_path):
         for item in (pendragon_item, vampire_item):
             docs.append(ShreckWorldDocument(id=str(uuid4()), library_item_id=item.id, is_active=True,
                 source_sha256=item.source_sha256, parser_name="docling", parser_version="test",
-                embedding_version="docling-e5-context-v1", embedding_model="test-e5", embedding_fingerprint="a" * 64,
+                embedding_version="docling-e5-context-v2", embedding_model="test-e5", embedding_fingerprint="a" * 64,
                 embedding_dimension=2, manifest_path="/tmp/test-manifest"))
         session.add_all(docs); session.flush()
         session.add_all([

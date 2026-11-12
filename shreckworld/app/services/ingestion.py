@@ -114,7 +114,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         metrics.parser_seconds = parsed.phase_seconds
         metrics.warnings.extend(parsed.diagnostics)
         metrics.processed_pages = metrics.total_pages = len(normalized.pages)
-        text_pages = {number for block in normalized.blocks if block.display_text.strip() and block.block_type not in {"page_header", "page_footer", "heading"} for number in block.page_numbers}
+        text_pages = {number for block in normalized.blocks if block.display_text.strip() and block.block_type != "heading" for number in block.page_numbers}
         metrics.text_pages, metrics.empty_pages = len(text_pages), len(normalized.pages) - len(text_pages)
         metrics.extracted_characters = sum(len(block.display_text) for block in normalized.blocks)
         metrics.sections, metrics.blocks = len(normalized.sections), len(normalized.blocks)
@@ -128,7 +128,9 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
             document=normalized, ingestion_id=ingestion_id, library_item_id=source_item_id,
             ontology_id=scope_id, book_title=book_title, rpg_system=system_name,
             tokenizer=tokenizer, max_embedding_tokens=embedder.token_limit,
-            preserve_unit_boundaries=parsed.parser_name == "pymupdf",
+            preserve_unit_boundaries=parsed.parser_name == "pymupdf" or any(
+                block.block_type in {"table", "picture"} for block in normalized.blocks
+            ),
         ), lambda: checkpoint(force=True))
         children = [chunk for chunk in chunks if chunk.chunk_role == "child"]
         parents = {chunk.chunk_id for chunk in chunks if chunk.chunk_role == "parent"}
@@ -143,8 +145,11 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         ):
             raise ValueError("Structured chunk validation failed: invalid parent/block/page provenance")
         represented = {block_id for child in children for block_id in child.source_block_ids}
+        # Every extracted textual block must be represented. Heading text is
+        # included through each chunk's heading_path; images remain references
+        # with caption text indexed as ordinary evidence blocks.
         required = {block.block_id for block in normalized.blocks if block.display_text.strip()
-                    and block.block_type not in {"page_header", "page_footer", "heading"}}
+                    and block.block_type != "heading"}
         if required - represented:
             raise ValueError(f"Tokenizer context excluded {len(required - represented)} text blocks; refusing an incomplete activation")
         token_counts = {child.chunk_id: _token_count(tokenizer, child.embedding_text) for child in children}
@@ -176,7 +181,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
             source_block_ids=chunk.source_block_ids, page_numbers=chunk.physical_page_numbers,
             token_count=token_counts.get(chunk.chunk_id),
         ) for chunk in chunks]
-        embedding_version = "pymupdf-e5-context-v1" if parsed.parser_name == "pymupdf" else EMBEDDING_VERSION
+        embedding_version = "pymupdf-e5-context-v2" if parsed.parser_name == "pymupdf" else EMBEDDING_VERSION
         document = ShreckWorldDocument(id=job.id, library_item_id=item.id,
             source_sha256=item.source_sha256, parser_name=parsed.parser_name, parser_version=parsed.parser_version,
             embedding_version=embedding_version, embedding_model=embedder.settings.embedding_model_id,

@@ -1,5 +1,16 @@
 # ShreckWorld structured indexing and job polling
 
+Each successfully activated document generation now includes a deterministic
+Book Map created from the same normalized sections, blocks, pages, and chunks.
+It is committed with the generation, so a failed map build prevents activation
+and leaves the prior searchable generation in place. Existing stored generations
+can be backfilled without rerunning embeddings using the command documented in
+the [reader API](SHRECKWORLD_READER_API.md#book-map). Backfill does not silently
+reparse or regenerate vectors.
+At startup, the API automatically enqueues backfill when it finds missing maps;
+the regular new-indexing path continues to create the map before activating a
+generation.
+
 New items are directly owned by ontologies. Use `/ontologies/{ontology_id}/items` and its item/index subroutes; no ShreckWorld creation is required. The `/admin/shreckworlds/.../library-items` routes below remain compatibility contracts. See [direct routes and migration](SHRECKWORLD_READER_API.md#direct-ontology-item-routes) for authorization, item ownership, deployment and rollback.
 
 ## Routes and access
@@ -36,10 +47,14 @@ heading inference is enabled where supported, and OCR is disabled. DOCX/Markdown
 text have logical page 1; no PDF coordinates are invented for them.
 
 Parents retain complete display evidence; children are embedded with contextual
-`passage:` text and the real E5 tokenizer. Structural boundaries, table headers,
-and tokenizer windows prevent implicit model truncation. Every inference batch
-checks count, finite values, dimension, and normalization. Source SHA-256 and PDF
-page counts are verified. No LLM gateway/provider or web call performs indexing.
+`passage:` text and the real E5 tokenizer. Every extracted text block is indexed,
+including page headers/footers, prose, tables, and captions; headings provide
+structural context through the resolved heading path. Tables preserve their own
+retrieval units and image pixels are excluded. OCR and image identification are
+not performed. Structural boundaries, table headers, and tokenizer windows
+prevent implicit model truncation. Every inference batch checks count, finite
+values, dimension, and normalization. Source SHA-256 and PDF page counts are
+verified. No LLM gateway/provider or web call performs indexing.
 
 Successful completion means validated semantic children were acknowledged by
 Qdrant and the complete generation was atomically activated in SQL/FTS. Failed

@@ -78,6 +78,47 @@ class ShreckWorldLibraryItemUpdate(BaseModel):
     authority_priority: int | None = Field(default=None, ge=0, le=10000)
 
 
+class BookMapPageRange(BaseModel):
+    start: int | None = None
+    end: int | None = None
+    start_label: str | None = None
+    end_label: str | None = None
+
+
+class BookMapSection(BaseModel):
+    id: str
+    title: str
+    node_type: Literal["chapter", "section", "table", "image"]
+    confidence: float = Field(ge=0, le=1)
+    mapping_status: Literal["verified", "tentative", "unresolved"]
+    level: int
+    parent_id: str | None = None
+    heading_path: list[str]
+    pages: BookMapPageRange
+    block_ids: list[str]
+    source_block_ids: list[str]
+    caption_block_ids: list[str]
+    chunk_ids: list[str]
+    content_types: list[str]
+
+
+class BookMapQuality(BaseModel):
+    section_count: int
+    block_count: int
+    mapped_block_count: int
+    coverage: float
+    unmapped_block_count: int
+    uncertain_section_ids: list[str]
+
+
+class BookMapRead(BaseModel):
+    document_id: str
+    map_version: int
+    sections: list[BookMapSection]
+    unmapped_block_ids: list[str]
+    quality: BookMapQuality
+
+
 class ShreckWorldLibraryItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -216,6 +257,7 @@ class ShreckWorldQueryRequest(BaseModel):
     include_trace: bool = False
     library_item_id: str | None = Field(default=None, max_length=64)
     library_item_ids: list[str] | None = Field(default=None, min_length=1, max_length=100)
+    book_map_node_id: str | None = Field(default=None, min_length=1, max_length=128)
     mode: Literal["evidence", "answer"] = "evidence"
     retrieval_strategy: Literal["single", "planned"] = "single"
     response_detail: Literal["concise", "standard", "detailed"] | None = None
@@ -235,6 +277,11 @@ class ShreckWorldQueryRequest(BaseModel):
     def validate_source_scope(self) -> "ShreckWorldQueryRequest":
         if self.library_item_id is not None and self.library_item_ids is not None:
             raise ValueError("Specify either library_item_id or library_item_ids, not both")
+        if self.book_map_node_id is not None and (
+            self.library_item_id is None or self.library_item_ids is not None
+            or self.retrieval_strategy != "single"
+        ):
+            raise ValueError("Book Map node queries require one library_item_id and single retrieval")
         return self
 
 

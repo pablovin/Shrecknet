@@ -10,11 +10,13 @@ from typing import Any
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 from shreckdoc.pipeline import NormalizedDocument
+from shreckdoc.pipeline import EMBEDDING_VERSION
 
 from app.models import (
     ShreckWorldDocument, ShreckWorldDocumentPage, ShreckWorldDocumentSection,
     ShreckWorldDocumentBlock, ShreckWorldDocumentChunk, ShreckWorldLibraryItem,
 )
+from app.services.book_map import build_persisted_book_map
 
 
 def active_documents(
@@ -23,7 +25,8 @@ def active_documents(
 ) -> list[ShreckWorldDocument]:
     statement = select(ShreckWorldDocument).join(ShreckWorldLibraryItem).where(
         item_scope_clause(world_id), ShreckWorldDocument.is_active.is_(True),
-        ShreckWorldDocument.embedding_fingerprint == fingerprint)
+        ShreckWorldDocument.embedding_fingerprint == fingerprint,
+        ShreckWorldDocument.embedding_version.in_((EMBEDDING_VERSION, "pymupdf-e5-context-v2")))
     if library_item_id is not None:
         statement = statement.where(ShreckWorldLibraryItem.id == library_item_id)
     elif library_item_ids is not None:
@@ -61,6 +64,9 @@ def activate_document(session: Session, *, item: ShreckWorldLibraryItem, documen
         if rows:
             session.execute(text("INSERT INTO shreckworld_chunk_fts(chunk_id, document_id, title, heading_path, text) VALUES (:chunk_id,:document_id,:title,:heading_path,:text)"), rows)
     session.flush()
+    # The structural map is created from the same SQL generation before activation commits.
+    build_persisted_book_map(session, document)
+    session.flush()
     return previous
 
 
@@ -70,9 +76,10 @@ def child_rows(session: Session, document_ids: list[str]):
                                           ShreckWorldDocumentChunk.chunk_role == "child")).all()
 
 
-def lexical_candidates(session: Session, query: str, document_ids: list[str], limit: int = 40) -> list[str]:
+def lexical_candidates(session: Session, query: str, document_ids: list[str], limit: int = 40,
+                       chunk_ids: set[str] | None = None) -> list[str]:
     terms = re.findall(r"\w+", query, flags=re.UNICODE)[:40]
-    if not terms or not document_ids:
+    if not terms or not document_ids or chunk_ids == set():
         return []
     if session.bind.dialect.name == "sqlite":
         # Only tokens produced by this tokenizer enter FTS syntax. Values and
@@ -80,8 +87,11 @@ def lexical_candidates(session: Session, query: str, document_ids: list[str], li
         expression = " OR ".join('"' + term + '"' for term in terms)
         from sqlalchemy import bindparam
         statement = text("SELECT chunk_id FROM shreckworld_chunk_fts WHERE shreckworld_chunk_fts MATCH :query AND document_id IN :ids ORDER BY bm25(shreckworld_chunk_fts), chunk_id LIMIT :limit").bindparams(bindparam("ids", expanding=True))
-        return list(session.scalars(statement, {"query": expression, "ids": document_ids, "limit": limit}))
+        results = list(session.scalars(statement, {"query": expression, "ids": document_ids, "limit": limit}))
+        return [chunk_id for chunk_id in results if chunk_ids is None or chunk_id in chunk_ids]
     rows = child_rows(session, document_ids)
+    if chunk_ids is not None:
+        rows = [row for row in rows if row[0].id in chunk_ids]
     ranked = sorted(rows, key=lambda row: (-sum(term.casefold() in (row[0].text + " " + " ".join(row[0].heading_path)).casefold() for term in terms), row[0].id))
     return [chunk.id for chunk, _ in ranked[:limit]]
 

@@ -8,10 +8,12 @@ from app.api.deps import ShrecknetPrincipal, oauth2_scheme, require_world_manage
 from app.db.session import get_db
 from app.integrations.ontologies import resolve_ontology, shrecknet_read
 from app.models.game_engine import GameBinding, GameGenerationRun, GameRuleset
+from app.models.document import ShreckWorldDocument, ShreckWorldDocumentBookMap
+from app.models.shreckworld import ShreckWorldLibraryItem
 from app.schemas.game_engine import (
     BindingCreate, BindingRead, DefinitionCreate, DefinitionRead, ParticipantCreate, ParticipantRead,
     PublishRequest, RejectRequest, ReviewRead, RulesetCreate, RulesetRead, RunCreate, RunPage, RunRead, TableCreate, TablePage,
-    TableRead, TableUpdate, VersionRead,
+    TableRead, TableUpdate, VersionRead, EntityDiscoveryCreate, EntityDiscoveryReview,
 )
 from app.services import game_engine as service
 
@@ -142,6 +144,74 @@ def create_run(ruleset_id: str, payload: RunCreate, token: str = Depends(oauth2_
     return run
 
 
+@router.post("/rulesets/{ruleset_id}/entity-discovery", response_model=RunRead, status_code=status.HTTP_202_ACCEPTED)
+def create_entity_discovery(ruleset_id: str, payload: EntityDiscoveryCreate, token: str = Depends(oauth2_scheme),
+                            principal: ShrecknetPrincipal = Depends(_manager), session: Session = Depends(get_db)):
+    ruleset = session.get(GameRuleset, ruleset_id)
+    if not ruleset:
+        raise HTTPException(404, "Ruleset not found")
+    binding = session.get(GameBinding, payload.binding_id)
+    if not binding or binding.ruleset_id != ruleset_id:
+        raise HTTPException(404, "Binding not found")
+    _authorize_ontology(binding.ontology_id, token)
+    if len(set(payload.source_ids)) != len(payload.source_ids):
+        raise HTTPException(422, "Duplicate source IDs are not allowed")
+    inputs = []
+    for source_id in payload.source_ids:
+        row = session.execute(select(ShreckWorldDocument, ShreckWorldLibraryItem).join(
+            ShreckWorldLibraryItem, ShreckWorldLibraryItem.id == ShreckWorldDocument.library_item_id
+        ).join(ShreckWorldDocumentBookMap, ShreckWorldDocumentBookMap.document_id == ShreckWorldDocument.id).where(
+            ShreckWorldDocument.library_item_id == source_id, ShreckWorldDocument.is_active.is_(True),
+            ShreckWorldLibraryItem.ontology_id == binding.ontology_id,
+        )).first()
+        if row is None:
+            raise HTTPException(422, "Every selected source must be indexed and have a Book Map")
+        document, item = row
+        inputs.append({"source_id": item.id, "title": item.title, "edition": "",
+                       "document_id": document.id, "content_digest": document.source_sha256})
+    existing = session.scalar(select(GameGenerationRun).where(GameGenerationRun.owner_id == principal.user_id,
+        GameGenerationRun.idempotency_key == payload.idempotency_key))
+    if existing:
+        if existing.ruleset_id != ruleset_id or existing.binding_id != binding.id or existing.input_sources != inputs:
+            raise HTTPException(409, "Idempotency key was already used with a different request")
+        return existing
+    run = GameGenerationRun(ruleset_id=ruleset_id, binding_id=binding.id, ontology_id=binding.ontology_id,
+        owner_id=principal.user_id, idempotency_key=payload.idempotency_key, input_sources=inputs,
+        status="queued", attempt=1, result={"job_type": "entity_discovery", "progress": 0})
+    session.add(run); session.commit(); session.refresh(run)
+    from app.tasks.game_engine import run_entity_discovery
+    try:
+        run_entity_discovery.delay(run.id)
+    except Exception as exc:
+        run.status, run.error_code, run.finished_at = "failed", "dispatch_failed", service.now()
+        session.commit()
+        raise HTTPException(503, "Entity discovery could not be queued") from exc
+    return run
+
+
+@router.post("/runs/{run_id}/entity-review", response_model=RunRead)
+def review_entity_discovery(run_id: str, payload: EntityDiscoveryReview,
+                            principal: ShrecknetPrincipal = Depends(_reviewer), session: Session = Depends(get_db)):
+    run = service.run_for_owner(session, run_id, session.scalar(select(GameGenerationRun.owner_id).where(GameGenerationRun.id == run_id)))
+    if not run.result or run.result.get("job_type") != "entity_discovery" or run.status != "awaiting_review":
+        raise HTTPException(409, "Entity discovery result is not awaiting review")
+    candidates = run.result.get("candidates", [])
+    selected = set(payload.candidate_ids) if payload.candidate_ids else {candidate["id"] for candidate in candidates}
+    known = {candidate["id"] for candidate in candidates}
+    if not selected or not selected <= known:
+        raise HTTPException(422, "Candidate selection is invalid")
+    for candidate in candidates:
+        if candidate["id"] in selected:
+            candidate["review_status"] = "approved" if payload.decision == "approve" else "rejected"
+            candidate["review_reason"] = payload.reason
+    run.result = {**run.result, "candidates": candidates, "reviewer_id": principal.user_id,
+                  "review_decision": payload.decision, "reviewed_at": service.now().isoformat()}
+    run.status = "succeeded"
+    run.updated_at = run.finished_at = service.now()
+    session.commit(); session.refresh(run)
+    return run
+
+
 @router.get("/runs", response_model=RunPage)
 def list_runs(limit: int = Query(25, ge=1, le=100), cursor: str | None = None,
               ontology_id: int | None = Query(None, gt=0), token: str | None = Depends(oauth2_scheme),
@@ -183,13 +253,15 @@ def retry_run(run_id: str, idempotency_key: str = Header(alias="Idempotency-Key"
     retry = GameGenerationRun(ruleset_id=original.ruleset_id, binding_id=original.binding_id,
                               ontology_id=original.ontology_id, owner_id=principal.user_id,
                               idempotency_key=idempotency_key, input_sources=original.input_sources,
-                              status="queued", attempt=original.attempt + 1, retry_of_id=original.id)
+                              status="queued", attempt=original.attempt + 1, retry_of_id=original.id,
+                              result=({"job_type": "entity_discovery", "progress": 0}
+                                      if original.result and original.result.get("job_type") == "entity_discovery" else None))
     session.add(retry)
     session.commit()
     session.refresh(retry)
-    from app.tasks.game_engine import run_generation_placeholder
+    from app.tasks.game_engine import run_entity_discovery, run_generation_placeholder
     try:
-        run_generation_placeholder.delay(retry.id)
+        (run_entity_discovery if retry.result else run_generation_placeholder).delay(retry.id)
     except Exception as exc:
         retry.status, retry.error_code, retry.finished_at = "failed", "dispatch_failed", service.now()
         session.commit()

@@ -21,7 +21,7 @@ def upsert_item_chunks(item: ShreckWorldLibraryItem, chunks: list[ShreckWorldDoc
     client = get_client()
     if not client.collection_exists(settings.qdrant_collection):
         client.create_collection(settings.qdrant_collection, vectors_config=VectorParams(size=document.embedding_dimension, distance=Distance.COSINE))
-        for field in ("shreckworld_id", "document_id", "embedding_fingerprint"):
+        for field in ("shreckworld_id", "document_id", "embedding_fingerprint", "chunk_id"):
             client.create_payload_index(settings.qdrant_collection, field, field_schema=PayloadSchemaType.KEYWORD, wait=True)
     params = client.get_collection(settings.qdrant_collection).config.params.vectors
     if getattr(params, "size", None) != document.embedding_dimension or getattr(params, "distance", None) != Distance.COSINE:
@@ -34,6 +34,7 @@ def upsert_item_chunks(item: ShreckWorldLibraryItem, chunks: list[ShreckWorldDoc
         points.append(PointStruct(id=chunk.id, vector=vector, payload={
             "ontology_id": item.ontology_id, "shreckworld_id": item.shreckworld_id, "library_item_id": item.id,
             "document_id": document.id, "embedding_fingerprint": document.embedding_fingerprint,
+            "chunk_id": chunk.id, "section_id": chunk.section_id,
             "page_number": chunk.page_number, "ordinal": chunk.ordinal,
             "authority_tier": item.authority_tier, "authority_priority": item.authority_priority,
         }))
@@ -48,18 +49,24 @@ def upsert_item_chunks(item: ShreckWorldLibraryItem, chunks: list[ShreckWorldDoc
         raise ValueError("Qdrant staged vector count does not match the semantic child count")
 
 
-def search_chunks(*, world_id: str, document_ids: list[str], fingerprint: str, vector: list[float], limit: int = 40) -> list[str]:
+def search_chunks(*, world_id: str, document_ids: list[str], fingerprint: str, vector: list[float],
+                  chunk_ids: set[str] | None = None, limit: int = 40) -> list[str]:
     from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
     if not document_ids:
         return []
+    conditions = [
+        FieldCondition(key="document_id", match=MatchAny(any=document_ids)),
+        FieldCondition(key="embedding_fingerprint", match=MatchValue(value=fingerprint)),
+    ]
+    if chunk_ids is not None:
+        if not chunk_ids:
+            return []
+        conditions.append(FieldCondition(key="chunk_id", match=MatchAny(any=sorted(chunk_ids))))
     rows = get_client().search(
         collection_name=get_settings().qdrant_collection, query_vector=vector, limit=limit,
-        query_filter=Filter(must=[
-            # SQL-authorized document IDs are the scope boundary. This also
-            # preserves old vectors after items gain direct ontology ownership.
-            FieldCondition(key="document_id", match=MatchAny(any=document_ids)),
-            FieldCondition(key="embedding_fingerprint", match=MatchValue(value=fingerprint)),
-        ]), with_payload=False,
+        # SQL-authorized document IDs remain the access boundary. The optional
+        # node-derived chunk filter narrows evidence within those generations.
+        query_filter=Filter(must=conditions), with_payload=False,
     )
     return [str(row.id) for row in rows]
 

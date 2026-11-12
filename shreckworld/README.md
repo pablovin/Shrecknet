@@ -50,6 +50,11 @@ this is slower than `fast`. OCR remains disabled, and image pixels are not
 identified or embedded. Re-index existing items after changing parser settings
 to apply them to their stored structures and vectors.
 
+The image installs PyTorch and torchvision from the index selected by
+`TORCH_INDEX_URL` before installing ShreckWorld dependencies. That later install
+excludes those two packages so PyPI cannot replace a CUDA-enabled PyTorch wheel
+with a CPU-only build.
+
 For a local installation from the repository root:
 
 ```bash

@@ -14,7 +14,7 @@ COPY --from=shreckdoc / /tmp/shreckdoc
 RUN pip install --no-deps /tmp/shreckdoc
 COPY pyproject.toml ./
 # Keep dependency layers cached when application code changes.
-RUN python -c 'import subprocess, tomllib; project = tomllib.load(open("pyproject.toml", "rb"))["project"]; subprocess.run(["pip", "install", "--prefer-binary", *project["dependencies"], *project["optional-dependencies"]["openvino"]], check=True)'
+RUN python -c 'import re, subprocess, tomllib; project = tomllib.load(open("pyproject.toml", "rb"))["project"]; requirements = [item for group in (project["dependencies"], project["optional-dependencies"]["openvino"]) for item in group if re.match(r"^\s*([A-Za-z0-9_.-]+)", item).group(1).lower() not in {"torch", "torchvision"}]; subprocess.run(["pip", "install", "--prefer-binary", *requirements], check=True)'
 COPY app ./app
 RUN pip install --no-deps .
 

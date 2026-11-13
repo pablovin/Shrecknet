@@ -3014,7 +3014,16 @@ class OntologyInstanceService:
             created_by_type=scene_node.get("created_by_type") or "human",
             created_by_author=scene_node.get("created_by_author") or "",
             local_order={"followed_by_scene_id": scene_relations.get("next_id"), "preceded_by_scene_id": scene_relations.get("previous_id")},
-            derived_from={"entity_instance_id": scene_relations.get("derived_from") or ""},
+            derived_from={
+                **_read_scene_provenance(scene_node.get("source_provenance_json")),
+                "entity_instance_id": scene_relations.get("derived_from") or "",
+                "source_id": scene_node.get("source_id")
+                    or _read_scene_provenance(scene_node.get("source_provenance_json")).get("source_id"),
+                "section_id": scene_node.get("source_section_id")
+                    or _read_scene_provenance(scene_node.get("source_provenance_json")).get("section_id"),
+                "markdown_asset_id": scene_node.get("source_markdown_asset_id")
+                    or _read_scene_provenance(scene_node.get("source_provenance_json")).get("markdown_asset_id"),
+            },
             relates_to=[item for item in scene_relations.get("relates_to") or [] if item.get("entity_instance_id")],
             created_at=_parse_dt(scene_node.get("created_at")), updated_at=_parse_dt(scene_node.get("updated_at")),
             milestones=milestone_reads,

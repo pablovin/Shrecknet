@@ -106,8 +106,28 @@ def create_authored_source(db: Session, scope: OntologyScope, payload: SourceCre
         embedding_status="not_embedded", index_status="unindexed",
         mime_type="text/plain",
     )
-    db.add(item)
-    db.commit()
+    # Start each authored Source from its pinned template without adding
+    # template levels to the ontology or overwriting an existing source.
+    outline = [_root(item)]
+    parent_id = outline[0].id
+    for index, section_type in enumerate(template.section_types):
+        section_id = str(uuid4())
+        outline.append(SourceSection(
+            id=section_id, parent_id=parent_id, order=0,
+            section_type=section_type, title=f"Untitled {section_type}",
+            content_reference=AuthoredContent(),
+        ))
+        parent_id = section_id
+    try:
+        db.add(item)
+        db.add(SourceOrganization(
+            source_id=item.id, revision=1,
+            nodes=[node.model_dump(mode="json") for node in outline],
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(item)
     return item
 

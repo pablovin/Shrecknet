@@ -42,7 +42,7 @@ jobs:
             shreckworld/app/main.py
       - name: Run Shrecknet contract and archival tests
         working-directory: shrecknet
-        run: python -m pytest tests/test_scene_source_provenance.py -q
+        run: python -m pytest --noconftest tests/test_scene_source_provenance.py -q
       - name: Run ShreckWorld backfill and importer tests
         working-directory: shreckworld
         run: python -m pytest tests/test_scene_source_provenance_import.py tests/test_graph_source_import.py -q

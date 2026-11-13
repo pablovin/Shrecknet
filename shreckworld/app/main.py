@@ -36,7 +36,7 @@ def _import_graph_narrative_sources() -> None:
         try:
             from app.db.session import session_factory
             from app.services.graph_source_import import import_graph_sources
-            import_graph_sources(session_factory, settings)
+            import_graph_sources(session_factory(), settings)
             return
         except (OSError, ConnectionError) as exc:
             log.warning("Graph source import input unavailable (%s); attempt %d/12",
@@ -63,7 +63,7 @@ def _run_graph_source_startup_migrations() -> None:
     try:
         from app.db.session import session_factory
         from app.services.scene_source_provenance_import import import_scene_source_provenance
-        import_scene_source_provenance(session_factory, settings)
+        import_scene_source_provenance(session_factory(), settings)
     except Exception:
         logging.getLogger(__name__).exception("Scene provenance startup reconciliation failed")
 

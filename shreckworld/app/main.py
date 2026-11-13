@@ -27,6 +27,18 @@ cors_policy = load_cors_policy()
 app.add_middleware(CORSMiddleware, **cors_policy.model_dump(), expose_headers=["Accept-Ranges", "Content-Length", "Content-Range", "ETag"])
 
 
+def _import_graph_narrative_sources() -> None:
+    """Opt-in, insert-only import; failures cannot prevent normal service startup."""
+    try:
+        from app.db.session import session_factory
+        from app.services.graph_source_import import import_graph_sources
+        import_graph_sources(session_factory, settings)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Graph narrative source startup import unavailable (%s)", type(exc).__name__
+        )
+
+
 def _queue_startup_book_map_backfill() -> None:
     try:
         from app.db.session import session_factory
@@ -44,6 +56,8 @@ def _queue_startup_book_map_backfill() -> None:
 def startup() -> None:
     settings.media_root.mkdir(parents=True, exist_ok=True)
     create_schema()
+    if settings.graph_import_on_startup:
+        Thread(target=_import_graph_narrative_sources, name="graph-source-import", daemon=True).start()
     Thread(target=_queue_startup_book_map_backfill, name="book-map-backfill-check", daemon=True).start()
     try:
         get_embedder().ensure_ready()

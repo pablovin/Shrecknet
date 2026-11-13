@@ -91,6 +91,20 @@ staged file, not the previous one. A version conflict returns HTTP 409.
 The organizer remains the authoritative structure: the physical file is a
 materialized snapshot, not a second editable owner.
 
+Existing authored records created before this change may have an empty
+original-file path. Run a dry run from `shreckworld/`:
+
+```bash
+python scripts/backfill_authored_markdown.py
+python scripts/backfill_authored_markdown.py --apply
+```
+
+The second command is intentionally explicit. It materializes the latest saved
+organization as a protected Markdown original while preserving its Source ID,
+organization history and revision number. It skips records without a verified
+ontology owner. Run it after coordinating a database/media backup; older
+authored source rows are otherwise still readable through the organization API.
+
 The shared rich-document editor stores sanitized HTML fragments in
 `AuthoredContent.paragraphs`. Raw HTML blocks are legal Markdown, allowing
 tables, headings and formatted text to retain their appearance without a

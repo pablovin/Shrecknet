@@ -268,6 +268,23 @@ def _strip_links_to_instances(
     return pattern.sub(r"\2", text)
 
 
+def _read_scene_provenance(raw: object) -> dict[str, Any]:
+    """Decode optional stored source metadata; graph DERIVED_FROM remains authoritative."""
+    if isinstance(raw, dict):
+        parsed = raw
+    elif isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+    else:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    # Never trust a denormalized copy of the graph entity ID.
+    return {key: value for key, value in parsed.items() if key != "entity_instance_id"}
+
+
 class OntologyInstanceService:
     def __init__(
         self, sql_session: AsyncSession, graph_session: AsyncNeo4jSession
@@ -2757,7 +2774,10 @@ class OntologyInstanceService:
             created_by_type=props.get("created_by_type") or "human",
             created_by_author=props.get("created_by_author") or "",
             local_order=local_order,
-            derived_from={"entity_instance_id": derived_from_entity_id},
+            derived_from={
+                **_read_scene_provenance(props.get("source_provenance_json")),
+                "entity_instance_id": derived_from_entity_id,
+            },
             relates_to=scene_relates,
             created_at=_parse_dt(props.get("created_at")),
             updated_at=_parse_dt(props.get("updated_at")),
@@ -3205,6 +3225,7 @@ class OntologyInstanceService:
                     description: $description,
                     observation_group_id: $observation_group_id,
                     independence_status: $independence_status,
+                    source_provenance_json: $source_provenance_json,
                     created_by_type: $created_by_type,
                     created_by_author: $created_by_author,
                     created_at: $created_at,
@@ -3218,6 +3239,10 @@ class OntologyInstanceService:
                 description=payload.description,
                 observation_group_id=payload.observation_group_id,
                 independence_status=payload.independence_status,
+                source_provenance_json=json.dumps(
+                    payload.derived_from.model_dump(mode="json", exclude_none=True),
+                    ensure_ascii=False,
+                ),
                 created_by_type=payload.created_by_type,
                 created_by_author=payload.created_by_author,
                 created_at=now_str,
@@ -3402,6 +3427,12 @@ class OntologyInstanceService:
             await self._validate_scene_derived_from(
                 instance_id=instance_id,
                 entity_instance_id=payload.derived_from.entity_instance_id,
+            )
+            # Source identity/range is updated together with DERIVED_FROM.
+            # An entity-only update deliberately drops stale passage metadata.
+            updates["source_provenance_json"] = json.dumps(
+                payload.derived_from.model_dump(mode="json", exclude_none=True),
+                ensure_ascii=False,
             )
         if payload.relates_to is not None:
             await self._validate_scene_relates_to_entities(

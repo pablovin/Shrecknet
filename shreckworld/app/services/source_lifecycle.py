@@ -24,11 +24,19 @@ def _remove_vectors(item_ids: list[str]) -> None:
 
 
 def delete_source(session: Session, item: ShreckWorldLibraryItem) -> None:
-    item_id, root = item.id, Path(item.storage_path or item.pdf_path).parent
+    item_id = item.id
+    # Authored sources have no physical original document; never resolve an empty
+    # path to '.' and accidentally remove the service's working directory.
+    stored = item.storage_path or item.pdf_path
+    media = get_settings().media_root.resolve()
+    root = Path(stored).resolve().parent if stored and stored != 'pending' else None
+    if root is not None and (root == media or media not in root.parents):
+        root = None
     projected = session.scalar(select(ShreckWorldDocument.id).where(ShreckWorldDocument.library_item_id == item_id).limit(1))
     session.delete(item)
     session.commit()
-    shutil.rmtree(root, ignore_errors=True)
+    if root is not None:
+        shutil.rmtree(root, ignore_errors=True)
     if projected:
         _remove_vectors([item_id])
 

@@ -583,7 +583,7 @@ services:
       <<: *shreckworld-env
       SHRECKWORLD_DATABASE_URL: sqlite:////data/shreckworld.db
       SHRECKWORLD_MEDIA_ROOT: /app/media
-      SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP: ${SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP:-false}
+      SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP: ${SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP:-true}
       SHRECKWORLD_LEGACY_ONTOLOGY_DATABASE_PATH: /legacy-shrecknet-data/shrecknet.db
       SHRECKWORLD_LEGACY_MEDIA_ROOT: /legacy-shrecknet-media
       SHRECKWORLD_GRAPH_NEO4J_URI: bolt://neo4j:7687
@@ -620,6 +620,11 @@ services:
       shreckworld_permissions:
         condition: service_completed_successfully
       shreckworld_redis:
+        condition: service_healthy
+      # The importer reads Shrecknet's ontology definitions and the live graph.
+      shrecknet_api:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
       qdrant:
         condition: service_started

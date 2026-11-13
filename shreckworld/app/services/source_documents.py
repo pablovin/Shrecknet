@@ -58,10 +58,15 @@ def _docx_text(path: Path) -> tuple[str, bool]:
         _error(422, "This DOCX could not be previewed")
     ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     paragraphs = []
+    size = 0
     for p in root.iter(ns + "p"):
         value = "".join(node.text or "" for node in p.iter(ns + "t"))
-        if value.strip():
-            paragraphs.append(value)
+        if not value.strip():
+            continue
+        size += len(value.encode("utf-8")) + 2
+        if size > 2_000_000:
+            return "\n\n".join(paragraphs), True
+        paragraphs.append(value)
     return "\n\n".join(paragraphs), False
 
 

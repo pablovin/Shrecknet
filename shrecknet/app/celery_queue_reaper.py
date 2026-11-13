@@ -137,6 +137,61 @@ def reap_stale_celery_messages() -> dict[str, int]:
     return stats
 
 
+def _archive_architect_scene_evidence(conn: sqlite3.Connection, jobs_url: str) -> int:
+    """Save only scene identity/range evidence before the startup jobs purge.
+
+    This is a durable local cache under /data, not logs or a replacement for
+    archived Architect run artifacts. A failed write stops the purge, so evidence
+    is never silently destroyed.
+    """
+    jobs_path = _sqlite_path_from_url(jobs_url)
+    if jobs_path is None:
+        return 0
+    root = jobs_path.parent / "architect_provenance"
+    root.mkdir(parents=True, exist_ok=True)
+    archived = 0
+    rows = conn.execute("""
+        SELECT id, details FROM background_jobs
+        WHERE job_type = 'architect_analysis' AND details IS NOT NULL
+    """)
+    for row in rows:
+        try:
+            payload = json.loads(row["details"] or "")
+            output = payload.get("pipeline_output") or {}
+            if isinstance(output, str):
+                output = json.loads(output)
+            if not isinstance(output, dict):
+                continue
+            scenes = (output.get("outputs") or {}).get("scenes") or []
+            if not isinstance(scenes, list) or not scenes:
+                continue
+            slim = {
+                "ontology_instance_id": output.get("ontology_instance_id"),
+                "outputs": {"scenes": [
+                    {field: scene.get(field) for field in (
+                        "scene_id", "source_entity_instance_id", "derived_from",
+                        "start_paragraph", "end_paragraph", "source_paragraphs_absolute",
+                    ) if field in scene}
+                    for scene in scenes if isinstance(scene, dict)
+                ]},
+            }
+        except (TypeError, ValueError, AttributeError):
+            continue
+        destination = root / f"analysis-job-{int(row['id'])}.json"
+        if destination.exists():
+            continue
+        temporary = root / f".analysis-job-{int(row['id'])}.tmp"
+        try:
+            temporary.write_text(json.dumps(slim, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        archived += 1
+    if archived:
+        logger.info("Preserved %d Architect scene evidence files before jobs cleanup", archived)
+    return archived
+
+
 def clear_all_background_jobs() -> dict[str, Any]:
     """Delete every persisted job and return Celery task IDs that must be revoked."""
     settings = get_settings()
@@ -157,6 +212,11 @@ def clear_all_background_jobs() -> dict[str, Any]:
             if "celery_task_id" in columns
             else []
         )
+        try:
+            _archive_architect_scene_evidence(jobs_conn, settings.jobs_database_url)
+        except (OSError, sqlite3.Error):
+            logger.exception("Could not preserve Architect scene evidence; retaining jobs instead of purging")
+            return {"deleted_jobs": 0, "celery_task_ids": []}
         cursor = jobs_conn.execute("DELETE FROM background_jobs")
         jobs_conn.commit()
         return {

@@ -697,6 +697,12 @@ async def _execute_generation(
                     impacted_entity_ids |= related_entity_ids
                     expected_scene_relation_links += len(related_entity_ids)
 
+                    # Resolve the authoritative ShreckWorld identity from the
+                    # imported graph mapping; do not trust user-editable proposals.
+                    from app.services.scene_source_reference import resolve_source_reference
+                    source_reference = resolve_source_reference(
+                        int(ontology_id), run.ontology_instance_id, source_entity_id
+                    )
                     payload = SceneCreate(
                         id=scene_id,
                         name=str(scene.get("effective_name") or scene.get("scene_name") or "Scene"),
@@ -705,10 +711,12 @@ async def _execute_generation(
                         created_by_author=author_id,
                         derived_from=SceneDerivedFrom(
                             entity_instance_id=source_entity_id,
-                            source_id=scene.get("source_id"),
-                            section_id=scene.get("section_id"),
-                            markdown_asset_id=scene.get("markdown_asset_id"),
-                            source_revision=scene.get("source_revision"),
+                            source_id=source_reference.get("source_id"),
+                            section_id=source_reference.get("section_id"),
+                            markdown_asset_id=source_reference.get("markdown_asset_id"),
+                            # Source text may have been edited after Architect
+                            # analyzed the legacy entity; no revision is claimed.
+                            source_revision=None,
                             start_paragraph=scene.get("start_paragraph"),
                             end_paragraph=scene.get("end_paragraph"),
                             source_paragraphs_absolute=scene.get("source_paragraphs_absolute") or [],

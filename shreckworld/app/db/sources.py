@@ -36,6 +36,19 @@ def migrate_sources(engine: Engine) -> None:
                     id='rulebook', version=1, name='Rulebook', description='Explanatory reference material',
                     section_types=['Rulebook', 'Chapter', 'Section'], archived=False,
                 ))
+            # Additional starter templates are independent of the Rulebook backfill.
+            for id, name, description, section_types in [
+                ("rpg-campaign", "RPG Campaign", "Adventures, story arcs and stories", ["Adventure", "Story Arc", "Story"]),
+                ("novel", "Novel", "Books, parts and chapters", ["Book", "Part", "Chapter"]),
+            ]:
+                exists = connection.execute(
+                    text("SELECT 1 FROM source_hierarchies WHERE id=:id AND version=1"), {"id": id},
+                ).first()
+                if not exists:
+                    connection.execute(SourceHierarchy.__table__.insert().values(
+                        id=id, version=1, name=name, description=description,
+                        section_types=section_types, archived=False,
+                    ))
             unresolved = connection.execute(text('SELECT COUNT(*) FROM shreckworld_library_items WHERE ontology_id IS NULL')).scalar_one()
             connection.commit()
             logger.info('Sources startup migration complete; %s legacy items retain unresolved ontology ownership', unresolved)

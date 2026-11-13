@@ -344,6 +344,8 @@ def legacy_book_map_node_content(shreckworld_id: str, item_id: str, node_id: str
 @admin_router.post("/{shreckworld_id}/library-items/{item_id}/embed", response_model=EmbeddingJobRead, status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_world_manager)])
 def start_embedding(shreckworld_id: str, item_id: str, session: Session = Depends(get_db)) -> ShreckWorldEmbeddingJob:
     item = _item_or_404(session, shreckworld_id, item_id)
+    if item.authored:
+        raise HTTPException(status_code=422, detail="Authored indexing is not yet supported by the document pipeline")
     if item.embedding_status in {"queued", "embedding"}:
         raise HTTPException(status_code=409, detail="Embedding is already running")
     try:

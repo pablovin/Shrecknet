@@ -2,6 +2,10 @@
 
 Welcome to the Shrecknet documentation! This directory contains all organized documentation for the project.
 
+## ShreckWorld Sources
+
+- [Sources workspace API](API/SHRECKWORLD_SOURCES_WORKSPACE_API.md) — authored and explanatory sources, template revisions, editorial organization, image protection and compatibility boundaries.
+
 ## Shared model configuration
 
 - [Category snapshot backups](Deployment/BACKUPS.md) — categories, API, snapshot layout, restore and deployment

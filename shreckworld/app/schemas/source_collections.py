@@ -60,6 +60,11 @@ class CollectionUpdate(Contract):
         return self
 
 
+class CollectionTemplateUpdate(Contract):
+    expected_revision: int = Field(ge=1)
+    template_version: int = Field(ge=1)
+
+
 class CollectionRead(Contract):
     id: str
     ontology_id: int

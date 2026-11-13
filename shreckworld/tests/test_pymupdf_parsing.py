@@ -25,6 +25,12 @@ def test_layout_chunks_are_normalized_cached_and_split_as_children(tmp_path, mon
             bboxes=[(1, 10, 20, 200, 80)], types=types, element_ids=["p1.b0"],
             table_ids=["t0"] if "table" in types else [], figure_ids=[]))
 
+    table_view = SimpleNamespace(id="t0", element_id="p1.b2", page=1,
+                                 bbox=(20, 200, 500, 400), markdown="| Roll | Result |",
+                                 html=None, headers=["Roll", "Result"], caption="Attack table",
+                                 caption_element_id="p1.b3", section_id="s0", chunk_id="c1",
+                                 token_count=8, text="| Roll | Result |")
+
     class PDF:
         def __enter__(self):
             return self
@@ -38,7 +44,8 @@ def test_layout_chunks_are_normalized_cached_and_split_as_children(tmp_path, mon
             chunk_calls.append(kwargs)
             class Result:
                 diagnostics = {"page_count": 1, "figures_without_text": ["f0"]}
-                sections = [SimpleNamespace(id="s0", title="Combat", heading_element_id="p1.b0")]
+                sections = [SimpleNamespace(id="s0", title="Combat", heading_element_id="p1.b0", path=["Combat"])]
+                tables = [table_view]
                 elements = [SimpleNamespace(id="p1.b0", page=1)]
                 def __iter__(self):
                     return iter([
@@ -56,8 +63,11 @@ def test_layout_chunks_are_normalized_cached_and_split_as_children(tmp_path, mon
     assert first.diagnostics == second.diagnostics == ["PyMuPDF figures_without_text: ['f0']"]
     assert [block.block_type for block in first.document.blocks] == ["heading", "paragraph", "table"]
     assert first.document.sections[1].heading_path == ["Combat"]
+    assert first.document.blocks[0].docling_reference == "p1.b0"
     assert first.document.blocks[1].display_text == "Attack with a die."
     assert first.document.blocks[2].metadata["pymupdf_chunk"]["table_ids"] == ["t0"]
+    assert first.document.blocks[2].metadata["native"]["tables"][0]["markdown"] == "| Roll | Result |"
+    assert first.document.blocks[2].metadata["native"]["tables"][0]["headers"] == ["Roll", "Result"]
     assert first.document.blocks[1].bounding_boxes[0]["coord_origin"] == "TOPLEFT"
     assert first.document.blocks[1].block_id != second.document.blocks[1].block_id
     chunks = build_chunks(document=first.document, ingestion_id="first", library_item_id="item",
@@ -80,6 +90,64 @@ def test_missing_chunk_api_is_an_explicit_failure(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "pymupdf", SimpleNamespace(open=lambda _: PDF()))
     with pytest.raises(RuntimeError, match="requires PyMuPDF 2.1"):
         parse_pdf(tmp_path / "source.pdf")
+
+
+def test_layout_parser_keeps_mixed_chunks_unknown_and_preserves_textless_figures(tmp_path, monkeypatch):
+    elements = [
+        SimpleNamespace(id="p1.b0", page=1, bbox=(10, 20, 180, 60), boxclass="text",
+                        text="A paragraph sharing a chunk with a figure.", is_header_footer=False),
+        SimpleNamespace(id="p1.b1", page=1, bbox=(200, 100, 500, 400), boxclass="picture",
+                        text="", is_header_footer=False),
+        SimpleNamespace(id="p1.b2", page=1, bbox=(10, 5, 300, 16), boxclass="header",
+                        text="Repeated running title", is_header_footer=True),
+    ]
+    chunk = SimpleNamespace(
+        id="c0", text="A paragraph sharing a chunk with a figure.",
+        metadata=SimpleNamespace(section_id=None, section_path=[], page_start=1, page_end=1,
+                                 bboxes=[(1, 10, 20, 180, 60)], types=["paragraph", "figure"],
+                                 element_ids=["p1.b0", "p1.b1"], table_ids=[], figure_ids=["f0"]),
+    )
+    figure = SimpleNamespace(id="f0", element_id="p1.b1", page=1,
+                             bbox=(200, 100, 500, 400), boxclass="picture", ocr_text=None,
+                             placeholder="[Figure f0]", caption="A compass rose",
+                             caption_element_id=None, section_id=None, chunk_id="c0", image=None,
+                             has_text=False)
+    parsed_elements = elements
+
+    class PDF:
+        def __enter__(self): return self
+        def __exit__(self, *_args): pass
+        def __iter__(self): return iter([SimpleNamespace(rect=SimpleNamespace(width=600, height=800))])
+        def __len__(self): return 1
+        def to_chunks(self, **kwargs):
+            assert kwargs == {"use_ocr": False, "table_mode": "isolate", "merge_small_chunks": False}
+            class Result:
+                diagnostics = {"page_count": 1}
+                sections = []
+                tables = []
+                figures = [figure]
+                def __iter__(self): return iter([chunk])
+                elements = parsed_elements
+            return Result()
+
+    monkeypatch.setitem(sys.modules, "pymupdf", SimpleNamespace(open=lambda _path: PDF()))
+    canonical, items, _ = parse_pdf(tmp_path / "source.pdf")
+    assert canonical["pages"].keys() == {"1"}
+    mixed = next(item for item in items if item["reference"] == "c0")
+    assert mixed["block_type"] == "unknown"
+    assert mixed["native_type"] == "paragraph,figure"
+    assert mixed["native_metadata"]["elements"][0]["text"].startswith("A paragraph")
+    assert mixed["native_metadata"]["figures"][0]["caption"] == "A compass rose"
+    image = next(item for item in items if item["reference"] == "f0")
+    assert image["block_type"] == "picture" and image["text"] == ""
+    assert image["provenance"][0]["bbox"]["left"] == 200.0
+    header = next(item for item in items if item["reference"] == "p1.b2")
+    assert header["block_type"] == "page_header" and header["text"] == "Repeated running title"
+
+    chunk.text = ""
+    _, empty_items, _ = parse_pdf(tmp_path / "source.pdf")
+    assert not any(item["reference"] == "c0" for item in empty_items)
+    assert any(item["reference"] == "f0" and item["block_type"] == "picture" for item in empty_items)
 
 
 def test_invalid_parser_setting_is_rejected():

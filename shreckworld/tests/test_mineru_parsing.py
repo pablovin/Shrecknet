@@ -42,6 +42,25 @@ def test_mineru_structured_content_becomes_ordered_heading_and_page_provenance(t
     }
 
 
+def test_mineru_preserves_textless_blocks_unknown_types_and_separate_captions(tmp_path):
+    path = tmp_path / "source.pdf"
+    _pdf(path)
+    canonical, items = mineru_parsing._normalize_result({"pages": [{"page_idx": 0, "blocks": [
+        {"id": "table-1", "index": 0, "type": "table", "content": {"table_body": [["A", "B"]], "table_caption": ["Table one"]}},
+        {"id": "image-1", "index": 1, "type": "image", "content": "", "bbox": [10, 20, 30, 40]},
+        {"id": "future-1", "index": 2, "type": "new_layout_kind", "content": ""},
+        {"id": "bad-box", "index": 3, "type": "text", "content": "text", "bbox": [10, 20, 40]},
+    ]}]}, path)
+    assert [item["block_type"] for item in items] == ["table", "caption", "picture", "unknown", "paragraph"]
+    assert items[0]["text"] == ""
+    assert items[0]["native_metadata"]["source_content"]["table_body"] == [["A", "B"]]
+    assert items[1]["text"] == "Table one"
+    assert items[1]["native_metadata"]["parent_reference"] == items[0]["reference"]
+    assert items[2]["text"] == "" and items[2]["provenance"][0]["bbox"]["left"] == 6
+    assert items[3]["native_type"] == "new_layout_kind" and items[3]["text"] == ""
+    assert canonical["diagnostics"] == ["MinerU page 1 block 3 has invalid or ambiguous bbox; omitted coordinates"]
+
+
 def test_mineru_tasks_api_uploads_polls_and_normalizes_result(tmp_path, monkeypatch):
     source = tmp_path / "source.pdf"
     _pdf(source)

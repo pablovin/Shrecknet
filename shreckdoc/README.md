@@ -3,7 +3,11 @@
 Storage-independent document algorithms shared by Librarian and ShreckWorld.
 `shreckdoc.pipeline` owns the Docling adapter, normalized pages/sections/blocks,
 semantic parent/child construction, contextual E5 text, and tokenizer-bounded
-splitting. `shreckdoc.retrieval` owns named-term extraction, reciprocal rank
+splitting. Normalized records retain optional Docling-native formatting, list
+markers, caption references, table cell/span structure, and textless picture
+records alongside the existing display text and provenance. These fields are
+additive; chunk construction continues to use its established display-text and
+context behavior. `shreckdoc.retrieval` owns named-term extraction, reciprocal rank
 fusion, and diversity selection. The package has no application, Neo4j,
 SQLAlchemy, Celery, or model-runtime imports at module import time.
 

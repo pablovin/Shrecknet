@@ -104,10 +104,25 @@ its migration sequence are maintained in the coordinating frontend repository.
    plain text uses paragraph blocks with logical page 1. OCR is disabled.
    The PyMuPDF adapter consumes `to_chunks()` with isolated tables, records
    section paths, chunk/element/table/figure IDs and page boxes, and retains
-   extraction diagnostics. Layout and heading recognition are heuristic.
+   extraction diagnostics. It carries native element and table/figure views into
+   block metadata. Mixed-type grouped chunks remain `unknown`; headings use their
+   source heading-element ID when supplied; textless figure views remain picture
+   blocks. Explicitly marked header/footer elements excluded from chunks remain
+   source blocks. Layout and heading recognition are heuristic.
 3. Save parser-specific JSON, optional Docling Markdown, and a normalized JSON artifact.
    Normalize pages (physical number and printed label), nested sections, blocks,
    reading order, source references, bounding boxes, and character spans.
+   Shared normalized blocks also retain Docling-native formatting, original text,
+   list markers, caption references, structured table cells/spans, and textless
+   picture evidence when the installed parser exposes it. Missing optional native
+   capabilities leave those fields absent; table and parser settings are unchanged.
+   PyMuPDF retains its chunk, element, table, and figure references, including
+   textless figures and explicitly marked header/footer elements. MinerU retains
+   empty and unknown blocks, structured source content for tables/lists/equations,
+   and captions as separate nodes linked to their parent block. MinerU content-list
+   boxes use the documented 0–1000 normalized mapping; malformed boxes are omitted
+   with parser diagnostics. Adapter cache versions invalidate output when these
+   normalization rules change.
 4. Use Librarian's shared builder to create complete semantic parents and
    structural children. Headers/footers are excluded from embeddings. Table row
    groups repeat headers; lists split at items; prose splits at sentence boundaries

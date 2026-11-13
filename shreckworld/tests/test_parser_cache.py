@@ -116,6 +116,23 @@ def test_fast_table_mode_does_not_reuse_accurate_mode_cache(parser, monkeypatch)
     assert cache_identity(source, settings, "test-parser") != fast_key
 
 
+def test_parser_adapter_versions_invalidate_only_the_selected_adapter_cache(parser, monkeypatch):
+    import app.services.parser_cache as parser_cache
+
+    source, _, _ = parser
+    settings = Settings()
+    docling_key = cache_identity(source, settings, "test-parser")
+    pymupdf_key = cache_identity(source, settings, "test-parser", parser_name="pymupdf")
+    monkeypatch.setattr(parser_cache, "DOCLING_ADAPTER_VERSION", 1)
+    assert cache_identity(source, settings, "test-parser") != docling_key
+    assert cache_identity(source, settings, "test-parser", parser_name="pymupdf") == pymupdf_key
+    monkeypatch.setattr(parser_cache, "PYMUPDF_ADAPTER_VERSION", 1)
+    assert cache_identity(source, settings, "test-parser", parser_name="pymupdf") != pymupdf_key
+    mineru_key = cache_identity(source, settings, "test-parser", parser_name="mineru")
+    monkeypatch.setattr(parser_cache, "MINERU_ADAPTER_VERSION", 1)
+    assert cache_identity(source, settings, "test-parser", parser_name="mineru") != mineru_key
+
+
 def test_page_callback_is_marshaled_back_to_calling_thread(parser, tmp_path):
     import threading
     source, _, _ = parser

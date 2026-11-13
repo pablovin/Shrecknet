@@ -126,10 +126,11 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
                 lambda: parse_mineru_pdf(path, output_dir=output_dir, heartbeat=parser_heartbeat),
                 lambda: heartbeat(native_count),
             )
-            diagnostics = []
+            diagnostics = list(canonical.get("diagnostics", []))
             timings["conversion"] = monotonic() - started
         with_heartbeat(lambda: _atomic_json(output_dir / "mineru_document.json",
-                                           {"pages": canonical["pages"], "items": items}, indent=None),
+                                           {"pages": canonical["pages"], "items": items,
+                                            "diagnostics": diagnostics}, indent=None),
                        lambda: heartbeat(native_count))
     elif path.suffix.lower() == ".pdf" and settings.pdf_parser == "pymupdf":
         parser_name, parser_version = "pymupdf", version("PyMuPDF")

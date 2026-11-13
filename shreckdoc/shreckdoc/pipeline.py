@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable, Literal
 from uuid import NAMESPACE_URL, uuid5
 
 from .structure_types import (
-    NormalizedPageAccounting, SourceSpan, StructuralEvidence, StructuralSource, TableStructure,
+    NormalizedPageAccounting, SourceSpan, StructuralEvidence, StructuralSource, TableCell, TableStructure,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,6 +221,66 @@ def _bbox_dict(prov: Any) -> dict[str, Any]:
     }
 
 
+def _table_structure(item: Any, reference: str) -> TableStructure | None:
+    """Project Docling's native table cells without flattening their spans."""
+    data = getattr(item, "data", None)
+    cells = getattr(data, "table_cells", None) if data is not None else None
+    if not isinstance(cells, (list, tuple)):
+        return None
+    normalized: list[TableCell] = []
+    for cell in cells:
+        row = getattr(cell, "start_row_offset_idx", None)
+        column = getattr(cell, "start_col_offset_idx", None)
+        text = getattr(cell, "text", None)
+        if not isinstance(row, int) or not isinstance(column, int) or not isinstance(text, str):
+            continue
+        normalized.append(TableCell(
+            text=text,
+            row=row,
+            column=column,
+            row_span=max(1, int(getattr(cell, "row_span", 1) or 1)),
+            column_span=max(1, int(getattr(cell, "col_span", 1) or 1)),
+            is_header=bool(getattr(cell, "column_header", False)),
+            is_row_header=bool(getattr(cell, "row_header", False)),
+            is_row_section=bool(getattr(cell, "row_section", False)),
+            bbox=_bbox_dict(cell),
+        ))
+    if not normalized:
+        return None
+    return TableStructure(
+        cells=normalized,
+        source_reference=reference,
+        row_count=getattr(data, "num_rows", None),
+        column_count=getattr(data, "num_cols", None),
+        orientation=str(getattr(getattr(data, "orientation", None), "value", getattr(data, "orientation", ""))) or None,
+    )
+
+
+def _reference_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    reference = getattr(value, "cref", None) or getattr(value, "self_ref", None)
+    if reference is None and isinstance(value, dict):
+        reference = value.get("cref") or value.get("self_ref") or value.get("$ref")
+    return str(reference) if reference else None
+
+
+def _table_structure_from_metadata(value: Any) -> TableStructure | None:
+    if not isinstance(value, dict):
+        return None
+    cells = [TableCell(**cell) for cell in value.get("cells", []) if isinstance(cell, dict)]
+    if not cells:
+        return None
+    return TableStructure(
+        cells=cells,
+        source_reference=value.get("source_reference"),
+        row_count=value.get("row_count"),
+        column_count=value.get("column_count"),
+        orientation=value.get("orientation"),
+        structure_quality=value.get("structure_quality", "structured"),
+    )
+
+
 def _page_label_map(pdf_path: Path, page_count: int) -> dict[int, str | None]:
     """Read displayed labels without using PDF page text as an ingestion source."""
     labels: dict[int, str | None] = {
@@ -418,6 +478,21 @@ class DoclingAdapter:
                 }
                 for prov in provs
             ]
+            native_metadata: dict[str, Any] = {}
+            for attribute in ("orig", "formatting", "enumerated", "marker", "content_layer"):
+                value = getattr(item, attribute, None)
+                if value is not None:
+                    native_metadata[attribute] = _primitive(value)
+            captions = getattr(item, "captions", None) or []
+            caption_refs = [reference for value in captions if (reference := _reference_value(value))]
+            if caption_refs:
+                native_metadata["caption_references"] = caption_refs
+            if kind == "table":
+                native_table = _table_structure(item, reference)
+                if native_table is not None:
+                    native_metadata["table_structure"] = asdict(native_table)
+            if kind == "picture":
+                native_metadata["picture_data_available"] = getattr(item, "image", None) is not None
             records.append(
                 {
                     "reference": reference,
@@ -429,6 +504,7 @@ class DoclingAdapter:
                     "reading_order": order,
                     "provenance": provenance,
                     "image_path": None,
+                    "native_metadata": native_metadata,
                 }
             )
         return records
@@ -510,7 +586,12 @@ def normalize_document(
                 "parent_reference": item.get("parent_reference"),
                 "image_path": item.get("image_path"),
                 "provenance": provenance,
+                "native": item.get("native_metadata") or {},
             },
+            table_structure=_table_structure_from_metadata(
+                item.get("native_metadata", {}).get("table_structure") if kind == "table" else None
+            ),
+            native_type=str(item.get("native_type") or item.get("label") or "") or None,
         )
         blocks.append(block)
         section.block_ids.append(block.block_id)

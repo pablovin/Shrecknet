@@ -16,6 +16,9 @@ from shreckdoc.pipeline import _sha256
 
 logger = logging.getLogger(__name__)
 CACHE_VERSION = 1
+DOCLING_ADAPTER_VERSION = 2
+PYMUPDF_ADAPTER_VERSION = 2
+MINERU_ADAPTER_VERSION = 2
 
 
 class ParserPayload(BaseModel):
@@ -45,7 +48,7 @@ def _artifact_digest(files: tuple[tuple[str, str, int, int, int], ...]) -> str:
 def cache_identity(path: Path, settings: Any, parser_version: str, *, parser_name: str = "docling") -> str:
     if parser_name == "pymupdf":
         identity = {
-            "format_version": CACHE_VERSION, "adapter_version": 1,
+            "format_version": CACHE_VERSION, "adapter_version": PYMUPDF_ADAPTER_VERSION,
             "source_sha256": _sha256(path), "suffix": path.suffix.lower(),
             "parser": parser_name, "parser_version": parser_version,
             "ocr": False, "table_mode": "isolate", "merge_small_chunks": False,
@@ -53,7 +56,7 @@ def cache_identity(path: Path, settings: Any, parser_version: str, *, parser_nam
         return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     if parser_name == "mineru":
         identity = {
-            "format_version": CACHE_VERSION, "adapter_version": 1,
+            "format_version": CACHE_VERSION, "adapter_version": MINERU_ADAPTER_VERSION,
             "source_sha256": _sha256(path), "suffix": path.suffix.lower(),
             "parser": parser_name, "parser_version": parser_version,
             "api_url": settings.mineru_api_url.rstrip("/"), "tier": settings.mineru_tier,
@@ -73,7 +76,7 @@ def cache_identity(path: Path, settings: Any, parser_version: str, *, parser_nam
         except PackageNotFoundError:
             dependencies[name] = None
     identity = {
-        "format_version": CACHE_VERSION, "adapter_version": 1,
+        "format_version": CACHE_VERSION, "adapter_version": DOCLING_ADAPTER_VERSION,
         "source_sha256": _sha256(path), "suffix": path.suffix.lower(),
         "parser_version": parser_version, "dependencies": dependencies,
         "artifacts": _artifact_digest(tuple(files)),

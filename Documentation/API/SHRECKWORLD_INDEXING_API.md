@@ -43,6 +43,18 @@ Docling. PDF parsing can also use the optional MinerU inference service. DOCX/
 Markdown continue to use Docling, and plain text uses paragraph blocks. Parsers
 attempt to preserve headings, tables, lists, reading order, and available
 provenance; extraction is heuristic and cannot guarantee complete recognition.
+The PyMuPDF adapter retains source element records and table/figure view fields
+alongside chunk IDs. Mixed-type chunk text is marked unknown instead of being
+called a paragraph; an available textless figure is retained as an empty picture
+block with its available page and region provenance. Parser cache identity is versioned with each
+adapter so earlier grouped outputs do not hide newly captured evidence. The
+`to_chunks()` API is supplied by PyMuPDF Layout and is unavailable in ordinary
+PyMuPDF installs.
+MinerU source blocks retain empty text and unrecognized types as evidence; its
+table/list/equation source content is kept in native metadata and captions become
+separate caption blocks linked to their source block. MinerU `structured_content`
+bounding boxes use the documented 0–1000 normalized coordinate mapping. Invalid
+or out-of-range boxes are omitted and reported in parser diagnostics.
 Docling PDF table structure uses the configured TableFormer mode (`fast` by default),
 heading inference is enabled where supported, and OCR is disabled on the
 Docling/PyMuPDF paths. MinerU uses its local inference service and may OCR

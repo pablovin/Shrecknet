@@ -54,6 +54,7 @@ def _normalize_result(payload: dict[str, Any], pdf_path: Path) -> tuple[dict[str
     layout_by_index = {int(row["page_idx"]): row for row in layout_rows if isinstance(row, dict) and "page_idx" in row}
     canonical_pages: dict[str, dict[str, Any]] = {}
     items: list[dict[str, Any]] = []
+    diagnostics: list[str] = []
     order = 0
     for fallback_index, page in enumerate(pages):
         if not isinstance(page, dict):
@@ -67,20 +68,17 @@ def _normalize_result(payload: dict[str, Any], pdf_path: Path) -> tuple[dict[str
                 continue
             kind = str(block.get("type", "text")).lower()
             content = block.get("content", "")
-            text = _text(content).strip()
-            if not text:
-                continue
             detail = content if isinstance(content, dict) else {}
+            body_content = ({key: value for key, value in content.items()
+                             if key not in {"caption", "image_caption", "table_caption"}}
+                            if isinstance(content, dict) else content)
+            text = _text(body_content).strip()
             level = int(block.get("text_level") or block.get("level") or detail.get("level") or 0)
             if kind in {"doc_title", "paragraph_title", "title", "heading"} or (kind == "text" and level > 0):
                 block_type = "heading"
                 level = max(1, level)
             elif kind in {"table", "chart", "image", "figure", "seal"}:
                 block_type = "table" if kind == "table" else "picture"
-                captions = block.get("caption") or detail.get("caption") or detail.get("image_caption") or detail.get("table_caption")
-                caption_text = _text(captions).strip()
-                if caption_text and caption_text not in text:
-                    text = f"{text} {caption_text}".strip()
             elif kind in {"header", "page_header"}:
                 block_type = "page_header"
             elif kind in {"footer", "page_footer", "page_number"}:
@@ -91,30 +89,53 @@ def _normalize_result(payload: dict[str, Any], pdf_path: Path) -> tuple[dict[str
                 block_type = "formula"
             elif kind in {"code", "algorithm"}:
                 block_type = "code"
-            else:
+            elif kind in {"text", "paragraph", "paragraph_content", "discarded_block"}:
                 block_type = "paragraph"
+            else:
+                block_type = "unknown"
             provenance: dict[str, Any] = {"page_no": page_number}
             box = block.get("bbox")
             dimensions = layout_by_index.get(page_index, {})
             page_width = dimensions.get("width_pt") or width
             page_height = dimensions.get("height_pt") or height
-            if isinstance(box, list) and len(box) == 4 and page_width and page_height:
-                x0, y0, x1, y1 = (float(value) for value in box)
-                # MinerU's content list uses normalized 0-1000 coordinates.
-                if max(abs(x0), abs(y0), abs(x1), abs(y1)) <= 1000:
+            if box is not None:
+                try:
+                    if not isinstance(box, list) or len(box) != 4 or not all(isinstance(value, (int, float)) for value in box):
+                        raise ValueError
+                    x0, y0, x1, y1 = (float(value) for value in box)
+                    if not all(value == value and abs(value) != float("inf") for value in (x0, y0, x1, y1)) or min(x0, y0, x1, y1) < 0 or x1 <= x0 or y1 <= y0:
+                        raise ValueError
+                    if max(abs(x0), abs(y0), abs(x1), abs(y1)) > 1000:
+                        raise ValueError
+                    # structured_content uses the documented 0-1000 normalized mapping.
                     x0, x1 = x0 * page_width / 1000, x1 * page_width / 1000
                     y0, y1 = y0 * page_height / 1000, y1 * page_height / 1000
-                provenance["bbox"] = {"left": x0, "top": y0, "right": x1, "bottom": y1, "coord_origin": "TOPLEFT"}
+                    provenance["bbox"] = {"left": x0, "top": y0, "right": x1, "bottom": y1, "coord_origin": "TOPLEFT"}
+                except (TypeError, ValueError):
+                    diagnostics.append(f"MinerU page {page_number} block {block_index} has invalid or ambiguous bbox; omitted coordinates")
+            native_type = str(block.get("type", "unknown"))
+            source_ref = str(block.get("id") or block.get("index", block_index))
             item: dict[str, Any] = {"reference": f"mineru-{page_number}-{block.get('index', block_index)}",
                                     "block_type": block_type, "text": text, "reading_order": order,
-                                    "provenance": [provenance]}
+                                    "provenance": [provenance],
+                                    "native_type": native_type,
+                                    "native_metadata": {"source_reference": source_ref, "source_index": block.get("index", block_index),
+                                                        "sub_type": block.get("sub_type"),
+                                                        "source_content": content if kind in {"table", "list", "equation", "equation_interline", "formula"} else None}}
             if block_type == "heading":
                 item["level"] = level
             items.append(item)
             order += 1
+            captions = block.get("caption") or detail.get("caption") or detail.get("image_caption") or detail.get("table_caption")
+            caption_text = _text(captions).strip()
+            if caption_text:
+                items.append({"reference": f"mineru-{page_number}-{source_ref}-caption", "block_type": "caption",
+                              "text": caption_text, "reading_order": order, "provenance": [dict(provenance)],
+                              "native_type": "caption", "native_metadata": {"parent_reference": item["reference"]}})
+                order += 1
     if len(canonical_pages) != len(sizes):
         raise ValueError("MinerU did not return structure for every PDF page")
-    return {"pages": canonical_pages}, items
+    return {"pages": canonical_pages, "diagnostics": diagnostics}, items
 
 
 def parse_pdf(path: Path, *, output_dir: Path, heartbeat: Callable[[], None],

@@ -55,13 +55,19 @@ class TableCell:
     row_span: int = 1
     column_span: int = 1
     is_header: bool = False
+    is_row_header: bool = False
+    is_row_section: bool = False
     header_path: list[str] = field(default_factory=list)
+    bbox: dict[str, float | str | None] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
 class TableStructure:
     cells: list[TableCell] = field(default_factory=list)
     source_reference: str | None = None
+    row_count: int | None = None
+    column_count: int | None = None
+    orientation: str | None = None
     structure_quality: Literal["structured", "text_fallback", "unreadable"] = "structured"
 
 

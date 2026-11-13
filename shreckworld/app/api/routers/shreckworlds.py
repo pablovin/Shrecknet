@@ -220,7 +220,7 @@ def upload_library_item(
     if hierarchy_template_version < 1:
         raise HTTPException(status_code=422, detail="Invalid hierarchy template version")
     template = session.get(SourceHierarchy, (hierarchy_template_id, hierarchy_template_version))
-    if template is None or template.archived:
+    if template is None or template.archived or template.source_type != source_type:
         raise HTTPException(status_code=422, detail="Select an active hierarchy template")
     source_hash = hashlib.sha256(raw).hexdigest()
     item = ShreckWorldLibraryItem(

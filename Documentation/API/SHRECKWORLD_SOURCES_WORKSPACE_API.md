@@ -16,13 +16,17 @@ immutable and independently retrievable.
 
 ## Contracts
 
-- `GET /source-hierarchies`: latest version per hierarchy, including archived.
+- `GET /source-hierarchies`: latest version per hierarchy, including archived. Each template declares `source_type` (`narrative` or `explanatory`).
 - `GET /source-hierarchies/{id}/versions/{version}`: version-pinned template.
 - `POST /source-hierarchies`: create from `HierarchyInput`.
 - `POST /source-hierarchies/{id}/image?expected_version=N`: upload a PNG, JPEG or WebP image (maximum 5 MB), appending a version.
 - `GET /source-hierarchies/{id}/versions/{version}/image`: authenticated, version-pinned image read.
 - `PUT /source-hierarchies/{id}`: append a new version, requires
   `expected_version` of the current version (409 on conflict).
+- `DELETE /source-hierarchies/{id}?expected_version=N&remove_items=false`: retire
+  the template by appending an archived version. When `remove_items=true`, remove
+  its hierarchy collections and entries from the selected ontology. Attached source
+  documents remain independent and available; other ontologies' assignments remain.
 - `POST /sources`: create an authored Source and atomically instantiate a starter outline from its pinned template levels, with required `title`,
   `source_type` (narrative or explanatory), `hierarchy_template_id`,
   `hierarchy_template_version`. Reuses the existing library-item ID space.
@@ -37,8 +41,10 @@ All paths above share the `/ontologies/{ontology_id}` prefix.
 
 The previous `/ontologies/{ontology_id}/items` and PDF reader/index/job routes
 remain unchanged. Existing PDF library items are backfilled to Explanatory/Rulebook
-without recreating vectors or documents. The migration seeds separate RPG Campaign
-and Novel templates; each retains immutable versions.
+without recreating vectors or documents. Startup seeds exactly two active defaults:
+Narrative **RPG Campaign** (Adventure → Story Arc → Story) and Explanatory **RPG
+Book** (Rulebook). Legacy starter templates are archived; existing pinned versions
+remain readable. Sources and assignments must use a template from the matching category.
 
 ## Section structure
 

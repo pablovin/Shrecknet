@@ -23,6 +23,7 @@ def db():
     with Session(engine) as session:
         session.add(SourceHierarchy(
             id="adventure", version=1, name="Adventures",
+            source_type="narrative",
             section_types=["Adventure", "Story Arc", "Session"],
             description="Campaign adventures", archived=False,
         ))
@@ -39,9 +40,14 @@ def entry(id, parent_id=None, level=0, order=0, sources=None):
 
 
 def sample(db: Session, world=7, category="narrative"):
+    template_id = "adventure" if category == "narrative" else "book"
+    if category == "explanatory" and db.get(SourceHierarchy, ("book", 1)) is None:
+        db.add(SourceHierarchy(id="book", version=1, name="RPG Book", source_type="explanatory",
+                               section_types=["Rulebook"], archived=False))
+        db.commit()
     return source_collections.create_collection(
         db, OntologyScope(world, "World"), CollectionCreate(
-            source_type=category, hierarchy_template_id="adventure",
+            source_type=category, hierarchy_template_id=template_id,
             hierarchy_template_version=1,
         ),
     )
@@ -164,7 +170,7 @@ def test_image_upload_changes_only_target_entry_and_keeps_old_revision(db, tmp_p
         )
 
 
-def test_sources_migration_seeds_sessions_and_world_lore_templates():
+def test_sources_migration_seeds_only_two_active_category_templates():
     from app.db.sources import migrate_sources
     engine = create_engine("sqlite+pysqlite:///:memory:")
     try:
@@ -172,14 +178,12 @@ def test_sources_migration_seeds_sessions_and_world_lore_templates():
         migrate_sources(engine)
         migrate_sources(engine)  # Safe to run repeatedly at service startup.
         with Session(engine) as session:
-            adventures = session.get(SourceHierarchy, ("campaign-sessions", 1))
-            lore = session.get(SourceHierarchy, ("world-lore", 1))
-            markdown = session.get(SourceHierarchy, ("plain-document", 1))
-            assert markdown is not None and markdown.section_types == ["Document"]
-            assert adventures is not None
-            assert adventures.section_types == ["Adventure", "Story Arc", "Session"]
-            assert lore is not None
-            assert lore.section_types == ["Topic", "Entry", "Section"]
+            from app.services.source_workspace import list_hierarchies
+            active = [row for row in list_hierarchies(session) if not row.archived]
+            assert {(row.name, row.source_type, tuple(row.section_types)) for row in active} == {
+                ("RPG Campaign", "narrative", ("Adventure", "Story Arc", "Story")),
+                ("RPG Book", "explanatory", ("Rulebook",)),
+            }
     finally:
         engine.dispose()
 
@@ -216,3 +220,13 @@ def test_explicit_template_version_upgrade_preserves_cards_and_rejects_dropped_l
             CollectionTemplateUpdate(expected_revision=3, template_version=3),
         )
     assert refused.value.status_code == 422
+
+
+def test_delete_template_removes_current_world_entries_and_retires_template(db):
+    from app.services.source_workspace import delete_hierarchy, list_hierarchies
+    scope = OntologyScope(7, "World")
+    sample(db)
+    delete_hierarchy(db, scope, "adventure", 1, remove_items=True)
+    assert source_collections.list_collections(db, scope, "narrative") == []
+    template = next(item for item in list_hierarchies(db) if item.id == "adventure")
+    assert template.archived is True and template.version == 2

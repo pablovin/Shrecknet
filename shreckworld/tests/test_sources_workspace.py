@@ -63,8 +63,8 @@ def db():
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         session.add(SourceHierarchy(
-            id="rulebook", version=1, name="Rulebook",
-            section_types=["Rulebook", "Chapter"], archived=False,
+            id="rpg-campaign", version=1, name="RPG Campaign", source_type="narrative",
+            section_types=["Adventure", "Story Arc", "Story"], archived=False,
         ))
         session.commit()
         yield session
@@ -77,7 +77,7 @@ def test_authored_source_revision_and_world_scoping(db: Session, tmp_path: Path,
     item = create_authored_source(
         db, world, SourceCreate(
             title="First Adventure", source_type="narrative",
-            hierarchy_template_id="rulebook", hierarchy_template_version=1,
+            hierarchy_template_id="rpg-campaign", hierarchy_template_version=1,
         ),
     )
     assert item.ontology_id == 7 and item.authored
@@ -86,7 +86,7 @@ def test_authored_source_revision_and_world_scoping(db: Session, tmp_path: Path,
     assert initial_file.exists()
     assert "# First Adventure" in initial_file.read_text(encoding="utf-8")
     original = get_organization(db, item)
-    assert [node.section_type for node in original.nodes] == ['Source', 'Rulebook', 'Chapter']
+    assert [node.section_type for node in original.nodes] == ['Source', 'Adventure', 'Story Arc', 'Story']
     root = original.nodes[0]
     nodes = [root, SourceSection(
         id=f"section-{uuid4()}", parent_id=root.id,
@@ -124,8 +124,8 @@ def test_generated_markdown_preserves_section_nesting_and_html():
     ]
     markdown = render_authored_markdown(sections).decode("utf-8")
     assert markdown == (
-        "# Campaign\\n\\n## War\\n\\n### The Battle\\n\\n"
-        "<p><strong>Victory</strong> was costly.</p>\\n"
+        "# Campaign\n\n## War\n\n### The Battle\n\n"
+        "<p><strong>Victory</strong> was costly.</p>\n"
     )
 
 
@@ -137,6 +137,7 @@ def test_html_upload_keeps_narrative_type_and_template(db: Session, tmp_path: Pa
 
     db.add(SourceHierarchy(
         id="campaign", version=1, name="Campaign",
+        source_type="narrative",
         section_types=["Adventure", "Chapter"], archived=False,
     ))
     db.commit()

@@ -66,7 +66,7 @@ def test_graph_import_is_idempotent_and_adds_new_stories(tmp_path, monkeypatch):
     factory = sessionmaker(bind=engine)
     with Session(engine) as db:
         db.add(SourceHierarchy(id="rpg-campaign", version=1, name="RPG Campaign",
-            section_types=["Adventure", "Story Arc", "Story"], archived=False))
+            section_types=["Adventure", "Story Arc", "Story"], source_type="narrative", archived=False))
         db.commit()
 
     monkeypatch.setattr(importer, "_graph_pages", lambda settings: [_page()])

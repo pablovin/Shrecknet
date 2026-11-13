@@ -57,6 +57,15 @@ def revise_template(
     return workspace.save_hierarchy(session, payload, template_id)
 
 
+@router.delete("/source-hierarchies/{template_id}", response_model=HierarchyRead, dependencies=manager)
+def delete_template(
+    template_id: str, expected_version: int = Query(ge=1), remove_items: bool = Query(default=False),
+    scope: OntologyScope = Depends(authorized_ontology), session: Session = Depends(get_db),
+):
+    # Collection entries can be removed from this ontology; source documents remain independent.
+    return workspace.delete_hierarchy(session, scope, template_id, expected_version, remove_items)
+
+
 @router.post("/sources", response_model=ShreckWorldLibraryItemRead, status_code=201, dependencies=manager)
 def create_authored(
     payload: SourceCreate, scope: OntologyScope = Depends(authorized_ontology),

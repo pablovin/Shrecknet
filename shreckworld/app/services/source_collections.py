@@ -66,6 +66,8 @@ def create_collection(db: Session, scope: OntologyScope, payload: CollectionCrea
     ))
     if template is None or template.archived:
         fail(422, "Select an active hierarchy template version")
+    if template.source_type != payload.source_type:
+        fail(422, "Hierarchy template does not belong to this category")
     # A template has one assignment per category/world. Re-adding an archived
     # assignment restores its entries; no duplicate hierarchy gallery cards.
     existing = db.scalar(select(SourceCollection).where(

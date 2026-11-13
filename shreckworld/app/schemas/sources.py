@@ -13,6 +13,7 @@ class Contract(BaseModel):
 
 
 class HierarchyInput(Contract):
+    source_type: SourceType = 'explanatory'
     name: Title
     description: str = Field(default='', max_length=10000)
     section_types: list[Title] = Field(min_length=1, max_length=32)
@@ -27,6 +28,7 @@ class HierarchyInput(Contract):
 
 
 class HierarchyRead(Contract):
+    source_type: SourceType
     id: str
     version: int
     name: str

@@ -18,6 +18,10 @@ def migrate_sources(engine: Engine) -> None:
                 connection.execute(text('SELECT pg_advisory_xact_lock(73921461)'))
         try:
             columns = {col['name'] for col in inspect(connection).get_columns('shreckworld_library_items')}
+            hierarchy_columns = {col['name'] for col in inspect(connection).get_columns('source_hierarchies')}
+            if 'source_type' not in hierarchy_columns:
+                connection.execute(text("ALTER TABLE source_hierarchies ADD COLUMN source_type VARCHAR(16) NOT NULL DEFAULT 'explanatory'"))
+            connection.execute(text("UPDATE source_hierarchies SET source_type='narrative' WHERE id IN ('rpg-campaign','campaign-sessions','novel')"))
             for name, definition in {
                 'source_type': "VARCHAR(16) NOT NULL DEFAULT 'explanatory'",
                 'hierarchy_template_id': "VARCHAR(36) NOT NULL DEFAULT 'rulebook'",
@@ -34,24 +38,37 @@ def migrate_sources(engine: Engine) -> None:
             if not exists:
                 connection.execute(SourceHierarchy.__table__.insert().values(
                     id='rulebook', version=1, name='Rulebook', description='Explanatory reference material',
-                    section_types=['Rulebook', 'Chapter', 'Section'], archived=False,
+                    section_types=['Rulebook'], source_type='explanatory', archived=False,
                 ))
-            # Additional starter templates are independent of the Rulebook backfill.
-            for id, name, description, section_types in [
-                ("rpg-campaign", "RPG Campaign", "Adventures, story arcs and stories", ["Adventure", "Story Arc", "Story"]),
-                ("campaign-sessions", "Campaign Adventures", "Adventure cards, story arcs and playable sessions", ["Adventure", "Story Arc", "Session"]),
-                ("novel", "Novel", "Books, parts and chapters", ["Book", "Part", "Chapter"]),
-                ("world-lore", "World Lore", "World setting, cultures and detailed topics", ["Topic", "Entry", "Section"]),
-                ("plain-document", "Markdown Document", "A single editable Markdown document", ["Document"]),
-            ]:
-                exists = connection.execute(
-                    text("SELECT 1 FROM source_hierarchies WHERE id=:id AND version=1"), {"id": id},
-                ).first()
-                if not exists:
+            # Keep the two supported starter templates active. Retire legacy
+            # starters by appending no data; only the latest template row is shown.
+            from app.models.sources import SourceHierarchy
+            starters = [
+                ("rpg-campaign", "RPG Campaign", "Narrative source hierarchy", ["Adventure", "Story Arc", "Story"], "narrative"),
+                ("rulebook", "RPG Book", "Explanatory source hierarchy", ["Rulebook"], "explanatory"),
+            ]
+            for id, name, description, section_types, source_type in starters:
+                current = connection.execute(text("SELECT version, name, section_types FROM source_hierarchies WHERE id=:id ORDER BY version DESC LIMIT 1"), {"id": id}).first()
+                if current is None:
                     connection.execute(SourceHierarchy.__table__.insert().values(
                         id=id, version=1, name=name, description=description,
-                        section_types=section_types, archived=False,
+                        section_types=section_types, source_type=source_type, archived=False,
                     ))
+                else:
+                    import json
+                    old_levels = current.section_types
+                    if isinstance(old_levels, str):
+                        old_levels = json.loads(old_levels)
+                    if current.name != name or old_levels != section_types:
+                        connection.execute(SourceHierarchy.__table__.insert().values(
+                            id=id, version=current.version + 1, name=name,
+                            description=description, section_types=section_types,
+                            source_type=source_type, archived=False,
+                        ))
+                    else:
+                        connection.execute(text("UPDATE source_hierarchies SET archived=FALSE, source_type=:kind WHERE id=:id AND version=:version"),
+                                           {"kind": source_type, "id": id, "version": current.version})
+            connection.execute(text("UPDATE source_hierarchies SET archived=TRUE WHERE id NOT IN ('rpg-campaign','rulebook') AND version=(SELECT MAX(h2.version) FROM source_hierarchies h2 WHERE h2.id=source_hierarchies.id)"))
             unresolved = connection.execute(text('SELECT COUNT(*) FROM shreckworld_library_items WHERE ontology_id IS NULL')).scalar_one()
             connection.commit()
             logger.info('Sources startup migration complete; %s legacy items retain unresolved ontology ownership', unresolved)

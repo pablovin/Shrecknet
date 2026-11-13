@@ -349,14 +349,14 @@ def _create_group(db: Session, page: dict, paths: list[list[str]], types: dict,
         children[parent].append(identifier)
     template = next((row for row in db.scalars(select(SourceHierarchy).order_by(
         SourceHierarchy.id, SourceHierarchy.version.desc())).all()
-        if not row.archived and row.section_types == list(signature)), None)
+        if not row.archived and row.source_type == "narrative" and row.section_types == list(signature)), None)
     if template is None:
         template_id = _id("template", "/".join(signature))
         template = db.get(SourceHierarchy, (template_id, 1))
         if template is None:
             template = SourceHierarchy(id=template_id, version=1,
                 name="Imported: " + " → ".join(signature), description="Imported graph narrative path",
-                section_types=list(signature), archived=False)
+                section_types=list(signature), source_type="narrative", archived=False)
             db.add(template)
     item = ShreckWorldLibraryItem(
         id=source_id, ontology_id=ontology_id, shreckworld_id=None,

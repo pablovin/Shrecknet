@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     ShreckWorldDocument, ShreckWorldDocumentBookMap, ShreckWorldLibraryItem,
-    SourceHierarchy, SourceOrganization,
+    SourceHierarchy, SourceOrganization, SourceCollection,
 )
 from app.repositories.source_scope import OntologyScope, scoped_item
 from app.schemas.book_map import BookMapV4
@@ -49,6 +49,7 @@ def latest_hierarchy(db: Session, hierarchy_id: str) -> SourceHierarchy:
 def hierarchy_read(record: SourceHierarchy) -> HierarchyRead:
     return HierarchyRead(
         id=record.id, version=record.version, name=record.name,
+        source_type=record.source_type,
         description=record.description or "", section_types=record.section_types,
         archived=record.archived, has_image=bool(record.image_path),
     )
@@ -80,15 +81,20 @@ def save_hierarchy(db: Session, payload: HierarchyInput, hierarchy_id: str | Non
         hierarchy_id = str(uuid4())
         version = 1
         image_path = None
+        source_type = payload.source_type
     else:
         previous = latest_hierarchy(db, hierarchy_id)
         if payload.expected_version != previous.version:
             _fail(409, "Template changed; reload before saving")
         version = previous.version + 1
         image_path = previous.image_path
+        if previous.source_type != payload.source_type:
+            _fail(422, "Template category cannot be changed after creation")
+        source_type = previous.source_type
     record = SourceHierarchy(
         id=hierarchy_id, version=version, name=payload.name,
         description=payload.description, section_types=payload.section_types,
+        source_type=source_type,
         archived=payload.archived, image_path=image_path,
     )
     try:
@@ -98,6 +104,25 @@ def save_hierarchy(db: Session, payload: HierarchyInput, hierarchy_id: str | Non
         db.rollback()
         _fail(409, "Hierarchy template was updated concurrently; reload and retry")
     return hierarchy_read(record)
+
+
+def delete_hierarchy(db: Session, scope: OntologyScope, hierarchy_id: str, expected_version: int,
+                     remove_items: bool = False) -> HierarchyRead:
+    """Retire a template and optionally remove its entries from this ontology."""
+    previous = latest_hierarchy(db, hierarchy_id)
+    if previous.version != expected_version:
+        _fail(409, "Template changed; reload before deleting")
+    if remove_items:
+        db.query(SourceCollection).filter(
+            SourceCollection.ontology_id == scope.ontology_id,
+            SourceCollection.hierarchy_template_id == hierarchy_id,
+        ).delete(synchronize_session=False)
+        db.commit()
+    return save_hierarchy(db, HierarchyInput(
+        source_type=previous.source_type, name=previous.name,
+        description=previous.description or "", section_types=previous.section_types,
+        archived=True, expected_version=previous.version,
+    ), hierarchy_id)
 
 
 def render_authored_markdown(nodes: list[SourceSection]) -> bytes:
@@ -144,6 +169,8 @@ def create_authored_source(db: Session, scope: OntologyScope, payload: SourceCre
     template = db.get(SourceHierarchy, (payload.hierarchy_template_id, payload.hierarchy_template_version))
     if template is None or template.archived:
         _fail(422, "Select an active hierarchy template version")
+    if template.source_type != payload.source_type:
+        _fail(422, "Hierarchy template does not belong to this source category")
     item = ShreckWorldLibraryItem(
         id=str(uuid4()), ontology_id=scope.ontology_id, shreckworld_id=None,
         source_type=payload.source_type, hierarchy_template_id=template.id,
@@ -196,6 +223,8 @@ def update_source_settings(db: Session, scope: OntologyScope, source_id: str, pa
     template = db.get(SourceHierarchy, (payload.hierarchy_template_id, payload.hierarchy_template_version))
     if template is None:
         _fail(422, "Unknown hierarchy template version")
+    if template.source_type != payload.source_type:
+        _fail(422, "Hierarchy template does not belong to this source category")
     if item.source_revision != payload.expected_revision:
         _fail(409, "Source changed; reload before saving")
     result = db.execute(update(ShreckWorldLibraryItem).where(
@@ -407,7 +436,7 @@ def save_hierarchy_image(
         record = SourceHierarchy(
             id=previous.id, version=expected_version + 1, name=previous.name,
             description=previous.description, section_types=list(previous.section_types),
-            archived=previous.archived, image_path=str(target),
+            source_type=previous.source_type, archived=previous.archived, image_path=str(target),
         )
         db.add(record)
         db.commit()

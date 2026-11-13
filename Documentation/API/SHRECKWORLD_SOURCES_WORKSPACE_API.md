@@ -131,6 +131,11 @@ Required ontology-scoped routes:
 - `GET /source-collections/{collection_id}`: read a single collection.
 - `PUT /source-collections/{collection_id}`: atomically save name,
   description, archive flag and all entries with `expected_revision`.
+- `PUT /source-collections/{collection_id}/template` with
+  `expected_revision` and `template_version`: explicitly upgrade the
+  pinned hierarchy schema after confirming its new level names. Existing
+  entry IDs, attachments and hierarchy positions are preserved; shortening
+  below an occupied level is rejected with HTTP 422.
 - `DELETE /source-collections/{collection_id}?expected_revision=N`:
   archive an assignment; **not** the template or linked documents.
 - `POST /source-collections/{id}/entries/{entry_id}/image?expected_revision=N`:

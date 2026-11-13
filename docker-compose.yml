@@ -616,7 +616,10 @@ services:
       - hf-model-cache:/hf-cache:ro
     depends_on:
       shreckworld_model_prefetch:
-        condition: service_completed_successfully
+        # ShreckWorld can serve source and graph-import routes while semantic
+        # models are unavailable; do not block its automatic migrations on a
+        # failed GPU/model prefetch job.
+        condition: service_started
       shreckworld_permissions:
         condition: service_completed_successfully
       shreckworld_redis:

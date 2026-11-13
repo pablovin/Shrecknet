@@ -113,6 +113,12 @@ def _validate_entries(db: Session, collection: SourceCollection, entries: list[C
             if parent is None or node.level != parent.level + 1:
                 fail(422, "Entries must belong to the next hierarchy level")
         old = previous.get(node.id)
+        if collection.source_type == "explanatory" and len(node.source_ids) > 1:
+            previous_sources = set(old.source_ids) if old else set()
+            # Let legacy entries keep or shed old attachments, but reject any
+            # added association while an entry remains over the new limit.
+            if not set(node.source_ids).issubset(previous_sources):
+                fail(422, "An Explanatory hierarchy item can have only one attached source; remove its extra files first")
         if node.image_key != (old.image_key if old else None):
             fail(422, "Entry images can only change through the image upload endpoint")
         source_ids.update(node.source_ids)

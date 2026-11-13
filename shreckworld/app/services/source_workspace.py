@@ -126,7 +126,7 @@ def render_authored_markdown(nodes: list[SourceSection]) -> bytes:
             visit(child, depth + 1)
 
     visit(root, 1)
-    return ("\\n".join(lines).rstrip() + "\\n").encode("utf-8")
+    return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
 
 
 def _write_authored_revision(item: ShreckWorldLibraryItem, data: bytes) -> Path:

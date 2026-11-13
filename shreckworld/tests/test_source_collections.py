@@ -128,6 +128,16 @@ def test_invalid_tree_and_duplicate_positions():
         ])
 
 
+@pytest.mark.parametrize("entry_id", ["../outside", "with.dot", "with/slash", ""])
+def test_collection_entry_rejects_unsafe_artwork_path_ids(entry_id):
+    with pytest.raises(ValidationError):
+        entry(entry_id)
+
+
+def test_collection_entry_accepts_path_safe_ids():
+    assert entry("Chapter_01-A").id == "Chapter_01-A"
+
+
 def test_image_upload_changes_only_target_entry_and_keeps_old_revision(db, tmp_path, monkeypatch):
     col = sample(db)
     scope = OntologyScope(7, "World")

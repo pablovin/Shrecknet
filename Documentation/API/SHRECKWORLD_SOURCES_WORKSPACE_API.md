@@ -163,6 +163,9 @@ references. Attachments must belong to **the same ontology and the same
 Narrative/Explanatory category**. Drag/reparent operations are saved
 as one revision. A stale edit returns HTTP 409 rather than overwriting
 another person's changes.
+Entry `id` and `parent_id` values must contain 1–128 ASCII letters, digits,
+underscores, or hyphens. Invalid IDs return HTTP 422; this restriction keeps
+artwork paths within the collection's protected media directory.
 
 **Collections do not own documents.** Removing an entry or an entire
 collection detaches references but leaves the original files, Book Maps,

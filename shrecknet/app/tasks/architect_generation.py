@@ -703,7 +703,22 @@ async def _execute_generation(
                         description=(scene.get("scene_description") or scene.get("scene_text") or "").strip(),
                         created_by_type=content_author_type,
                         created_by_author=author_id,
-                        derived_from=SceneDerivedFrom(entity_instance_id=source_entity_id),
+                        derived_from=SceneDerivedFrom(
+                            entity_instance_id=source_entity_id,
+                            source_id=scene.get("source_id"),
+                            section_id=scene.get("section_id"),
+                            markdown_asset_id=scene.get("markdown_asset_id"),
+                            source_revision=scene.get("source_revision"),
+                            start_paragraph=scene.get("start_paragraph"),
+                            end_paragraph=scene.get("end_paragraph"),
+                            source_paragraphs_absolute=scene.get("source_paragraphs_absolute") or [],
+                            provenance_status=(
+                                "architect"
+                                if scene.get("start_paragraph") is not None
+                                and scene.get("end_paragraph") is not None
+                                else "document_only"
+                            ),
+                        ),
                         relates_to=[
                             SceneEntityRelation(entity_instance_id=entity_id, label="related_to")
                             for entity_id in sorted(related_entity_ids)

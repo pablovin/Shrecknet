@@ -5,7 +5,6 @@ from hashlib import sha256
 from pathlib import Path
 import os
 import re
-import shutil
 from app.core.config import get_settings
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -158,7 +157,7 @@ def create_authored_source(db: Session, scope: OntologyScope, payload: SourceCre
     # template levels to the ontology or overwriting an existing source.
     outline = [_root(item)]
     parent_id = outline[0].id
-    for index, section_type in enumerate(template.section_types):
+    for section_type in template.section_types:
         section_id = str(uuid4())
         outline.append(SourceSection(
             id=section_id, parent_id=parent_id, order=0,

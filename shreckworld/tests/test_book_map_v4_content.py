@@ -128,3 +128,54 @@ def test_node_content_response_positions_direct_blocks_and_child_summaries():
     child = next(node for node in tree.nodes if node.id == chapter.child_ids[0])
     assert response["children"][0]["position"] == child.position.model_dump()
 
+
+
+@pytest.mark.parametrize("parent_type", ["contents", "part", "chapter", "section", "appendix"])
+@pytest.mark.parametrize("child_first", [False, True])
+def test_structural_ranges_enclose_descendants_independent_of_node_order(parent_type, child_first):
+    from shreckdoc.structure_resolution import StructuralCandidate, StructuralResolution
+    from shreckdoc.structure_types import SourcePosition
+
+    document = NormalizedDocument(
+        [NormalizedPage(f"p{page}", page, str(page)) for page in range(1, 4)], [],
+        [_block(f"body{page}", "paragraph", f"Text on page {page}", page, page)
+         for page in range(1, 4)],
+    )
+    # Outline entries can share a destination, so serialized node order need
+    # not place a parent before its child.
+    root = StructuralCandidate("root", "Document", "document", 0, SourcePosition(1, 0),
+                               "inferred", [], 1.0, "validated", child_ids=["parent"])
+    parent = StructuralCandidate("parent", "Parent", parent_type, 1, SourcePosition(1, 0),
+                                 "bookmark", [], 1.0, "resolved", "root", child_ids=["child"])
+    child = StructuralCandidate("child", "Child", "section", 2, SourcePosition(1, 0),
+                                "bookmark", [], 1.0, "resolved", "parent")
+    ordered = [child, parent] if child_first else [parent, child]
+    resolution = StructuralResolution("doc", [root, *ordered], [], [], [], True)
+    tree = build_book_map_v4(document_id="doc", source_sha256="a" * 64,
+                             document=document, resolution=resolution)
+    by_id = {node.id: node for node in tree.nodes}
+    for node_id in ("root", "parent", "child"):
+        assert by_id[node_id].pages.start == 1
+        assert by_id[node_id].pages.end == 3
+    assert tree.quality.owned_block_count == 3
+
+
+def test_multi_page_contents_encloses_direct_content():
+    from shreckdoc.structure_resolution import StructuralCandidate, StructuralResolution
+    from shreckdoc.structure_types import SourcePosition
+
+    document = NormalizedDocument(
+        [NormalizedPage(f"p{page}", page, str(page)) for page in range(1, 4)], [],
+        [_block(f"toc{page}", "paragraph", f"Contents row {page}", page, page)
+         for page in range(1, 4)],
+    )
+    root = StructuralCandidate("root", "Document", "document", 0, SourcePosition(1, 0),
+                               "inferred", [], 1.0, "validated", child_ids=["contents"])
+    contents = StructuralCandidate("contents", "Contents", "contents", 1, SourcePosition(1, 0),
+                                   "bookmark", [], 1.0, "resolved", "root")
+    resolution = StructuralResolution("doc", [root, contents], [], [], [], True)
+    tree = build_book_map_v4(document_id="doc", source_sha256="a" * 64,
+                             document=document, resolution=resolution)
+    parent = next(node for node in tree.nodes if node.id == "contents")
+    assert parent.pages.end == 3
+    assert len(parent.child_ids) == 3

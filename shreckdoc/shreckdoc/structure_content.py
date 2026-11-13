@@ -42,8 +42,16 @@ def _position_key(position: SourcePosition) -> tuple[int, int]:
     return position.physical_page, position.reading_order
 
 
+def _before(left: SourcePosition, right: SourcePosition) -> bool:
+    if left.physical_page != right.physical_page:
+        return left.physical_page < right.physical_page
+    if left.y is not None and right.y is not None:
+        return left.y < right.y
+    return left.reading_order < right.reading_order
+
+
 def _inside(position: SourcePosition, start: SourcePosition, end: SourcePosition | None) -> bool:
-    return _position_key(position) >= _position_key(start) and (end is None or _position_key(position) < _position_key(end))
+    return not _before(position, start) and (end is None or _before(position, end))
 
 
 def attach_content(document: NormalizedDocument, resolution: StructuralResolution) -> ContentOwnership:

@@ -47,6 +47,23 @@ Starting an item already queued/embedding returns `409`. Missing or mismatched
 world/item/job returns `404`; missing credentials return `401`, insufficient
 roles `403`. Job status is separate from the last successful active generation.
 
+Each start, reindex, or retry creates a fresh attempt and reruns source parsing,
+structural resolution, chunking, Book Map validation, embeddings, and publication.
+The worker bypasses parser-cache reads for every indexing attempt and refreshes
+the cache after a successful parse; `metrics.parser_cache_hit` is `false`.
+This also applies to direct `POST /ontologies/{ontology_id}/items/{item_id}/index`
+and legacy `/embed`. No extra request field is required. Retries can therefore
+take as long as the original parse. Historical jobs may report cache hits.
+
+A Book Map error such as `node ... page range falls outside its parent` means
+the generated navigation tree failed its containment invariant. Every structural
+node, including `contents`, must enclose all descendant evidence pages. Ranges
+are finalized from child links in descendant-before-parent order, including
+headings that share a destination. After deploying a range-builder fix, retry
+indexing the affected source; no database migration or source re-upload is needed.
+Failed attempts preserve any prior active generation. Rolling back the worker
+restores its earlier retry/cache behavior; retained sources remain available.
+
 ## Structured indexing contract
 
 The worker uses shared normalization and structural parent/child algorithms from
@@ -358,8 +375,9 @@ reconstruction may lose table rows/cells and
 structured table evidence; review retrieval quality before retaining its index.
 
 The flag and table mode participate in parser-cache identity: switching either forces a fresh parse
-without deleting the previous cache. Subsequent identical runs can hit the new
-cache, so verify `metrics.parser_cache_hit=false` when comparing timings.
+without deleting the previous cache. Direct parser calls may reuse the new
+cache; indexing attempts always reparse. Verify `metrics.parser_cache_hit=false`
+when comparing timings.
 Existing accurate-mode cache entries are not reused for fast-mode parsing.
 `metrics.parser_table_structure_enabled` records the choice in API/SDK job metrics
 and `[SHRECKWORLD_INDEXING_SUMMARY]` logs; historical jobs have `null`.

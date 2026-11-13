@@ -431,3 +431,26 @@ def test_measured_processing_survives_wall_clock_adjustments():
     assert live.processing_seconds == 50.5
     live = live.model_copy(update={"updated_at": datetime.now(timezone.utc) - timedelta(seconds=3)})
     assert 53.5 <= live.processing_seconds < 54.5
+
+
+def test_index_retry_runs_fresh_parsing_for_each_attempt(api, runtime, monkeypatch):
+    client, headers, _ = api
+    attempts = []
+
+    def observe(path, **kwargs):
+        assert kwargs["force_reparse"] is True
+        attempts.append(kwargs["ingestion_id"])
+        if len(attempts) == 1:
+            raise ValueError("Parsing failed")
+        return parsed_source(path, **kwargs)
+
+    monkeypatch.setattr("app.services.ingestion.parse_source", observe)
+    prefix, item_id, first_id = queued_job(api, monkeypatch)
+    run(item_id, first_id)
+    assert client.get(f"{prefix}/index-jobs/{first_id}", headers=headers).json()["status"] == "failed"
+    retry_id = client.post(f"{prefix}/index", headers=headers).json()["id"]
+    run(item_id, retry_id)
+    result = client.get(f"{prefix}/index-jobs/{retry_id}", headers=headers).json()
+    assert result["status"] == "completed"
+    assert result["metrics"]["parser_cache_hit"] is False
+    assert attempts == [first_id, retry_id]

@@ -56,3 +56,23 @@ def test_index_chunks_embed_all_extracted_text_with_hierarchy_and_caption_but_no
     caption_chunk = by_source_block["block-5"]
     assert table_chunk.content_type == "table"
     assert caption_chunk.display_text == "Figure 1: The characteristic roll"
+
+
+def test_picture_text_and_unreliable_table_text_are_retained_without_embedding():
+    section = NormalizedSection("s", None, "Chapter", 1, ["Chapter"])
+    blocks = [NormalizedBlock(f"b{i}", "s", kind, text, [1], ["1"], [], i, f"r{i}")
+              for i, (kind, text) in enumerate([
+                  ("paragraph", "Readable prose"),
+                  ("picture", "Parser supplied image label"),
+                  ("table", "Unreadable cell dump"),
+                  ("unparsed_region", "Unparsed placeholder"),
+              ])]
+    section.block_ids = [block.block_id for block in blocks]
+    document = NormalizedDocument([NormalizedPage("p1", 1, "1")], [section], blocks)
+    chunks = build_chunks(document=document, ingestion_id="g", library_item_id="b",
+        ontology_id="o", book_title="Book", rpg_system="Game", tokenizer=WordTokenizer(),
+        preserve_unit_boundaries=True, table_text_by_block={"b2": ""})
+    embedded = {block_id for chunk in chunks if chunk.chunk_role == "child"
+                for block_id in chunk.source_block_ids}
+    assert embedded == {"b0"}
+    assert {block.block_id for block in document.blocks} == {"b0", "b1", "b2", "b3"}

@@ -185,3 +185,53 @@ def test_unparsed_page_uses_enclosing_bookmark_parent():
                   and node.position.physical_page == 60)
     chapter = next(node for node in book_map.nodes if node.id == region.parent_id)
     assert chapter.title == "Chapter One"
+
+
+def test_same_page_coordinate_boundaries_override_inconsistent_reading_order():
+    from shreckdoc.structure_content import attach_content
+    document = NormalizedDocument([NormalizedPage("p1", 1, "1")], [], [
+        NormalizedBlock("body", "root", "paragraph", "After second chapter", [1], ["1"],
+                        [{"left": 10, "top": 80, "right": 100, "bottom": 90}], 0, "body")])
+    result = resolve_structure(document_id="doc", document=document, bookmarks=[
+        _bookmark("a", "Chapter A", 1, 1, 0, y=10),
+        _bookmark("b", "Chapter B", 1, 1, 1, y=60)])
+    owners = attach_content(document, result).block_owner_ids
+    assert owners["body"] == next(node.node_id for node in result.nodes if node.title == "Chapter B")
+
+
+def test_multi_page_contents_ranges_do_not_move_bookmark_chapter_boundaries():
+    from app.services.book_map_v4 import build_book_map_v4
+    from shreckdoc.structure_content import attach_content, project_resolved_document
+
+    page_numbers = (8, 9, 28, 51, 52)
+    document = NormalizedDocument(
+        [NormalizedPage(f"p{page}", page, str(page)) for page in page_numbers], [],
+        [NormalizedBlock(
+            f"b{page}", "stale-parser-section", "paragraph", f"Evidence on page {page}",
+            [page], [str(page)], [{"left": 10, "top": 10, "right": 300, "bottom": 20}],
+            order, f"ref{page}",
+        ) for order, page in enumerate(page_numbers)],
+    )
+    resolution = resolve_structure(document_id="doc", document=document, bookmarks=[
+        _bookmark("contents", "Contents", 8, 1, 0, y=0),
+        _bookmark("three", "Chapter 3", 28, 1, 1, y=0),
+        _bookmark("four", "Chapter 4", 52, 1, 2, y=0),
+    ])
+    structural = _by_title(resolution)
+    boundary = structural["Chapter 3"].end_exclusive
+    owners = attach_content(document, resolution).block_owner_ids
+    assert owners["b8"] == owners["b9"] == structural["Contents"].node_id
+    assert owners["b28"] == owners["b51"] == structural["Chapter 3"].node_id
+    assert owners["b52"] == structural["Chapter 4"].node_id
+    projected = project_resolved_document(document, resolution)
+    assert {block.block_id: block.section_id for block in projected.blocks} == owners
+
+    tree = build_book_map_v4(document_id="doc", source_sha256="a" * 64,
+                             document=document, resolution=resolution)
+    nodes = {node.id: node for node in tree.nodes}
+    assert nodes[structural["Contents"].node_id].pages.model_dump() == {"start": 8, "end": 9}
+    assert nodes[structural["Chapter 3"].node_id].pages.model_dump() == {"start": 28, "end": 51}
+    assert nodes[structural["Chapter 4"].node_id].pages.model_dump() == {"start": 52, "end": 52}
+    page52 = next(node for node in tree.nodes if node.source_block_ids == ["b52"])
+    assert page52.parent_id == structural["Chapter 4"].node_id
+    assert structural["Chapter 3"].end_exclusive == boundary

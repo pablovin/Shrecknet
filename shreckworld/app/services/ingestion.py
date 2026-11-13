@@ -121,7 +121,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
             checkpoint(force=True)
 
         parsed = parse_source(path, ingestion_id=job.id, output_dir=output_dir, heartbeat=parsing_heartbeat,
-                              page_progress=parsing_pages)
+                              page_progress=parsing_pages, force_reparse=True)
         normalized = parsed.document
         resolver_started = monotonic()
         pdf_evidence = collect_pdf_structure(path) if path.suffix.lower() == ".pdf" else None
@@ -175,7 +175,8 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
             preserve_unit_boundaries=parsed.parser_name == "pymupdf" or any(
                 block.block_type in {"table", "picture"} for block in resolved_document.blocks
             ),
-            table_text_by_block={block_id: value.text for block_id, value in serialized_tables.items()},
+            table_text_by_block={block_id: value.text if value.quality == "structured" else ""
+                for block_id, value in serialized_tables.items()},
             table_row_groups_by_block={block_id: value.row_groups for block_id, value in serialized_tables.items()
                 if value.row_groups},
         ), lambda: checkpoint(force=True))
@@ -197,7 +198,9 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         # included through each chunk's heading_path; images remain references
         # with caption text indexed as ordinary evidence blocks.
         required = {block.block_id for block in normalized.blocks if block.display_text.strip()
-                    and block.block_type != "heading"}
+                    and block.block_type not in {"heading", "picture", "image", "unparsed_region"}
+                    and (block.block_type != "table" or
+                         serialized_tables[block.block_id].quality == "structured")}
         if required - represented:
             raise ValueError(f"Tokenizer context excluded {len(required - represented)} text blocks; refusing an incomplete activation")
         token_counts = {child.chunk_id: _token_count(tokenizer, child.embedding_text) for child in children}

@@ -41,6 +41,13 @@ Processing time prefers recorded monotonic phase durations; while running it
 estimates time since the last checkpoint. See the
 [job timing contract](../../../Documentation/API/SHRECKWORLD_INDEXING_API.md#job-response).
 
+Starting indexing again after a failed job retries the complete pipeline, including
+fresh source parsing, chunking, Book Map construction, and embeddings. No extra
+SDK argument is required. Each indexing attempt bypasses parser-cache reads and
+reports `metrics.parser_cache_hit=false`; parsing can take as long as the initial
+attempt. A failed retry preserves any previous active generation. See the
+[indexing recovery contract](../../../Documentation/API/SHRECKWORLD_INDEXING_API.md#routes-and-access).
+
 During PDF parsing, current Docling versions update `metrics.processed_pages` and
 `metrics.total_pages` on each heartbeat interval (five seconds by default).
 Display these existing counters; completed pages count successful layout/table

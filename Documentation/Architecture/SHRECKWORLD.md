@@ -78,6 +78,20 @@ for payloads, errors, roles, source revision checks, and compatibility.
 
 ## Structured indexing pipeline
 
+Indexing attempts (including retries) force fresh source parsing before structural
+resolution, chunking, embedding, and activation. The parser helper retains optional
+cache reuse for other callers, but ingestion bypasses reads and refreshes the
+cache. Book Map V4 ranges are finalized by traversing child links from descendants
+to ancestors for every structural type, including `contents`; serialized node
+order and shared heading destinations do not determine range propagation.
+Ownership is resolved first from structural intervals, independently of parser
+section IDs. Range aggregation does not change ownership or resolver boundaries:
+a block starting on page 52 belongs to the chapter whose bookmark interval
+contains that position, rather than extending a preceding chapter ending before
+page 52. Published ranges describe owned evidence spans, not replacement
+structural intervals.
+See the [indexing recovery contract](../API/SHRECKWORLD_INDEXING_API.md#routes-and-access).
+
 New indexing generations persist a validated Book Map V4 tree with parser
 evidence, structural intervals, one-owner source blocks, page coverage, table
 and image nodes, caption/continuation references, and chunk links. PDF outlines,
@@ -94,6 +108,10 @@ reindexed; restoring a retained V4 artifact does not rerun this resolver. Conten
 resolved chunk context are produced before embedding. Table cells serialize as
 header/value text when reliable; unreadable tables retain their extracted text
 fallback. Images and placeholders remain navigable without image-pixel vectors.
+Picture and unparsed-region blocks are excluded from child embeddings even if a
+parser supplies display text. Tables contribute embedding text only when the
+structured serializer produces reliable rows; unreadable table blocks stay in
+the map without a table vector. Caption text remains independently eligible.
 SQL chunk records and Qdrant payloads retain recipe/map versions, resolved
 heading paths, source-block IDs, content type, and whether heading context was
 reduced. The additive SQLite migration gives old chunk rows a false

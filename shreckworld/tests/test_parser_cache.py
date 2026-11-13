@@ -277,3 +277,40 @@ def test_mineru_cache_identity_tracks_service_version_tier_and_endpoint(tmp_path
     assert cache_identity(source, Settings(**{**base.model_dump(), "mineru_version": "4.2.0"}), "remote", parser_name="mineru") != key
     assert cache_identity(source, Settings(**{**base.model_dump(), "mineru_tier": "advanced"}), "remote", parser_name="mineru") != key
     assert cache_identity(source, Settings(**{**base.model_dump(), "mineru_api_url": "http://mineru-new:8000"}), "remote", parser_name="mineru") != key
+
+
+@pytest.mark.parametrize("backend", ["docling", "pymupdf", "mineru"])
+def test_force_reparse_bypasses_existing_cache_and_refreshes_it(parser, tmp_path, monkeypatch, backend):
+    source, calls, run = parser
+    import app.services.document_parsing as parsing
+    monkeypatch.setenv("SHRECKWORLD_PDF_PARSER", backend)
+
+    def convert(path, **kwargs):
+        calls.append(path)
+        canonical = {"pages": {"1": {}}}
+        items = [{"reference": "body", "block_type": "paragraph", "text": "Fresh text",
+                  "reading_order": 0, "provenance": [{"page_no": 1}]}]
+        if backend == "mineru":
+            return canonical, items, "test-mineru"
+        return canonical, items, []
+
+    if backend == "pymupdf":
+        monkeypatch.setattr(parsing, "parse_pdf", convert)
+    elif backend == "mineru":
+        monkeypatch.setattr(parsing, "parse_mineru_pdf", convert)
+    run("first")
+    original_write = parsing.write_cache
+    writes = []
+
+    def record_write(*args):
+        writes.append(args[0])
+        return original_write(*args)
+
+    monkeypatch.setattr(parsing, "write_cache", record_write)
+    monkeypatch.setattr(parsing, "read_cache", lambda *_: pytest.fail("Forced parse read the cache"))
+    result = parse_source(source, ingestion_id="retry", output_dir=tmp_path / "retry",
+                          heartbeat=lambda _: None, force_reparse=True)
+    assert len(calls) == 2
+    assert result.cache_hit is False
+    assert len(writes) == 1
+    assert "conversion" in result.phase_seconds

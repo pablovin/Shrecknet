@@ -49,7 +49,7 @@ class SemanticRuntime:
         return [1.0, 0.0]
 
 
-def parsed_source(path: Path, *, ingestion_id, output_dir, heartbeat, page_progress=None):
+def parsed_source(path: Path, *, ingestion_id, output_dir, heartbeat, page_progress=None, force_reparse=False):
     heartbeat(2)
     content = path.read_text()
     output_dir.mkdir(parents=True, exist_ok=True)

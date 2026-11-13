@@ -873,7 +873,7 @@ def build_chunks(
     chunks: list[NormalizedChunk] = []
     chunk_index = 0
     def block_text(block: NormalizedBlock) -> str:
-        if block.block_type == "table" and table_text_by_block and block.block_id in table_text_by_block:
+        if block.block_type == "table" and table_text_by_block is not None and block.block_id in table_text_by_block:
             return table_text_by_block[block.block_id]
         return block.display_text
 
@@ -881,8 +881,8 @@ def build_chunks(
         owned = [block_map[block_id] for block_id in section.block_ids if block_id in block_map]
         evidence = [
             block for block in owned
-            if block.block_type != "heading"
-            and (block.display_text or block.block_type == "picture")
+            if block.block_type not in {"heading", "picture", "image", "unparsed_region"}
+            and block_text(block).strip()
         ]
         if not evidence:
             continue

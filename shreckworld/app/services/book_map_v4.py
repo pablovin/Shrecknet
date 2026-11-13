@@ -231,9 +231,18 @@ def build_book_map_v4(*, document_id: str, source_sha256: str, document: Normali
             source_node.related_node_ids.append(target_node.id)
             target_node.related_node_ids.append(source_node.id)
 
-    # Parent and document ranges include all descendant evidence spans.
-    for node in reversed(list(nodes.values())):
-        if node.node_type in {"document", "part", "chapter", "section", "appendix"}:
+    # Traverse child links so equal-position headings and input ordering cannot
+    # cause a parent to be finalized before its descendants.
+    traversal: list[BookMapNode] = []
+    pending = [nodes[root.node_id]]
+    while pending:
+        node = pending.pop()
+        traversal.append(node)
+        pending.extend(nodes[child_id] for child_id in node.child_ids)
+
+    # Every structural type, including multi-page contents, encloses its children.
+    for node in reversed(traversal):
+        if node.id in structural_by_id:
             starts = [node.position.physical_page]
             ends = [node.position.physical_page]
             for block_id in node.source_block_ids:

@@ -72,7 +72,9 @@ class ParsedSource:
 
 def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
                  heartbeat: Callable[[int | None], None],
-                 page_progress: Callable[[int, int], None] | None = None) -> ParsedSource:
+                 page_progress: Callable[[int, int], None] | None = None,
+                 force_reparse: bool = False) -> ParsedSource:
+    """Parse a source, optionally bypassing reads and refreshing its parser cache."""
     settings = get_settings()
     output_dir.mkdir(parents=True, exist_ok=True)
     native_count = _native_pdf_page_count(path) if path.suffix.lower() == ".pdf" else None
@@ -115,7 +117,8 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
             key = with_heartbeat(lambda: cache_identity(path, settings, parser_version, parser_name=parser_name),
                                  lambda: heartbeat(native_count))
             cache_path = path.parent / "parser-cache" / f"{key}.json"
-            cached = with_heartbeat(lambda: read_cache(cache_path, key), lambda: heartbeat(native_count))
+            if not force_reparse:
+                cached = with_heartbeat(lambda: read_cache(cache_path, key), lambda: heartbeat(native_count))
             timings["cache_lookup"] = monotonic() - started
         if cached is not None:
             canonical, items, diagnostics = cached.canonical, cached.items, cached.diagnostics
@@ -139,7 +142,8 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
             key = with_heartbeat(lambda: cache_identity(path, settings, parser_version, parser_name=parser_name),
                                  lambda: heartbeat(native_count))
             cache_path = path.parent / "parser-cache" / f"{key}.json"
-            cached = with_heartbeat(lambda: read_cache(cache_path, key), lambda: heartbeat(native_count))
+            if not force_reparse:
+                cached = with_heartbeat(lambda: read_cache(cache_path, key), lambda: heartbeat(native_count))
             timings["cache_lookup"] = monotonic() - started
         if cached is not None:
             canonical, items, diagnostics = cached.canonical, cached.items, cached.diagnostics
@@ -156,7 +160,8 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
             started = monotonic()
             key = with_heartbeat(lambda: cache_identity(path, settings, parser_version), lambda: heartbeat(native_count))
             cache_path = path.parent / "parser-cache" / f"{key}.json"
-            cached = with_heartbeat(lambda: read_cache(cache_path, key), lambda: heartbeat(native_count))
+            if not force_reparse:
+                cached = with_heartbeat(lambda: read_cache(cache_path, key), lambda: heartbeat(native_count))
             timings["cache_lookup"] = monotonic() - started
         adapter = DoclingAdapter(
             str(settings.docling_artifacts_path) if settings.docling_artifacts_path else None,

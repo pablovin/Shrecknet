@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from pathlib import Path
+from app.core.config import get_settings
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import HTTPException
@@ -253,3 +255,53 @@ def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: Organi
     ))
     db.commit()
     return OrganizationRead(revision=next_revision, nodes=payload.nodes)
+
+
+def save_hierarchy_image(
+    db: Session, hierarchy_id: str, expected_version: int, image: bytes,
+    content_type: str | None,
+) -> HierarchyRead:
+    """Append a template revision containing a validated, privately stored image."""
+    if not image or len(image) > 5 * 1024 * 1024:
+        _fail(413, "Hierarchy image must be between 1 byte and 5 MB")
+    signatures = {
+        "image/png": (image.startswith(b"\\x89PNG\\r\\n\\x1a\\n"), "png"),
+        "image/jpeg": (image.startswith(b"\\xff\\xd8\\xff") and image.endswith(b"\\xff\\xd9"), "jpg"),
+        "image/webp": (image.startswith(b"RIFF") and image[8:12] == b"WEBP", "webp"),
+    }
+    valid, extension = signatures.get(content_type or "", (False, ""))
+    if not valid:
+        _fail(415, "Only PNG, JPEG, or WebP images are supported")
+    previous = latest_hierarchy(db, hierarchy_id)
+    if previous.version != expected_version:
+        _fail(409, "Template changed; reload before uploading an image")
+    if previous.archived:
+        _fail(409, "Archived templates cannot be modified")
+    root = get_settings().media_root / "hierarchy-images" / sha256(hierarchy_id.encode()).hexdigest()[:20]
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / f"{uuid4()}.{extension}"
+    try:
+        target.write_bytes(image)
+        record = SourceHierarchy(
+            id=previous.id, version=expected_version + 1, name=previous.name,
+            description=previous.description, section_types=list(previous.section_types),
+            archived=previous.archived, image_path=str(target),
+        )
+        db.add(record)
+        db.commit()
+    except Exception:
+        db.rollback()
+        target.unlink(missing_ok=True)
+        raise
+    return hierarchy_read(record)
+
+
+def hierarchy_image_path(db: Session, hierarchy_id: str, version: int) -> Path:
+    record = db.get(SourceHierarchy, (hierarchy_id, version))
+    if record is None or not record.image_path:
+        _fail(404, "Hierarchy image not found")
+    path = Path(record.image_path).resolve()
+    media_root = get_settings().media_root.resolve()
+    if media_root not in path.parents or not path.is_file() or path.suffix.lower() not in {".png", ".jpg", ".webp"}:
+        _fail(404, "Hierarchy image not available")
+    return path

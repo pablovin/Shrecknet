@@ -164,6 +164,8 @@ def test_sources_migration_seeds_sessions_and_world_lore_templates():
         with Session(engine) as session:
             adventures = session.get(SourceHierarchy, ("campaign-sessions", 1))
             lore = session.get(SourceHierarchy, ("world-lore", 1))
+            markdown = session.get(SourceHierarchy, ("plain-document", 1))
+            assert markdown is not None and markdown.section_types == ["Document"]
             assert adventures is not None
             assert adventures.section_types == ["Adventure", "Story Arc", "Session"]
             assert lore is not None

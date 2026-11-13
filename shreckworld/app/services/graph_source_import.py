@@ -441,13 +441,12 @@ def _create_group(db: Session, page: dict, paths: list[list[str]], types: dict,
         raise
 
 
-def import_graph_sources(session_factory, settings=None) -> dict[str, int]:
+def _import_graph_sources_unlocked(session_factory, settings) -> dict[str, int]:
     """Called after the ShreckWorld database schema is ready.
 
     Startup import is insert-only: previously imported sources/sections are
     never rewritten, even when legacy text changes after the first import.
     """
-    settings = settings or get_settings()
     types, relations, properties = _legacy_definitions(settings.legacy_ontology_database_path)
     pages = _graph_pages(settings)
     summary = dict(pages=len(pages), imported=0, skipped=0, errors=0)
@@ -477,3 +476,21 @@ def import_graph_sources(session_factory, settings=None) -> dict[str, int]:
                 logger.warning("Graph narrative group import failed (%s)", type(exc).__name__)
     logger.info("Graph narrative startup import: %s", summary)
     return summary
+
+
+def import_graph_sources(session_factory, settings=None) -> dict[str, int]:
+    """Perform one process-wide import, guarded across parallel API workers."""
+    import fcntl
+    settings = settings or get_settings()
+    settings.media_root.mkdir(parents=True, exist_ok=True)
+    lock_path = settings.media_root / ".graph-source-import.lock"
+    with lock_path.open("a+b") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info("Skipping graph import: another process holds the startup lock")
+            return {"pages": 0, "imported": 0, "skipped": 0, "errors": 0}
+        try:
+            return _import_graph_sources_unlocked(session_factory, settings)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)

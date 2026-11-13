@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routers import router
 from app.api.routers.ontology_items import router as ontology_items_router
 from app.api.routers.sources_workspace import router as sources_workspace_router
+from app.api.routers.source_collections import router as source_collections_router
 from app.api.routers.ontology_migration import router as ontology_migration_router
 from app.api.routers.game_engine import router as game_engine_router
 from app.core.config import get_settings
@@ -91,6 +92,7 @@ def readiness() -> dict:
 app.include_router(router)
 app.include_router(ontology_items_router)
 app.include_router(sources_workspace_router)
+app.include_router(source_collections_router)
 app.include_router(ontology_migration_router)
 app.include_router(game_engine_router)
 # Source and cover files are deliberately not mounted as public static media.

@@ -71,6 +71,14 @@ async def upload_entry_artwork(
     )
 
 
+@router.delete("/{collection_id}/entries/{entry_id}/image", response_model=CollectionRead, dependencies=manager)
+def remove_entry_artwork(
+    collection_id: str, entry_id: str, expected_revision: int = Query(ge=1),
+    scope: OntologyScope = Depends(authorized_ontology), db: Session = Depends(get_db),
+):
+    return collections.remove_entry_image(db, scope, collection_id, entry_id, expected_revision)
+
+
 @router.get("/{collection_id}/entries/{entry_id}/image")
 def read_entry_artwork(
     collection_id: str, entry_id: str,

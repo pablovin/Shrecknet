@@ -265,7 +265,7 @@ def save_hierarchy_image(
     if not image or len(image) > 5 * 1024 * 1024:
         _fail(413, "Hierarchy image must be between 1 byte and 5 MB")
     signatures = {
-        "image/png": (image.startswith(b"\\x89PNG\\r\\n\\x1a\\n"), "png"),
+        "image/png": (image.startswith(bytes.fromhex("89504e470d0a1a0a")), "png"),
         "image/jpeg": (image.startswith(b"\\xff\\xd8\\xff") and image.endswith(b"\\xff\\xd9"), "jpg"),
         "image/webp": (image.startswith(b"RIFF") and image[8:12] == b"WEBP", "webp"),
     }

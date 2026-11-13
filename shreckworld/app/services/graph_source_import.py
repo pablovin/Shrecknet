@@ -464,7 +464,7 @@ def _import_graph_sources_unlocked(session_factory, settings) -> dict[str, int]:
             except ValueError:
                 summary["errors"] += 1
                 logger.warning("Skipping ambiguous graph narrative source %s", leaf)
-        for _, paths in grouped.items():
+        for (root_id, signature), paths in grouped.items():
             try:
                 with session_factory() as db:
                     created, skipped = _create_group(
@@ -473,7 +473,12 @@ def _import_graph_sources_unlocked(session_factory, settings) -> dict[str, int]:
                 summary["skipped"] += skipped
             except Exception as exc:
                 summary["errors"] += 1
-                logger.warning("Graph narrative group import failed (%s)", type(exc).__name__)
+                logger.exception(
+                    "Graph narrative group import failed for ontology=%s instance=%s root=%s "
+                    "hierarchy=%s (%s)",
+                    page["ontology_id"], page["instance_id"], root_id,
+                    " -> ".join(signature), type(exc).__name__,
+                )
     logger.info("Graph narrative startup import: %s", summary)
     return summary
 

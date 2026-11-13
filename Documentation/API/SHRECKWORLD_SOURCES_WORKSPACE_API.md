@@ -237,6 +237,8 @@ to disable it. The startup task runs in a daemon thread with bounded connection 
 blocking normal service startup. Reboot to retry an unavailable
 Neo4j connection or a previously failed group. Concurrent importer processes
 use a file lock under the ShreckWorld media directory.
+Failed source groups are logged with their ontology, instance, root entity,
+hierarchy signature and exception traceback to help diagnose import errors.
 
 Docker Compose mounts two inputs **read-only** for the importer:
 `/legacy-shrecknet-data/shrecknet.db` (SQL ontology definitions) and

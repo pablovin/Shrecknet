@@ -206,7 +206,7 @@ together before upgrades.
   integration step; until then it is not queryable by Elder/ShreckWorld.
 - Hierarchy template images are stored in protected media with version-pinned authenticated reads and an administrator-only upload endpoint. Image uploads append a template version.
 - The original Sources workspace does not change Story/Adventure graph nodes, scene
-  provenance, or the Architect. The opt-in startup importer described below
+  provenance, or the Architect. The automatic startup importer described below
   **copies** scene-derived narrative material into Sources without altering the graph.
 - Older source routes and SDK consumers remain supported.
 
@@ -222,11 +222,12 @@ Inspect legacy ontology ownership before a full storage rollback.
 Run `pytest tests/test_sources_workspace.py` from `shreckworld/` and the
 frontend test/lint/build commands from `shreckos/` before enabling in production.
 
-## Optional graph narrative source import (startup)
+## Automatic graph narrative source import (startup)
 
-Set `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=true` to run the **insert-only,
-read-only-from-graph** import after ShreckWorld initializes its own SQL schema.
-The default is false. The startup task runs in a daemon thread with bounded connection retries
+The **insert-only, read-only-from-graph** importer runs automatically on every
+ShreckWorld API startup after its own SQL schema is initialized. Its default is
+**enabled**. Set `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=false` only when an
+administrator intentionally needs to disable imports. The startup task runs in a daemon thread with bounded connection retries
 (up to 12 attempts at ten-second intervals); failures are logged without
 blocking normal service startup. Reboot to retry an unavailable
 Neo4j connection or a previously failed group. Concurrent importer processes
@@ -286,12 +287,13 @@ or a semantic-indexing job.
 
 Example:
 ```bash
-# Set before starting/restarting the API:
-SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=true docker compose up -d --build shreckworld_api
+# No migration setting is required; the importer starts automatically.
+docker compose up -d --build shreckworld_api
 # Inspect container logs for "Graph narrative startup import:"
 docker compose logs shreckworld_api
 ```
 
-Back up ShreckWorld's database and media before enabling the importer.
-Rollback is disabling the setting and restarting the service; imported SQL
+Back up ShreckWorld's database and media before deploying this change.
+Rollback is setting `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=false` and restarting
+the service; imported SQL
 records/files remain until explicitly deleted or restored from backup.

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, Path
 from sqlalchemy import select
+from typing import Literal
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_world_manager, oauth2_scheme, get_current_user, ShrecknetPrincipal
@@ -33,12 +34,17 @@ def list_items(scope: OntologyScope = Depends(authorized_ontology), session: Ses
 def upload_item(
     title: str | None = None, pdf: UploadFile = File(...), authors: str | None = None,
     description: str | None = None, authority_tier: AuthorityTier = "core_rules", authority_priority: int = 100,
-    auto_extract_metadata: bool = Form(False), form_title: str | None = Form(None, alias="title"),
+    auto_extract_metadata: bool = Form(False),
+    source_type: Literal["narrative", "explanatory"] = Form("explanatory"),
+    hierarchy_template_id: str = Form("rulebook"), hierarchy_template_version: int = Form(1),
+    form_title: str | None = Form(None, alias="title"),
     form_authors: str | None = Form(None, alias="authors"), form_description: str | None = Form(None, alias="description"),
     scope: OntologyScope = Depends(authorized_ontology), session: Session = Depends(get_db),
 ):
     return sources.upload_library_item(scope, title, pdf, authors, description, authority_tier,
-        authority_priority, auto_extract_metadata, form_title, form_authors, form_description, session)
+        authority_priority, auto_extract_metadata, form_title, form_authors, form_description, session,
+        source_type=source_type, hierarchy_template_id=hierarchy_template_id,
+        hierarchy_template_version=hierarchy_template_version)
 
 
 @router.get("/items/{item_id}", response_model=ShreckWorldLibraryItemRead)

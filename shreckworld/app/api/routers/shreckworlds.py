@@ -191,13 +191,13 @@ def upload_library_item(
     shreckworld_id: str, title: str | None = None, pdf: UploadFile = File(...), authors: str | None = None,
     description: str | None = None, authority_tier: AuthorityTier = "core_rules", authority_priority: int = 100,
     auto_extract_metadata: bool = Form(False, description="Fill empty title, authors and description from document properties and render a PDF cover."),
-    source_type: Literal["narrative", "explanatory"] = Form("explanatory"),
-    hierarchy_template_id: str = Form("rulebook"),
-    hierarchy_template_version: int = Form(1),
     form_title: str | None = Form(None, alias="title", validation_alias="title"),
     form_authors: str | None = Form(None, alias="authors", validation_alias="authors"),
     form_description: str | None = Form(None, alias="description", validation_alias="description"),
     session: Session = Depends(get_db),
+    source_type: Literal["narrative", "explanatory"] = Form("explanatory"),
+    hierarchy_template_id: str = Form("rulebook"),
+    hierarchy_template_version: int = Form(1),
 ) -> ShreckWorldLibraryItem:
     _world_or_404(session, shreckworld_id)
     extension = Path(pdf.filename or "").suffix.lower()

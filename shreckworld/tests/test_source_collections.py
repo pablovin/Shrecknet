@@ -152,3 +152,21 @@ def test_image_upload_changes_only_target_entry_and_keeps_old_revision(db, tmp_p
         source_collections.upload_entry_image(
             db, scope, col.id, "adventure", 2, b"evil", "image/png",
         )
+
+
+def test_sources_migration_seeds_sessions_and_world_lore_templates():
+    from app.db.sources import migrate_sources
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        migrate_sources(engine)
+        migrate_sources(engine)  # Safe to run repeatedly at service startup.
+        with Session(engine) as session:
+            adventures = session.get(SourceHierarchy, ("campaign-sessions", 1))
+            lore = session.get(SourceHierarchy, ("world-lore", 1))
+            assert adventures is not None
+            assert adventures.section_types == ["Adventure", "Story Arc", "Session"]
+            assert lore is not None
+            assert lore.section_types == ["Topic", "Entry", "Section"]
+    finally:
+        engine.dispose()

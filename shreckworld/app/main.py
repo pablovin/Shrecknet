@@ -28,7 +28,7 @@ app.add_middleware(CORSMiddleware, **cors_policy.model_dump(), expose_headers=["
 
 
 def _import_graph_narrative_sources() -> None:
-    """Opt-in, insert-only import; retry unavailable graph services on startup."""
+    """Automatic, insert-only import; retry unavailable graph services on startup."""
     from time import sleep
 
     log = logging.getLogger(__name__)
@@ -71,6 +71,7 @@ def startup() -> None:
     settings.media_root.mkdir(parents=True, exist_ok=True)
     create_schema()
     if settings.graph_import_on_startup:
+        logging.getLogger(__name__).info("Starting automatic graph narrative Sources import")
         Thread(target=_import_graph_narrative_sources, name="graph-source-import", daemon=True).start()
     Thread(target=_queue_startup_book_map_backfill, name="book-map-backfill-check", daemon=True).start()
     try:

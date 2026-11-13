@@ -16,7 +16,7 @@ from .structure_types import SourcePosition, StructuralEvidence, EvidenceDiagnos
 from .structure_validation import stable_node_id
 
 
-RESOLVER_VERSION = "book-map-v4-resolver-2"
+RESOLVER_VERSION = "book-map-v4-resolver-3"
 BOOKMARK_PRIORITY = 3
 TOC_PRIORITY = 2
 HEADING_PRIORITY = 1
@@ -300,9 +300,9 @@ def resolve_structure(*, document_id: str, document: NormalizedDocument,
         output.append(node)
         stack.append(node)
 
-    # Printed contents are a document component even when the outline omits it.
+    # Without bookmarks, printed contents can establish a document component.
     toc_rows = list(toc_candidates) if not ignore_toc else []
-    if toc_rows and not any(node.node_type == "contents" for node in output):
+    if toc_rows and not bookmark_mode and not any(node.node_type == "contents" for node in output):
         first_page = min(row.physical_page for row in toc_rows)
         first_order = min(row.reading_order for row in toc_rows if row.physical_page == first_page)
         toc_node = StructuralCandidate(

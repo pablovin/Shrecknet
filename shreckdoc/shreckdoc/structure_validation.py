@@ -5,6 +5,8 @@ from collections import Counter
 from typing import Protocol
 from uuid import NAMESPACE_URL, uuid5
 
+from .structure_types import SourcePosition, position_inside_interval
+
 
 class StructureValidationError(ValueError):
     """Raised when a resolved map violates its published tree invariants."""
@@ -31,6 +33,9 @@ class _NodeLike(Protocol):
     evidence_ids: list[str]
     related_node_ids: list[str]
     structural_node_id: str | None
+    structural_source: str | None
+    resolution_status: str
+    validation_warnings: list[str]
     position: _PositionLike
     pages: _PageRangeLike | None
     page_locators: list[_PageLocatorLike]
@@ -167,6 +172,51 @@ def validate_book_map(tree: BookMapLike) -> list[str]:
                      for child_id in node.child_ids if child_id in by_id]
         if positions != sorted(positions):
             errors.append(f"node {node.id} children are not in canonical reading order")
+
+    # Published evidence ranges can expand, so validate against bookmark
+    # destinations themselves rather than trusting an already-expanded parent range.
+    bookmark_nodes = sorted((node for node in tree.nodes if
+        getattr(node, "structural_source", None) == "bookmark"),
+        key=lambda node: (node.position.physical_page, node.position.reading_order, node.level))
+    # Historical maps were published before these ownership guarantees. Keep
+    # their existing read/restore contract until an explicit reindex upgrades it.
+    if getattr(tree, "resolver_version", None) in {"book-map-v4-resolver-1", "book-map-v4-resolver-2"}:
+        bookmark_nodes = []
+    bookmark_intervals = {}
+    for index, bookmark in enumerate(bookmark_nodes):
+        end = next((following.position for following in bookmark_nodes[index + 1:]
+                    if following.level <= bookmark.level), None)
+        bookmark_intervals[bookmark.id] = (bookmark.position, end)
+        for node in tree.nodes:
+            if node.structural_node_id != bookmark.id:
+                continue
+            positions = [SourcePosition(locator.physical_page,
+                getattr(locator, "reading_order", None) or node.position.reading_order,
+                getattr(locator, "x", None), getattr(locator, "y", None)) for locator in node.page_locators]
+            if any(not position_inside_interval(position, bookmark.position, end) for position in positions):
+                errors.append(f"node {node.id} content outside authoritative bookmark interval")
+        if bookmark.pages is not None and end is not None:
+            # A boundary page may legitimately contain text from both chapters.
+            last_page = end.physical_page if (end.y is not None or end.reading_order > 0) else end.physical_page - 1
+            if bookmark.pages.end > max(bookmark.position.physical_page, last_page):
+                errors.append(f"node {bookmark.id} range outside authoritative bookmark interval")
+
+    if bookmark_intervals:
+        for node in tree.nodes:
+            if node.node_type in structural_types:
+                continue
+            observed_owners = set()
+            for locator in node.page_locators:
+                enclosing = [by_id[identity] for identity, (start, end) in bookmark_intervals.items()
+                    if position_inside_interval(SourcePosition(locator.physical_page,
+                        getattr(locator, "reading_order", None) or node.position.reading_order,
+                        getattr(locator, "x", None), getattr(locator, "y", None)), start, end)]
+                owner = max(enclosing, key=lambda item: item.level, default=root)
+                observed_owners.add(owner.id)
+            if len(observed_owners) > 1 and (node.parent_id != root.id or
+                    getattr(node, "resolution_status", None) != "unresolved" or
+                    "unresolved_cross_boundary_provenance" not in getattr(node, "validation_warnings", [])):
+                errors.append(f"node {node.id} has unreported cross-boundary provenance")
 
     for evidence in tree.evidence:
         if evidence.locator.physical_page < 1:

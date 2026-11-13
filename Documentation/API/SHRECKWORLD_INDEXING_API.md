@@ -92,14 +92,32 @@ image-only pages according to the selected tier. DOCX/Markdown/text have logical
 page 1; no PDF coordinates are invented for them.
 
 Parents retain complete display evidence; children are embedded with contextual
-`passage:` text and the real E5 tokenizer. Every extracted text block is indexed,
-including page headers/footers, prose, tables, and captions; headings provide
+`passage:` text and the real E5 tokenizer. Eligible extracted text is indexed,
+including page headers/footers, prose, reliable tables, and captions; headings provide
 structural context through the resolved heading path. Tables preserve their own
 retrieval units and image pixels are excluded. OCR and image identification are
 not performed by Docling/PyMuPDF. Structural boundaries, table headers, and tokenizer windows
 prevent implicit model truncation. Every inference batch checks count, finite
 values, dimension, and normalization. Source SHA-256 and PDF page counts are
 verified. No LLM gateway/provider or web call performs indexing.
+
+Usable PDF bookmarks exclusively control structural ownership. Printed TOC
+matches outside the Contents interval cannot move body text. Exact source spans
+allow cross-boundary prose to split before embedding; otherwise the original
+block remains at the document root as `unresolved` with
+`unresolved_cross_boundary_provenance`. Source citations and original evidence
+are retained. V4 node warnings classify tables lacking recoverable text
+(`table_no_recoverable_text`), unreliable conversion
+(`table_text_conversion_unreliable`), or eligible text lacking a chunk mapping
+(`table_source_chunk_mapping_missing`). Tables with extracted text but unusable
+cell structure are indexed as `narrative` paragraph chunks and report
+`table_text_indexed_as_paragraph`; their source blocks and V4 nodes remain
+`table`. Reliable cell rows and explicit rectangular Markdown tables are
+searchable without filling missing cells.
+Ingestion rejects incomplete eligible-text mappings before activation.
+These corrections apply on reindexing; routes, payload shapes, authorization,
+parser/device settings and embedding compatibility are unchanged. See the
+[ownership and provenance rules](../Architecture/SHRECKWORLD.md).
 
 Successful completion means validated semantic children were acknowledged by
 Qdrant and the complete generation was atomically activated in SQL/FTS. Failed

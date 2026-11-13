@@ -139,18 +139,16 @@ def test_bookmark_intervals_reassign_unmatched_headings_and_tables():
     assert next(block for block in projected.blocks if block.block_id == "b4").block_type == "paragraph"
 
 
-def test_printed_contents_is_one_top_level_component():
+def test_printed_contents_cannot_add_boundaries_to_bookmark_tree():
     document = _document()
     toc = [TocCandidate("Chapter One", "1", 1, 1, "b0", 0,
         evidence_id="toc-one", mapped_physical_page=10, mapping_status="mapped")]
     result = resolve_structure(document_id="doc", document=document,
         bookmarks=[_bookmark("one", "Chapter One", 10, 1, 0)], toc_candidates=toc)
     contents = [node for node in result.nodes if node.node_type == "contents"]
-    assert len(contents) == 1
-    assert contents[0].parent_id == result.nodes[0].node_id
+    assert len(contents) == 0
     chapters = [node for node in result.nodes if node.node_type == "chapter"]
     assert len(chapters) == 1
-    assert contents[0].end_exclusive == chapters[0].position
     reused = resolve_structure(document_id="doc", document=document,
         bookmarks=[_bookmark("contents", "Contents", 1, 1, 0),
                    _bookmark("one", "Chapter One", 10, 1, 1)], toc_candidates=toc)

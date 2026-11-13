@@ -6,9 +6,10 @@ from dataclasses import asdict
 from typing import Any
 
 from shreckdoc.pipeline import NormalizedDocument
-from shreckdoc.structure_content import attach_content
-from shreckdoc.structure_resolution import StructuralResolution
+from shreckdoc.structure_content import attach_content, block_position, block_source_positions
+from shreckdoc.structure_resolution import RESOLVER_VERSION, StructuralResolution
 from shreckdoc.structure_types import SourcePosition
+from shreckdoc.table_text import serialize_table_text
 from shreckdoc.structure_validation import require_valid_book_map, stable_node_id
 
 from app.schemas.book_map import (
@@ -17,19 +18,12 @@ from app.schemas.book_map import (
 )
 
 
-RESOLVER_VERSION = "book-map-v4-resolver-2"
-CHUNKING_VERSION = "book-map-v4-context-1"
+CHUNKING_VERSION = "book-map-v4-context-2"
 
 
 def _position(position: SourcePosition) -> dict[str, Any]:
     return {"physical_page": position.physical_page, "reading_order": position.reading_order,
             "x": position.x, "y": position.y}
-
-
-def _block_position(block) -> SourcePosition:
-    page = min(block.page_numbers) if block.page_numbers else 1
-    box = next((value for value in block.bounding_boxes if value), {})
-    return SourcePosition(page, max(0, block.reading_order), box.get("left"), box.get("top"))
 
 
 def _node_order(node: BookMapNode) -> tuple[int, int, str]:
@@ -42,6 +36,10 @@ def build_book_map_v4(*, document_id: str, source_sha256: str, document: Normali
                       index_alignment: str = "legacy_context") -> BookMapV4:
     """Build, account, and hard-validate a generation-pinned Book Map tree."""
     ownership = attach_content(document, resolution)
+    block_warnings: dict[str, list[str]] = defaultdict(list)
+    for diagnostic in ownership.diagnostics:
+        code, block_id = diagnostic.split(":", 1)
+        block_warnings[block_id].append(code)
     pages = {page.physical_page_number: page for page in document.pages}
     blocks = {block.block_id: block for block in document.blocks}
     structural_by_id = {node.node_id: node for node in resolution.nodes}
@@ -53,7 +51,10 @@ def build_book_map_v4(*, document_id: str, source_sha256: str, document: Normali
             locator=_position(row.position), parser_name=parser_name, parser_version=parser_version,
             observed_features=row.observed_features,
             diagnostics=[BookMapEvidenceDiagnostic(code=entry.code, message=entry.message, rejected=entry.rejected)
-                         for entry in row.diagnostics],
+                         for entry in row.diagnostics] + ([BookMapEvidenceDiagnostic(
+                             code="toc_evidence_outside_contents", message="Printed TOC source lies outside the Contents interval",
+                             rejected=True)] if row.source_kind == "toc_entry" and
+                             "toc_evidence_outside_contents" in block_warnings[row.original_reference] else []),
         )
 
     page_evidence: dict[int, str] = {}
@@ -61,7 +62,7 @@ def build_book_map_v4(*, document_id: str, source_sha256: str, document: Normali
     for block in document.blocks:
         evidence_id = stable_node_id(document_id, "block-evidence", block.block_id)
         block_evidence[block.block_id] = evidence_id
-        position = _block_position(block)
+        position = block_position(block)
         evidence[evidence_id] = BookMapEvidence(
             id=evidence_id, source_kind="block", original_reference=block.docling_reference or block.block_id,
             locator=_position(position), parser_name=parser_name, parser_version=parser_version,
@@ -91,7 +92,9 @@ def build_book_map_v4(*, document_id: str, source_sha256: str, document: Normali
     for structural in resolution.nodes[1:]:
         for evidence_id in structural.evidence_ids:
             for row in resolution.evidence:
-                if row.evidence_id == evidence_id and row.source_kind == "heading" and row.original_reference in blocks:
+                if (row.evidence_id == evidence_id and row.source_kind == "heading"
+                        and row.original_reference in blocks
+                        and ownership.block_owner_ids[row.original_reference] == structural.node_id):
                     heading_block_owners[row.original_reference] = structural.node_id
                     own_blocks[structural.node_id].append(row.original_reference)
 
@@ -125,12 +128,10 @@ def build_book_map_v4(*, document_id: str, source_sha256: str, document: Normali
         locators: list[BookMapPageLocator] = []
         for block_id in own_blocks.get(structural.node_id, []):
             block = blocks[block_id]
-            for number in block.page_numbers or [structural.position.physical_page]:
-                page = pages.get(number)
-                box = next((value for value in block.bounding_boxes if value), {})
-                locators.append(BookMapPageLocator(physical_page=number,
-                    printed_label=page.displayed_page_label if page else None,
-                    reading_order=block.reading_order, x=box.get("left"), y=box.get("top")))
+            for position in block_source_positions(block):
+                page = pages.get(position.physical_page)
+                locators.append(BookMapPageLocator(**_position(position),
+                    printed_label=page.displayed_page_label if page else None))
         source_ids = list(dict.fromkeys(own_blocks.get(structural.node_id, [])))
         evidence_ids = list(structural.evidence_ids)
         evidence_ids.extend(block_evidence[block_id] for block_id in source_ids)
@@ -159,15 +160,24 @@ def build_book_map_v4(*, document_id: str, source_sha256: str, document: Normali
         content_type = ownership.content_types[block.block_id]
         node_id = stable_node_id(document_id, content_type, block.block_id)
         page_locators = []
-        for number in block.page_numbers or [1]:
-            page = pages.get(number)
-            box = next((value for value in block.bounding_boxes if value), {})
-            page_locators.append(BookMapPageLocator(physical_page=number,
-                printed_label=page.displayed_page_label if page else None,
-                reading_order=block.reading_order, x=box.get("left"), y=box.get("top")))
+        for position in block_source_positions(block):
+            page = pages.get(position.physical_page)
+            page_locators.append(BookMapPageLocator(**_position(position),
+                printed_label=page.displayed_page_label if page else None))
+        warnings = list(block_warnings[block.block_id])
+        unresolved = "unresolved_cross_boundary_provenance" in warnings
+        if content_type == "table":
+            serialized = serialize_table_text(block.table_structure, fallback_text=block.display_text)
+            if not serialized.text.strip():
+                warnings.append("table_no_recoverable_text")
+            elif not serialized.embedding_eligible:
+                warnings.append("table_text_indexed_as_paragraph" if
+                    (chunk_ids_by_block or {}).get(block.block_id) else "table_text_conversion_unreliable")
+            elif chunk_ids_by_block is not None and not chunk_ids_by_block.get(block.block_id):
+                warnings.append("table_source_chunk_mapping_missing")
         node = BookMapNode(
             id=node_id, document_id=document_id, node_type=content_type, title=None,
-            position=_position(_block_position(block)), level=(owner.level + 1) if owner else 1,
+            position=_position(block_position(block)), level=(owner.level + 1) if owner else 1,
             parent_id=owner_id, child_ids=[], heading_path=heading_path(owner_id),
             structural_node_id=owner_id,
             page_locators=page_locators,
@@ -176,8 +186,8 @@ def build_book_map_v4(*, document_id: str, source_sha256: str, document: Normali
             chunk_ids=list((chunk_ids_by_block or {}).get(block.block_id, [])),
             content_ref=block.block_id, table_ref=block.block_id if content_type == "table" else None,
             media_ref=block.block_id if content_type == "image" else None,
-            resolution_status="resolved" if owner else "uncertain",
-            validation_warnings=[] if owner else ["content_attached_to_document_root_no_supported_interval"],
+            resolution_status="unresolved" if unresolved else ("resolved" if owner else "uncertain"),
+            validation_warnings=warnings + ([] if owner else ["content_attached_to_document_root_no_supported_interval"]),
         )
         nodes[node_id] = node
         nodes[owner_id].child_ids.append(node_id)

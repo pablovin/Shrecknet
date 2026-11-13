@@ -22,6 +22,19 @@ class SourcePosition:
     y: float | None = None
 
 
+def position_inside_interval(position: SourcePosition, start: SourcePosition,
+                             end: SourcePosition | None) -> bool:
+    """Compare half-open source intervals, using coordinates for same-page anchors."""
+    def before(left: SourcePosition, right: SourcePosition) -> bool:
+        if left.physical_page != right.physical_page:
+            return left.physical_page < right.physical_page
+        if left.y is not None and right.y is not None:
+            return left.y < right.y
+        return left.reading_order < right.reading_order
+
+    return not before(position, start) and (end is None or before(position, end))
+
+
 @dataclass(slots=True)
 class SourceSpan:
     start: int | None = None

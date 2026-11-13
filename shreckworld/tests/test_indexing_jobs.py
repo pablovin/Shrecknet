@@ -454,3 +454,62 @@ def test_index_retry_runs_fresh_parsing_for_each_attempt(api, runtime, monkeypat
     assert result["status"] == "completed"
     assert result["metrics"]["parser_cache_hit"] is False
     assert attempts == [first_id, retry_id]
+
+
+def test_indexing_persists_boundary_segments_and_textual_table_chunk_links(api, runtime, monkeypatch):
+    from shreckdoc.pipeline import NormalizedBlock
+    from shreckdoc.structure_resolution import resolve_structure
+    from shreckdoc.structure_types import TableCell, TableStructure
+    from test_structure_resolution import _bookmark
+
+    def parse(*args, **kwargs):
+        result = parsed_source(*args, **kwargs)
+        result.document.blocks = [
+            NormalizedBlock("crossing", "old", "paragraph", "First.Second.", [1, 2], [], [], 1,
+                "original-paragraph", {"provenance": [
+                    {"page_no": 1, "charspan": [0, 6]}, {"page_no": 2, "charspan": [6, 13]}]}),
+            NormalizedBlock("numeric-table", "old", "table",
+                "| Roll | Value |\n| --- | --- |\n| 01–05 | 100 |", [2], [], [], 2,
+                "original-table", {"provenance": [{"page_no": 2}]}),
+            NormalizedBlock("loose-table", "old", "table", "Combat bonus 1D6 at close range", [2], [], [], 4,
+                "original-loose", {"provenance": [{"page_no": 2}]}),
+            NormalizedBlock("cells-only", "old", "table", "", [2], [], [], 3,
+                "original-cells", {"provenance": [{"page_no": 2}]}, table_structure=TableStructure(
+                    cells=[TableCell("Roll", 0, 0), TableCell("42", 1, 0)])),
+        ]
+        return result
+
+    def resolve(**kwargs):
+        return resolve_structure(**{**kwargs, "bookmarks": [
+            _bookmark("1", "Chapter 1", 1, 1, 0), _bookmark("2", "Chapter 2", 2, 1, 0)]})
+
+    monkeypatch.setattr("app.services.ingestion.parse_source", parse)
+    monkeypatch.setattr("app.services.ingestion.resolve_structure", resolve)
+    client, headers, _ = api
+    prefix, item_id, job_id = queued_job(api, monkeypatch)
+    run(item_id, job_id)
+    job = client.get(f"{prefix}/index-jobs/{job_id}", headers=headers).json()
+    assert job["status"] == "completed", job
+    with session_factory()() as session:
+        tree = session.get(ShreckWorldDocumentBookMap, job_id).payload
+        blocks = list(session.scalars(select(ShreckWorldDocumentBlock).where(
+            ShreckWorldDocumentBlock.document_id == job_id)))
+        parts = [b for b in blocks if b.docling_reference == "original-paragraph"]
+        assert len(parts) == 2
+        assert {b.display_text for b in parts} == {"First.", "Second."}
+        assert all(b.block_metadata["source_segmentation"]["original_block_id"] == "crossing" for b in parts)
+        children = list(session.scalars(select(ShreckWorldDocumentChunk).where(
+            ShreckWorldDocumentChunk.document_id == job_id,
+            ShreckWorldDocumentChunk.chunk_role == "child")))
+        for part, chapter in [("First.", "Chapter 1"), ("Second.", "Chapter 2")]:
+            assert next(c for c in children if c.text == part).heading_path == [chapter]
+        table_nodes = [n for n in tree["nodes"] if n["node_type"] == "table"]
+        assert len(table_nodes) == 3 and all(n["chunk_ids"] for n in table_nodes)
+        loose = next(n for n in table_nodes if n["source_block_ids"] == ["loose-table"])
+        assert "table_text_indexed_as_paragraph" in loose["validation_warnings"]
+        assert next(b for b in blocks if b.id == "loose-table").block_type == "table"
+        loose_chunk = next(c for c in children if "loose-table" in c.source_block_ids)
+        assert loose_chunk.content_type == "narrative"
+        assert loose_chunk.text == "Combat bonus 1D6 at close range"
+        assert any("100" in text for text in runtime.inputs)
+        assert any("42" in text for text in runtime.inputs)

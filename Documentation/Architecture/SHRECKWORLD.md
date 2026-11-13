@@ -90,6 +90,23 @@ a block starting on page 52 belongs to the chapter whose bookmark interval
 contains that position, rather than extending a preceding chapter ending before
 page 52. Published ranges describe owned evidence spans, not replacement
 structural intervals.
+Before ownership and chunking, `segment_boundary_content()` checks every source
+locator against the bookmark intervals. Prose/list blocks crossing boundaries
+split only when parser `charspan` offsets are ordered, nonoverlapping, and cover all
+non-whitespace text. Inter-span whitespace remains in the preceding segment.
+Segments receive stable generation-scoped IDs,
+retain the original parser reference, and preserve the original block ID, spans,
+boxes, page numbers and complete provenance in `source_segmentation` metadata.
+When spans are missing or ambiguous, the intact block belongs to the document
+root with `unresolved_cross_boundary_provenance` and status `unresolved`; every
+source locator remains available without extending either chapter. This applies
+to the reported pages 275/278 crossing the Chapter 14 bookmark on page 276.
+Coordinate/order comparisons allow chapter transitions within a physical page.
+The resolver version is `book-map-v4-resolver-3`; chunk construction is
+`book-map-v4-context-2`, retaining the existing E5 recipe, model and dimensions.
+Existing generations require explicit reindexing to adopt these corrections;
+there is no database migration or automatic rewrite. Rollback uses the previous
+application version and a new reindex if the old content placement is required.
 See the [indexing recovery contract](../API/SHRECKWORLD_INDEXING_API.md#routes-and-access).
 
 New indexing generations persist a validated Book Map V4 tree with parser
@@ -100,8 +117,11 @@ are reconciled in `shreckdoc` with explicit uncertainty. When usable PDF bookmar
 exist, their destinations and nesting alone define chapter and section nodes.
 Parser headings and printed entries can corroborate those nodes but cannot add
 structural descendants. Unmatched headings stay as owned text. Bookmark intervals
-end at the next bookmark of the same or higher level. A printed Contents region
-is a top-level V4 component, reusing an outline Contents entry when present.
+end at the next bookmark of the same or higher level. A Contents bookmark defines
+the Contents component. Printed TOC evidence cannot
+create a structural component when usable bookmarks exist, nor force a body block
+into Contents. Outside-Contents TOC matches are retained as rejected evidence with
+`toc_evidence_outside_contents` warnings.
 Outline-free sources continue to use printed entries and heading inference.
 Existing generations retain their stored map and embedding context until explicitly
 reindexed; restoring a retained V4 artifact does not rerun this resolver. Content ownership and
@@ -109,9 +129,22 @@ resolved chunk context are produced before embedding. Table cells serialize as
 header/value text when reliable; unreadable tables retain their extracted text
 fallback. Images and placeholders remain navigable without image-pixel vectors.
 Picture and unparsed-region blocks are excluded from child embeddings even if a
-parser supplies display text. Tables contribute embedding text only when the
-structured serializer produces reliable rows; unreadable table blocks stay in
-the map without a table vector. Caption text remains independently eligible.
+parser supplies display text. Tables contribute embedding text when the serializer
+produces reliable cell rows
+or the parser supplies an explicit rectangular Markdown table (including a
+header separator and matching column counts); header-only exports retain their
+observed text. Empty cells stay empty; absent cells are never invented.
+When a table has extracted display text but no usable cells or reliable Markdown
+rows, indexing copies that block into a chunking-only view as a paragraph. Its
+child chunk uses `narrative` content type and retains the original source block
+ID, page locators and text. The persisted source block and V4 node remain a
+`table`, with `table_text_indexed_as_paragraph` in `validation_warnings`.
+Cell-only tables remain eligible even when display text is empty. A table with
+no extracted text or usable cells remains media-backed with
+`table_no_recoverable_text`. An unchunked text fallback is reported as
+`table_text_conversion_unreliable`; reliably serialized text with a missing
+mapping is reported as `table_source_chunk_mapping_missing`. Ingestion refuses
+activation when eligible text has no child chunk. Caption text remains independently eligible.
 SQL chunk records and Qdrant payloads retain recipe/map versions, resolved
 heading paths, source-block IDs, content type, and whether heading context was
 reduced. The additive SQLite migration gives old chunk rows a false
@@ -135,15 +168,30 @@ tool does not call a parser, embedder, or vector store. The existing V3 startup
 backfill remains for missing/older V3 records and skips V4 map rows.
 
 `shreckdoc/shreckdoc/structure_validation.py` checks identity, ownership,
-generation, ordering, parent, and page-range invariants. The service-side
+generation, ordering, parent, page-range, and authoritative bookmark ownership
+invariants. Resolver-3 maps enforce the new bookmark checks; resolver-1/2
+artifacts keep their prior validation contract for reading and restoration until
+reindexed. Expanded evidence ranges in new maps cannot conceal content outside
+a bookmark interval. The service-side
 `app/services/book_map_contract.py` validates versioned payloads and provides a
 read-only V4-to-V3 projection; only V4 `validated` projects to V3 `verified`.
 Synthetic evidence inputs for implementation tests live in
 `shreckworld/tests/fixtures/bookmap_v4/`; they cover outline destinations,
 printed contents, heading candidates, and retained table/image/caption/unknown
 blocks. Resolver and ownership tests assert synthetic parentage, page coverage,
-and one-owner block assignment; they do not claim parser accuracy on external
-rulebooks. The V4 implementation plan and migration sequence are maintained in
+and one-owner block assignment. `test_book_map_ownership_regressions.py`
+reproduces the reported Call of Cthulhu page destinations (Contents 8–9, body
+page 35, cross-boundary pages 275/278, and tables 9/50/51/406) with synthetic
+text. The source PDF/export is not bundled. An optional local-artifact regression
+loads a retained extraction from `SHRECKWORLD_COC_ARTIFACT_DIR` (or discovers it
+under local `shreckworld/media/`) and verifies actual ownership and table
+recoverability; it skips when the artifacts are absent. In the inspected
+extraction, pages 9/406 retain exported text through references despite empty
+native cells, so that text is searchable via the Markdown fallback. Pages 50/51
+retain neither text nor cells; the corresponding PDF regions also yield no
+native text. They remain media-backed nodes with `table_no_recoverable_text`.
+No values are inferred from those images. These observations describe this
+retained extraction, rather than promising parser accuracy for every reindex. The V4 implementation plan and migration sequence are maintained in
 the coordinating frontend repository.
 
 1. Verify the real sentence-transformer model and source SHA-256 before parsing.

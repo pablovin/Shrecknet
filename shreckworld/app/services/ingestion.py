@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import copy
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +12,7 @@ from time import monotonic
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from shreckdoc.pipeline import EMBEDDING_VERSION, TokenCountingTokenizer, _atomic_json, _sha256, _token_count, build_chunks
-from shreckdoc.structure_content import project_resolved_document
+from shreckdoc.structure_content import project_resolved_document, segment_boundary_content
 from shreckdoc.structure_headings import infer_heading_candidates
 from shreckdoc.structure_resolution import resolve_structure
 from shreckdoc.structure_toc import extract_toc_candidates, map_printed_pages
@@ -144,6 +145,7 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         if heading_result.candidates:
             strategy.append("inferred_headings")
         metrics.extraction_strategy = strategy or ["content_order"]
+        normalized = segment_boundary_content(normalized, resolution)
         resolved_document = project_resolved_document(normalized, resolution)
         metrics.resolver_seconds = round(monotonic() - resolver_started, 3)
         metrics.resolver_conflicts = len(resolution.conflicts)
@@ -168,14 +170,26 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         serialized_tables = {block.block_id: serialize_table_text(block.table_structure, fallback_text=block.display_text)
             for block in resolved_document.blocks if block.block_type == "table"}
         metrics.table_text_fallbacks = sum(value.quality != "structured" for value in serialized_tables.values())
+        # Keep the source and persisted map as tables. Only the chunking view
+        # treats unstructured extracted table text as ordinary prose.
+        paragraph_fallback_ids = {block.block_id for block in resolved_document.blocks
+            if block.block_type == "table" and block.display_text.strip()
+            and not serialized_tables[block.block_id].embedding_eligible}
+        chunk_document = copy(resolved_document) if paragraph_fallback_ids else resolved_document
+        if paragraph_fallback_ids:
+            chunk_document.blocks = [copy(block) if block.block_id in paragraph_fallback_ids else block
+                                     for block in resolved_document.blocks]
+            for block in chunk_document.blocks:
+                if block.block_id in paragraph_fallback_ids:
+                    block.block_type = "paragraph"
         chunks = with_heartbeat(lambda: build_chunks(
-            document=resolved_document, ingestion_id=ingestion_id, library_item_id=source_item_id,
+            document=chunk_document, ingestion_id=ingestion_id, library_item_id=source_item_id,
             ontology_id=scope_id, book_title=book_title, rpg_system=system_name,
             tokenizer=tokenizer, max_embedding_tokens=embedder.token_limit,
             preserve_unit_boundaries=parsed.parser_name == "pymupdf" or any(
                 block.block_type in {"table", "picture"} for block in resolved_document.blocks
             ),
-            table_text_by_block={block_id: value.text if value.quality == "structured" else ""
+            table_text_by_block={block_id: value.text if value.embedding_eligible else ""
                 for block_id, value in serialized_tables.items()},
             table_row_groups_by_block={block_id: value.row_groups for block_id, value in serialized_tables.items()
                 if value.row_groups},
@@ -197,10 +211,10 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         # Every extracted textual block must be represented. Heading text is
         # included through each chunk's heading_path; images remain references
         # with caption text indexed as ordinary evidence blocks.
-        required = {block.block_id for block in normalized.blocks if block.display_text.strip()
-                    and block.block_type not in {"heading", "picture", "image", "unparsed_region"}
-                    and (block.block_type != "table" or
-                         serialized_tables[block.block_id].quality == "structured")}
+        required = {block.block_id for block in chunk_document.blocks
+                    if block.block_type not in {"heading", "picture", "image", "unparsed_region"}
+                    and (block.display_text.strip() or
+                         (block.block_type == "table" and serialized_tables[block.block_id].embedding_eligible))}
         if required - represented:
             raise ValueError(f"Tokenizer context excluded {len(required - represented)} text blocks; refusing an incomplete activation")
         token_counts = {child.chunk_id: _token_count(tokenizer, child.embedding_text) for child in children}

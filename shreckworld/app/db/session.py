@@ -80,6 +80,8 @@ def create_schema() -> None:
 
     from app.db.ontology_items import migrate_ontology_items
     migrate_ontology_items(engine)
+    from app.db.sources import migrate_sources
+    migrate_sources(engine)
 
 
 def session_factory() -> sessionmaker[Session]:

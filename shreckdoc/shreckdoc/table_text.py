@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Callable
 
 from .structure_types import TableCell, TableStructure
@@ -14,6 +15,24 @@ class SerializedTable:
     row_texts: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     row_groups: list[list[str]] = field(default_factory=list)
+
+    @property
+    def embedding_eligible(self) -> bool:
+        return bool(self.text.strip()) and (self.quality == "structured" or
+            "reliable_markdown_table_fallback" in self.warnings)
+
+
+def _markdown_rows(text: str) -> list[list[str]]:
+    """Accept explicit rectangular Markdown tables without inventing absent cells."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 2 or any(not line.startswith("|") or not line.endswith("|") for line in lines):
+        return []
+    rows = [[cell.strip() for cell in re.split(r"(?<!\\)\|", line)[1:-1]] for line in lines]
+    if not any(rows[0]) or any(len(row) != len(rows[0]) for row in rows):
+        return []
+    if not all(re.fullmatch(r":?-{3,}:?", cell) for cell in rows[1]):
+        return []
+    return rows
 
 
 def _cell_header(cell: TableCell, headers: list[TableCell]) -> str:
@@ -30,8 +49,13 @@ def _cell_header(cell: TableCell, headers: list[TableCell]) -> str:
 
 def serialize_table_text(structure: TableStructure | None, fallback_text: str = "") -> SerializedTable:
     """Serialize actual cells as stable Header/Value rows; missing cells stay absent."""
-    if structure is None or not structure.cells or structure.structure_quality != "structured":
-        quality = structure.structure_quality if structure else "text_fallback"
+    if structure is None or not any(cell.text.strip() for cell in structure.cells) or structure.structure_quality != "structured":
+        quality = structure.structure_quality if structure and structure.structure_quality != "structured" else "text_fallback"
+        rows = _markdown_rows(fallback_text) if quality != "unreadable" else []
+        if rows:
+            return SerializedTable(fallback_text.strip(), "text_fallback",
+                fallback_text.strip().splitlines()[2:], ["reliable_markdown_table_fallback"],
+                [["| " + " | ".join(row) + " |"] for row in rows[2:]])
         return SerializedTable(fallback_text.strip(), quality, [], ["structured_table_cells_unavailable"])
     headers = [cell for cell in structure.cells if cell.is_header or cell.row == 0]
     data_cells = [cell for cell in structure.cells if cell not in headers and cell.text.strip()]

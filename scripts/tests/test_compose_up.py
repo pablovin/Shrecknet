@@ -60,3 +60,19 @@ def test_cpu_stack_refuses_explicit_cuda_settings(tmp_path, monkeypatch, runtime
     with pytest.raises(SystemExit, match=expected_setting):
         compose_up.main(["--build"], root=tmp_path)
     assert not any(command[:2] == ["docker", "compose"] for command in commands)
+
+
+def test_mineru_profile_is_started_by_launcher_when_gpu_is_available(tmp_path, monkeypatch):
+    commands = _fake_docker(monkeypatch, gpu_available=True)
+    assert compose_up.main(["--build", "-d", "--mineru"], root=tmp_path) == 0
+    assert commands[-1] == [
+        "docker", "compose", "-f", "docker-compose.yml", "--profile", "mineru",
+        "-f", "docker-compose.gpu.yml", "up", "--build", "-d",
+    ]
+
+
+def test_mineru_profile_requires_docker_gpu_access(tmp_path, monkeypatch):
+    commands = _fake_docker(monkeypatch, gpu_available=False)
+    with pytest.raises(SystemExit, match="--mineru option requires"):
+        compose_up.main(["--build", "--mineru"], root=tmp_path)
+    assert not any(command[:2] == ["docker", "compose"] for command in commands)

@@ -239,8 +239,8 @@ Sentence Transformers; the old `[semantic]` extra remains accepted but is no
 longer needed. The worker wrapper preflights E5 and parser artifacts before
 starting a single-task threaded Celery worker, avoiding PyTorch prefork issues.
 The separate `mineru` service is opt-in through Compose profile `mineru`; it is
-an NVIDIA GPU service and is not started by the default stack. Build/start it
-with `docker compose --profile mineru up -d --build mineru` before selecting
+an NVIDIA GPU service and is not started by the default stack. Build/start it through the GPU-aware launcher with
+`./scripts/compose_up.py --build -d --mineru` before selecting
 MinerU in administration. Its pinned MinerU 4.1.7 image downloads the Standard
 model bundle during the first build; configure `MINERU_MODEL_SOURCE=modelScope`
 when the host should use ModelScope instead of Hugging Face. No MinerU port is

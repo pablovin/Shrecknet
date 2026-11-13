@@ -17,7 +17,7 @@ Sources support PDF, DOCX, Markdown, and text. Compose enables experimental
 PyMuPDF layout-aware PDF chunking; standalone defaults to Docling. The
 administrator can also select MinerU, an optional NVIDIA GPU inference service
 that provides detected title levels for the existing deterministic Book Map
-builder. Start it with `docker compose --profile mineru up -d --build mineru`
+builder. Start it with `./scripts/compose_up.py --build -d --mineru`
 before selecting MinerU and restarting ShreckWorld. Docling remains available
 for comparison. Contextual, tokenizer-bounded E5 children retain separate
 display text and semantic parents. OCR is disabled for Docling/PyMuPDF; MinerU

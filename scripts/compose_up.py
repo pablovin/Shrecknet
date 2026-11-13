@@ -2,6 +2,7 @@
 """Run the repository Compose stack with a Docker-accessible GPU when available."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -57,7 +58,18 @@ def _docker_gpu_available() -> bool:
     return probe.returncode == 0
 
 
+def _mineru_profile_enabled(root: Path) -> bool:
+    profiles = os.environ.get("COMPOSE_PROFILES") or _dotenv_value(root / ".env", "COMPOSE_PROFILES") or ""
+    return "mineru" in {profile.strip() for profile in profiles.split(",") if profile.strip()}
+
+
 def _require_cpu_compatible_settings(root: Path) -> None:
+    if _mineru_profile_enabled(root):
+        raise SystemExit(
+            "The MinerU Compose profile requires a Docker-accessible NVIDIA GPU. "
+            "Enable NVIDIA Container Toolkit and verify `docker run --rm --gpus all nvidia-smi`, "
+            "or remove mineru from COMPOSE_PROFILES."
+        )
     parser_device = _effective_runtime_value(
         root, "SHRECKWORLD_PARSER_DEVICE", "parser_device", "auto"
     )
@@ -78,9 +90,16 @@ def _require_cpu_compatible_settings(root: Path) -> None:
 
 
 def main(argv: Sequence[str] | None = None, *, root: Path = ROOT) -> int:
-    args = list(argv if argv is not None else sys.argv[1:])
-    if not args:
+    raw_args = list(argv if argv is not None else sys.argv[1:])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--mineru", action="store_true",
+        help="start the optional MinerU PDF parser service (requires Docker GPU access)",
+    )
+    options, args = parser.parse_known_args(raw_args)
+    if not raw_args:
         args = ["--build", "-d"]
+    mineru_enabled = options.mineru or _mineru_profile_enabled(root)
 
     docker = subprocess.run(
         ["docker", "info"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
@@ -90,10 +109,17 @@ def main(argv: Sequence[str] | None = None, *, root: Path = ROOT) -> int:
 
     gpu_available = _docker_gpu_available()
     compose_args = ["docker", "compose", "-f", "docker-compose.yml"]
+    if mineru_enabled:
+        compose_args.extend(["--profile", "mineru"])
     if gpu_available:
         print("Docker can access an NVIDIA GPU; using the CUDA-enabled Compose build.", flush=True)
         compose_args.extend(["-f", "docker-compose.gpu.yml"])
     else:
+        if options.mineru:
+            raise SystemExit(
+                "The --mineru option requires a Docker-accessible NVIDIA GPU. "
+                "Enable NVIDIA Container Toolkit and verify `docker run --rm --gpus all nvidia-smi`."
+            )
         _require_cpu_compatible_settings(root)
         print("No Docker-accessible NVIDIA GPU detected; using the CPU Compose build.", flush=True)
 

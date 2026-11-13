@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
+import os
+import re
+import shutil
 from app.core.config import get_settings
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -98,6 +101,46 @@ def save_hierarchy(db: Session, payload: HierarchyInput, hierarchy_id: str | Non
     return hierarchy_read(record)
 
 
+def render_authored_markdown(nodes: list[SourceSection]) -> bytes:
+    """Materialize the source tree into one readable Markdown file.
+
+    The organization is authoritative for authored sections. Each saved revision
+    receives a new physical .md file, keeping earlier snapshots intact.
+    """
+    root = next(node for node in nodes if node.parent_id is None)
+    children: dict[str, list[SourceSection]] = {}
+    for node in nodes:
+        if node.parent_id is not None:
+            children.setdefault(node.parent_id, []).append(node)
+    lines: list[str] = []
+
+    def visit(node: SourceSection, depth: int) -> None:
+        lines.append(f'{"#" * min(depth, 6)} {node.title}')
+        lines.append("")
+        if isinstance(node.content_reference, AuthoredContent):
+            for paragraph in node.content_reference.paragraphs:
+                if paragraph.text.strip():
+                    lines.append(paragraph.text.rstrip())
+                    lines.append("")
+        for child in sorted(children.get(node.id, []), key=lambda child: (child.order, child.id)):
+            visit(child, depth + 1)
+
+    visit(root, 1)
+    return ("\\n".join(lines).rstrip() + "\\n").encode("utf-8")
+
+
+def _write_authored_revision(item: ShreckWorldLibraryItem, data: bytes) -> Path:
+    """Stage immutable revision data before the database revision switch."""
+    root = (get_settings().media_root / "ontologies" / str(item.ontology_id) / item.id).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"source-{uuid4().hex}.md"
+    with path.open("xb") as output:
+        output.write(data)
+        output.flush()
+        os.fsync(output.fileno())
+    return path
+
+
 def create_authored_source(db: Session, scope: OntologyScope, payload: SourceCreate) -> ShreckWorldLibraryItem:
     template = db.get(SourceHierarchy, (payload.hierarchy_template_id, payload.hierarchy_template_version))
     if template is None or template.archived:
@@ -123,6 +166,17 @@ def create_authored_source(db: Session, scope: OntologyScope, payload: SourceCre
             content_reference=AuthoredContent(),
         ))
         parent_id = section_id
+    content = render_authored_markdown(outline)
+    try:
+        path = _write_authored_revision(item, content)
+    except OSError as exc:
+        _fail(500, "Could not create the Markdown source")
+    item.pdf_path = str(path)
+    item.storage_path = str(path)
+    item.original_filename = re.sub(r"[^a-zA-Z0-9._-]+", "-", item.title).strip("-.")[:100] + ".md"
+    item.mime_type = "text/markdown"
+    item.source_sha256 = sha256(content).hexdigest()
+    item.file_size = len(content)
     try:
         db.add(item)
         db.add(SourceOrganization(
@@ -132,6 +186,7 @@ def create_authored_source(db: Session, scope: OntologyScope, payload: SourceCre
         db.commit()
     except Exception:
         db.rollback()
+        path.unlink(missing_ok=True)
         raise
     db.refresh(item)
     return item
@@ -267,18 +322,38 @@ def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: Organi
         if ref.node_id not in valid_node_ids[doc.id]:
             _fail(422, "Referenced Book Map node is missing")
     next_revision = item.source_revision + 1
-    result = db.execute(update(ShreckWorldLibraryItem).where(
-        ShreckWorldLibraryItem.id == item.id,
-        ShreckWorldLibraryItem.source_revision == payload.expected_revision,
-    ).values(source_revision=next_revision))
-    if result.rowcount != 1:
+    new_file = None
+    values: dict = {"source_revision": next_revision}
+    if item.authored:
+        markdown = render_authored_markdown(payload.nodes)
+        try:
+            new_file = _write_authored_revision(item, markdown)
+        except OSError as exc:
+            _fail(500, "Could not save the Markdown revision")
+        values.update(
+            pdf_path=str(new_file), storage_path=str(new_file),
+            source_sha256=sha256(markdown).hexdigest(),
+            file_size=len(markdown),
+            index_status="stale" if item.index_status in {"ready", "stale"} else "unindexed",
+        )
+    try:
+        result = db.execute(update(ShreckWorldLibraryItem).where(
+            ShreckWorldLibraryItem.id == item.id,
+            ShreckWorldLibraryItem.source_revision == payload.expected_revision,
+        ).values(**values))
+        if result.rowcount != 1:
+            db.rollback()
+            _fail(409, "Source changed; reload and reconcile your edits")
+        db.add(SourceOrganization(
+            source_id=item.id, revision=next_revision,
+            nodes=[node.model_dump(mode="json") for node in payload.nodes],
+        ))
+        db.commit()
+    except Exception:
         db.rollback()
-        _fail(409, "Source changed; reload and reconcile your edits")
-    db.add(SourceOrganization(
-        source_id=item.id, revision=next_revision,
-        nodes=[node.model_dump(mode="json") for node in payload.nodes],
-    ))
-    db.commit()
+        if new_file:
+            new_file.unlink(missing_ok=True)
+        raise
     return OrganizationRead(revision=next_revision, nodes=payload.nodes)
 
 

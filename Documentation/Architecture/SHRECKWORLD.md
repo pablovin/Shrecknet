@@ -136,7 +136,10 @@ the coordinating frontend repository.
    reading order, source references, bounding boxes, and character spans.
    Shared normalized blocks also retain Docling-native formatting, original text,
    list markers, caption references, structured table cells/spans, and textless
-   picture evidence when the installed parser exposes it. Missing optional native
+   picture evidence when the installed parser exposes it. Normalized block IDs
+   are generation-scoped; if a parser reuses a source reference, normalization
+   deterministically disambiguates the colliding block ID while preserving that
+   source reference as provenance. Missing optional native
    capabilities leave those fields absent; table and parser settings are unchanged.
    PyMuPDF retains its chunk, element, table, and figure references, including
    textless figures and explicitly marked header/footer elements. MinerU retains

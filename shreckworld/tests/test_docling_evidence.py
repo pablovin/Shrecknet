@@ -91,3 +91,27 @@ def test_docling_missing_optional_native_capabilities_still_keeps_item():
     assert primitive["block_type"] == "table"
     assert primitive["text"] == ""
     assert primitive["native_metadata"] == {}
+
+
+def test_normalization_disambiguates_blocks_with_the_same_parser_reference():
+    items = [
+        {"reference": "#/texts/206", "block_type": "picture", "text": "",
+         "reading_order": 10, "provenance": [{"page_no": 23}], "native_metadata": {}},
+        {"reference": "#/texts/206", "block_type": "caption", "text": "A caption",
+         "reading_order": 11, "provenance": [{"page_no": 23}], "native_metadata": {}},
+    ]
+    arguments = {
+        "ingestion_id": "shared-reference",
+        "pdf_path": Path("synthetic.pdf"),
+        "canonical": {"pages": {"23": {}}},
+        "items": items,
+        "page_labeler": lambda _path, count: {page: str(page) for page in range(1, count + 1)},
+    }
+
+    first = normalize_document(**arguments)
+    second = normalize_document(**arguments)
+
+    assert [block.docling_reference for block in first.blocks] == ["#/texts/206", "#/texts/206"]
+    assert first.blocks[0].block_id != first.blocks[1].block_id
+    assert [block.block_id for block in first.blocks] == [block.block_id for block in second.blocks]
+    assert len(first.sections[0].block_ids) == len(set(first.sections[0].block_ids)) == 2

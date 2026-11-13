@@ -6,7 +6,7 @@ from app.services.embedding import get_embedder
 
 def main() -> None:
     print({"worker_embedding_readiness": get_embedder().ensure_ready()}, flush=True)
-    settings = get_settings()
+    settings = get_settings(check_mineru=True)
     if not settings.docling_artifacts_path.is_dir():
         raise RuntimeError("Docling artifacts are missing; run the model-prefetch service first")
     if settings.pdf_parser == "mineru":

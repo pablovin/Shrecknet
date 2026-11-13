@@ -5,9 +5,11 @@ Storage-independent document algorithms shared by Librarian and ShreckWorld.
 semantic parent/child construction, contextual E5 text, and tokenizer-bounded
 splitting. Normalized records retain optional Docling-native formatting, list
 markers, caption references, table cell/span structure, and textless picture
-records alongside the existing display text and provenance. These fields are
-additive; chunk construction continues to use its established display-text and
-context behavior. `shreckdoc.retrieval` owns named-term extraction, reciprocal rank
+records alongside the existing display text and provenance. Normalized block IDs
+are generation-scoped and unique even when a parser reuses a source reference;
+the original reference remains available as provenance. These fields are additive;
+chunk construction continues to use its established display-text and context
+behavior. `shreckdoc.retrieval` owns named-term extraction, reciprocal rank
 fusion, and diversity selection. The package has no application, Neo4j,
 SQLAlchemy, Celery, or model-runtime imports at module import time.
 

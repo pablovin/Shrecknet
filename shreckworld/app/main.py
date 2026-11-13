@@ -18,7 +18,7 @@ from app.services.embedding import EmbeddingUnavailable, get_embedder
 from app.services.pymupdf_parsing import validate_parser
 from app.services.book_map import has_missing_book_maps
 
-settings = get_settings()
+settings = get_settings(check_mineru=True)
 settings.media_root.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="ShreckWorld", version="0.1.0")
 cors_policy = load_cors_policy()
@@ -77,7 +77,10 @@ def readiness() -> dict:
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Configured MinerU parser is unavailable") from exc
     return {"status": "ready", "embedding": embedding, "parser": settings.pdf_parser,
-            "pdf_parser": settings.pdf_parser, "parser_device": settings.parser_device,
+            "pdf_parser": settings.pdf_parser,
+            "configured_pdf_parser": settings.configured_pdf_parser or settings.pdf_parser,
+            "parser_fallback_reason": settings.parser_fallback_reason,
+            "parser_device": settings.parser_device,
             "parser_table_structure_enabled": settings.parser_table_structure_enabled,
             "parser_table_former_mode": settings.parser_table_former_mode,
             "parser_artifacts_present": True,

@@ -541,6 +541,7 @@ def normalize_document(
 
     sections: list[NormalizedSection] = []
     blocks: list[NormalizedBlock] = []
+    used_block_ids: set[str] = set()
     root_id = _stable_id("section", ingestion_id, "root")
     sections.append(NormalizedSection(root_id, None, None, 0, [], [], [], []))
     stack: list[NormalizedSection] = [sections[0]]
@@ -572,8 +573,20 @@ def normalize_document(
             for number in physical_pages
             if number in page_by_number and page_by_number[number].displayed_page_label is not None
         ]
+        reference = str(item.get("reference") or "")
+        block_id = _stable_id("block", ingestion_id, reference)
+        if block_id in used_block_ids:
+            # Parser references are provenance, not guaranteed unique block IDs.
+            # Docling can expose a picture and its caption at the same text ref.
+            identity = f"{reference}:duplicate:{kind}:{int(item.get('reading_order') or 0)}"
+            block_id = _stable_id("block", ingestion_id, identity)
+            duplicate_index = 2
+            while block_id in used_block_ids:
+                block_id = _stable_id("block", ingestion_id, f"{identity}:{duplicate_index}")
+                duplicate_index += 1
+        used_block_ids.add(block_id)
         block = NormalizedBlock(
-            block_id=_stable_id("block", ingestion_id, str(item.get("reference"))),
+            block_id=block_id,
             section_id=section.section_id,
             block_type=kind,
             display_text=text,
@@ -581,7 +594,7 @@ def normalize_document(
             page_labels=[str(label) for label in page_labels],
             bounding_boxes=[prov.get("bbox") or {} for prov in provenance if prov.get("bbox")],
             reading_order=int(item.get("reading_order") or 0),
-            docling_reference=str(item.get("reference") or "") or None,
+            docling_reference=reference or None,
             metadata={
                 "label": item.get("label"),
                 "parent_reference": item.get("parent_reference"),

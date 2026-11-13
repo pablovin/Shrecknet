@@ -41,6 +41,32 @@ def test_shared_runtime_config_supplies_settings_but_environment_can_override(tm
     assert config.get_settings().parser_device == "cpu"
 
 
+@pytest.mark.parametrize("available", [True, False])
+def test_mineru_unavailable_uses_process_local_docling_fallback(tmp_path, monkeypatch, available):
+    from shreckconfig.shreckworld import ShreckWorldRuntimeConfig
+    from app.core import config
+
+    path = tmp_path / "shreckworld.json"
+    path.write_text(ShreckWorldRuntimeConfig(pdf_parser="mineru").model_dump_json())
+    original_config = path.read_text()
+    monkeypatch.setattr(config, "runtime_config_file", lambda: path)
+    monkeypatch.setattr(config, "_PROCESS_MINERU_FALLBACKS", set())
+    monkeypatch.setattr(config, "_mineru_service_status", lambda *_: (available, None if available else "ConnectError"))
+    monkeypatch.setenv("SHRECKWORLD_PDF_PARSER", "")
+
+    startup_settings = config.get_settings(check_mineru=True)
+    settings = config.get_settings()
+
+    assert settings.configured_pdf_parser == "mineru"
+    assert settings.pdf_parser == ("mineru" if available else "docling")
+    assert startup_settings.pdf_parser == settings.pdf_parser
+    if available:
+        assert settings.parser_fallback_reason is None
+    else:
+        assert settings.parser_fallback_reason
+    assert path.read_text() == original_config
+
+
 @pytest.mark.parametrize(("cuda_available", "expected"), [(True, "cuda"), (False, "cpu")])
 def test_auto_parser_device_uses_cuda_when_available_and_cpu_otherwise(tmp_path, monkeypatch, cuda_available, expected):
     import torch

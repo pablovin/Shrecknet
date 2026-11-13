@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from functools import lru_cache
+import logging
 from pathlib import Path
 import os
 
+import httpx
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shreckconfig.shreckworld import (
     DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, EmbeddingDevice, ParserDevice, ParserDeviceSetting, PdfParser,
     TableFormerMode, read_runtime_config, runtime_config_file,
 )
+
+_PROCESS_MINERU_FALLBACKS: set[tuple[str, str]] = set()
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SHRECKWORLD_", extra="ignore", env_ignore_empty=True)
@@ -38,6 +43,8 @@ class Settings(BaseSettings):
     embedding_threads: int = Field(default=4, ge=1, le=32)
     docling_artifacts_path: Path = Path("./models/docling")
     pdf_parser: PdfParser = "docling"
+    configured_pdf_parser: PdfParser | None = None
+    parser_fallback_reason: str | None = None
     parser_device: ParserDevice = "cpu"
     parser_heartbeat_seconds: float = Field(default=5, ge=0.1, le=60)
     parser_cache_enabled: bool = True
@@ -75,7 +82,7 @@ class Settings(BaseSettings):
         return self
 
 
-def get_settings() -> Settings:
+def get_settings(*, check_mineru: bool = False) -> Settings:
     shared = read_runtime_config(runtime_config_file())
     runtime_fields = {
         "embedding_backend", "embedding_device", "pdf_parser",
@@ -102,4 +109,41 @@ def get_settings() -> Settings:
     else:
         effective_parser_device = parser_device_setting
     configured["parser_device"] = effective_parser_device
-    return Settings(**configured)
+    settings = Settings(**configured)
+    configured_parser = settings.pdf_parser
+    if configured_parser == "mineru":
+        mineru_key = (settings.mineru_api_url, settings.mineru_api_key)
+        unavailable = mineru_key in _PROCESS_MINERU_FALLBACKS
+        if check_mineru and not unavailable:
+            available, _ = _mineru_service_status(*mineru_key)
+            unavailable = not available
+            if unavailable:
+                _PROCESS_MINERU_FALLBACKS.add(mineru_key)
+        if unavailable:
+            reason = "MinerU is unavailable; using Docling for this ShreckWorld process."
+            return settings.model_copy(update={
+                "pdf_parser": "docling",
+                "configured_pdf_parser": configured_parser,
+                "parser_fallback_reason": reason,
+            })
+    return settings.model_copy(update={"configured_pdf_parser": configured_parser})
+
+
+@lru_cache(maxsize=32)
+def _mineru_service_status(api_url: str, api_key: str) -> tuple[bool, str | None]:
+    """Check MinerU once per process/configuration and cache the startup decision."""
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        with httpx.Client(timeout=httpx.Timeout(5.0, connect=2.0), follow_redirects=False) as client:
+            response = client.get(f"{api_url.rstrip('/')}/v1/tiers", headers=headers)
+            response.raise_for_status()
+    except Exception as exc:
+        # Exception text may contain a configured URL or credentials; keep logs safe.
+        failure = type(exc).__name__
+        logging.getLogger(__name__).warning(
+            "MinerU is unavailable (%s); ShreckWorld will use Docling for this process. "
+            "The configured parser remains MinerU; restart after the MinerU service is available.",
+            failure,
+        )
+        return False, failure
+    return True, None

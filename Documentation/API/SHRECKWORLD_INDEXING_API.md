@@ -217,8 +217,9 @@ or a guarantee of worker liveness.
 
 ## Readiness and configuration
 
-`GET /ready` returns `status=ready`, the selected `parser`,
-`pdf_parser` (`docling`, `pymupdf`, or `mineru`), configured `parser_device`, table-structure
+`GET /ready` returns `status=ready`, the effective `parser` and `pdf_parser`
+(`docling`, `pymupdf`, or `mineru`), `configured_pdf_parser`, optional
+`parser_fallback_reason`, configured `parser_device`, table-structure
 toggle and TableFormer mode, `parser_artifacts_present=true`, and `embedding` containing `ready`, `backend`,
 `model`, actual `fingerprint`, resolved snapshot `revision`, `dimension`, and
 `device`. A local model directory uses its directory name as revision label and
@@ -228,9 +229,13 @@ import. The default E5 snapshot is pinned; API and worker must share the same
 actual weight/tokenizer fingerprint. Runtime inference errors invalidate cached
 readiness until a new probe passes. A missing encoder/artifact directory yields
 `503`. PyMuPDF selection also requires the installed `to_chunks` API. MinerU
-selection additionally checks the configured service's `/v1/tiers`; an
-unavailable service returns `503` and prevents the worker from starting. Docling
-artifacts remain required for DOCX/Markdown and rollback. `GET /health`
+selection checks the configured service's `/v1/tiers` at process startup. If it
+is unavailable, ShreckWorld uses Docling for that process and logs a warning;
+the persisted admin setting remains MinerU. `/ready` then reports
+`pdf_parser=docling`, `configured_pdf_parser=mineru`, and a non-empty
+`parser_fallback_reason`. Restart ShreckWorld after MinerU becomes available to
+resume MinerU parsing. Docling artifacts remain required for DOCX/Markdown and
+rollback. `GET /health`
 remains liveness only; Compose uses `/ready` for health.
 
 | `SHRECKWORLD_` setting | Default / operation |
@@ -277,9 +282,14 @@ MinerU in administration. Its pinned MinerU 4.1.7 image downloads the Standard
 model bundle during the first build; configure `MINERU_MODEL_SOURCE=modelScope`
 when the host should use ModelScope instead of Hugging Face. No MinerU port is
 published on the host; ShreckWorld calls it over the private Compose network.
-When MinerU is selected, its API must be healthy before ShreckWorld API/worker
-are restarted. ShreckWorld readiness checks MinerU's tier endpoint and reports
-`503` while it is unavailable.
+When MinerU is selected, ShreckWorld checks its `/v1/tiers` endpoint at process
+startup. If MinerU is unavailable, that process uses Docling and logs a warning;
+the persisted admin configuration remains MinerU. `/ready` reports
+`pdf_parser=docling`, `configured_pdf_parser=mineru`, and a non-empty
+`parser_fallback_reason`. This startup decision is cached for the process, so
+restart ShreckWorld after MinerU becomes available to resume MinerU parsing. If
+MinerU is available, `/ready` reports `pdf_parser=mineru` and its tier details.
+Docling artifacts are still required in either case.
 The GPU Compose overlay builds CUDA-enabled PyTorch and exposes the GPU; the
 selected devices come from the Shrecknet runtime settings. The repository's
 `scripts/compose_up.py` probes Docker GPU access and selects the GPU overlay or

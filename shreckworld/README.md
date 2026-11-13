@@ -23,6 +23,11 @@ for comparison. Contextual, tokenizer-bounded E5 children retain separate
 display text and semantic parents. OCR is disabled for Docling/PyMuPDF; MinerU
 may OCR image-only pages. Extraction quality varies by document, and no parser
 is guaranteed to produce a better map.
+At process startup, ShreckWorld checks MinerU's `/v1/tiers` endpoint. If it is
+unavailable, that process falls back to Docling and logs a warning; the saved
+admin setting remains MinerU. `/ready` reports the effective parser, configured
+parser, and `parser_fallback_reason`. Restart ShreckWorld after MinerU becomes
+available to resume MinerU parsing.
 MinerU model assets are built into its image and use a BuildKit cache keyed by
 the pinned MinerU version and model source. The cache preserves completed and
 partial downloads across repeated builds, including builds canceled by another

@@ -91,6 +91,13 @@ generation, ordering, parent, and page-range invariants. The service-side
 read-only V4-to-V3 navigation projection; its V3 confidence value reflects the
 resolution enum, not parser confidence, and only V4 `validated` projects to V3
 `verified`. These adapters are not yet wired to API routes or indexing.
+The B06–B09 evidence utilities collect PDF outline destinations and page labels
+without using the configured content parser, extract visible TOC rows across the
+full document, map printed labels only through unique title anchors or
+corroborated in-range offsets, and rank body-heading candidates using global
+style, numbering, and repetition evidence. They retain unresolved mappings and
+rejected-candidate reasons; they do not assign final parents or discard source
+blocks.
 Synthetic evidence inputs for its implementation tests live in
 `shreckworld/tests/fixtures/bookmap_v4/`; they cover outline destinations,
 printed contents, heading candidates, and retained table/image/caption/unknown

@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     shrecknet_jwt_issuer: str = "shrecknet"
     shrecknet_jwt_audience: str = "shreckrpg"
     admin_token: str = ""
+    # Opt-in startup import. Neo4j and legacy SQLite/media are read-only inputs.
+    graph_import_on_startup: bool = False
+    legacy_ontology_database_path: Path = Path("/legacy-shrecknet-data/shrecknet.db")
+    legacy_media_root: Path = Path("/legacy-shrecknet-media")
+    graph_neo4j_uri: str = "bolt://neo4j:7687"
+    graph_neo4j_user: str = "neo4j"
+    graph_neo4j_password: str = ""
+    graph_neo4j_database: str = "neo4j"
     celery_broker_url: str = "redis://shreckworld_redis:6379/0"
     celery_result_backend: str = "redis://shreckworld_redis:6379/1"
     celery_task_always_eager: bool = False

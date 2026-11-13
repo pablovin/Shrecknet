@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_world_manager
+from app.api.deps import get_current_user, ShrecknetPrincipal
 from app.db.session import get_db
 from app.integrations.ontologies import authorized_ontology
 from app.repositories.source_scope import OntologyScope
@@ -16,7 +16,12 @@ from app.schemas.sources import (
 from app.services import source_workspace as workspace
 
 router = APIRouter(prefix="/ontologies/{ontology_id}", tags=["Sources workspace"])
-manager = [Depends(require_world_manager)]
+def require_source_admin(principal: ShrecknetPrincipal = Depends(get_current_user)) -> None:
+    if principal.role != "admin":
+        raise HTTPException(status_code=403, detail="Source administration requires administrator access")
+
+
+manager = [Depends(require_source_admin)]
 
 
 @router.get("/source-hierarchies", response_model=list[HierarchyRead])

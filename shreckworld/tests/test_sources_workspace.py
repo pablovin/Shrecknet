@@ -77,7 +77,7 @@ def test_authored_source_revision_and_world_scoping(db: Session):
     )
     assert item.ontology_id == 7 and item.authored
     original = get_organization(db, item)
-    assert len(original.nodes) == 1
+    assert [node.section_type for node in original.nodes] == ['Source', 'Rulebook', 'Chapter']
     root = original.nodes[0]
     nodes = [root, SourceSection(
         id=f"section-{uuid4()}", parent_id=root.id,

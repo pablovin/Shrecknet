@@ -228,11 +228,11 @@ Inspect legacy ontology ownership before a full storage rollback.
 Run `pytest tests/test_sources_workspace.py` from `shreckworld/` and the
 frontend test/lint/build commands from `shreckos/` before enabling in production.
 
-## Optional graph narrative source import (startup)
+## Graph narrative source import (startup)
 
-Set `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=true` to run the **insert-only,
-read-only-from-graph** import after ShreckWorld initializes its own SQL schema.
-The default is false. The startup task runs in a daemon thread with bounded connection retries
+The **insert-only, read-only-from-graph** import runs by default after ShreckWorld
+initializes its own SQL schema. Set `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=false`
+to disable it. The startup task runs in a daemon thread with bounded connection retries
 (up to 12 attempts at ten-second intervals); failures are logged without
 blocking normal service startup. Reboot to retry an unavailable
 Neo4j connection or a previously failed group. Concurrent importer processes
@@ -290,9 +290,15 @@ ambiguous ancestry, missing mappings or oversized organizations are reported
 as errors and skipped. The import is intentionally **not** a graph migration
 or a semantic-indexing job.
 
-Example:
+To disable the import for a deployment:
 ```bash
-# Set before starting/restarting the API:
+SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=false docker compose up -d --build shreckworld_api
+# Inspect container logs for "Graph narrative startup import:"
+docker compose logs shreckworld_api
+```
+
+To run it on startup, use the default configuration or explicitly enable it:
+```bash
 SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=true docker compose up -d --build shreckworld_api
 # Inspect container logs for "Graph narrative startup import:"
 docker compose logs shreckworld_api

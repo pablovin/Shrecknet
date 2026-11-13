@@ -63,9 +63,45 @@ A stale editor save fails rather than silently overwriting concurrent changes.
 Section removal is editorial. The old complete tree revision remains in
 `source_organizations`; original Book Map nodes and vectors are not deleted.
 
+## Narrative and Explanatory files
+
+The existing upload API `POST /ontologies/{ontology_id}/items` accepts the
+multipart field `pdf` (legacy field name) for PDF, TXT, HTML/HTM, DOCX and MD
+uploads. It accepts the additional form fields `source_type` (`narrative`
+or `explanatory`), `hierarchy_template_id`, and
+`hierarchy_template_version`. Older callers default to
+`explanatory`/`rulebook`/version 1; they retain their original storage and
+indexing behavior. Templates must exist and be active at upload time.
+HTML uploads run through Docling's document conversion like DOCX and Markdown;
+they are not executed as browser code.
+
+`POST /ontologies/{ontology_id}/sources` creates an authored source for
+**either** source type. Its original file is a UTF-8 `.md` document under
+the ontology's protected media directory. Template levels are materialized
+as initial headings in that document. The source has an actual
+`storage_path`, `file_size`, `source_sha256`, `mime_type=text/markdown`
+and downloadable original file from the existing authorized content route.
+It no longer uses a fabricated empty PDF path.
+
+Saving an authored organization writes a new immutable physical Markdown
+file before atomically changing the source database revision, content digest
+and active file pointer. The previous file revision is retained for recovery
+as long as its source is retained. A failed commit discards the newly
+staged file, not the previous one. A version conflict returns HTTP 409.
+The organizer remains the authoritative structure: the physical file is a
+materialized snapshot, not a second editable owner.
+
+The shared rich-document editor stores sanitized HTML fragments in
+`AuthoredContent.paragraphs`. Raw HTML blocks are legal Markdown, allowing
+tables, headings and formatted text to retain their appearance without a
+lossy round trip. These embedded fragments must be sanitized before
+browser rendering; the source serves them only as a protected text file.
+Image uploading within authored rich text is disabled until an owned source
+media API exists.
+
 ## Current boundaries
 
-- The new organization API persists authored text but does **not yet** index it
+- Authored Markdown is persisted as real files but is **not yet** indexed
   into full-text or semantic retrieval. Narrative source indexing is a separate
   integration step; until then it is not queryable by Elder/ShreckWorld.
 - Hierarchy template images are stored in protected media with version-pinned authenticated reads and an administrator-only upload endpoint. Image uploads append a template version.

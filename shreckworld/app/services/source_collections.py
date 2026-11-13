@@ -15,7 +15,6 @@ from app.core.config import get_settings
 from app.models import ShreckWorldLibraryItem, SourceCollection, SourceHierarchy
 from app.repositories.source_scope import OntologyScope
 from app.schemas.source_collections import CollectionCreate, CollectionEntry, CollectionRead, CollectionUpdate
-from app.services.source_workspace import latest_hierarchy
 
 
 def fail(status: int, detail: str):

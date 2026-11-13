@@ -157,3 +157,11 @@ def test_imported_node_markdown_follows_editor_without_overwriting_edits(tmp_pat
                      if node.title == "What Can Go Wrong?")
         assert story.content_reference.paragraphs[0].text == "My revised adventure"
     engine.dispose()
+
+
+def test_graph_import_is_enabled_on_backend_startup_by_default(monkeypatch):
+    from app.core.config import Settings
+    monkeypatch.delenv("SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP", raising=False)
+    assert Settings().graph_import_on_startup is True
+    # Administrators still have an emergency off-switch.
+    assert Settings(graph_import_on_startup=False).graph_import_on_startup is False

@@ -292,6 +292,24 @@ def get_organization(db: Session, item: ShreckWorldLibraryItem) -> OrganizationR
 def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: OrganizationInput) -> OrganizationRead:
     if payload.expected_revision != item.source_revision:
         _fail(409, "Source changed; reload and reconcile your edits")
+    from app.services.source_assets import validate_asset_references, update_markdown_assets
+    # Older editors may omit the new asset metadata when saving a section.
+    # Preserve existing references so those writes cannot silently detach
+    # imported Markdown and image assets.
+    previous = {node.id: node for node in get_organization(db, item).nodes}
+    for node in payload.nodes:
+        old = previous.get(node.id)
+        if old is None:
+            continue
+        if node.metadata.markdown_asset_id is None:
+            node.metadata.markdown_asset_id = old.metadata.markdown_asset_id
+        if node.metadata.image_asset_id is None:
+            node.metadata.image_asset_id = old.metadata.image_asset_id
+        if node.metadata.legacy_image_url is None:
+            node.metadata.legacy_image_url = old.metadata.legacy_image_url
+        if not node.metadata.description and old.metadata.description:
+            node.metadata.description = old.metadata.description
+    validate_asset_references(db, item.id, payload.nodes)
     root_ids = [node.id for node in payload.nodes if node.parent_id is None]
     if root_ids != [f"source-{item.id}"]:
         _fail(422, "Source root identity cannot change")
@@ -322,6 +340,7 @@ def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: Organi
             _fail(422, "Referenced Book Map node is missing")
     next_revision = item.source_revision + 1
     new_file = None
+    staged_assets = []
     values: dict = {"source_revision": next_revision}
     if item.authored:
         markdown = render_authored_markdown(payload.nodes)
@@ -336,6 +355,8 @@ def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: Organi
             index_status="stale" if item.index_status in {"ready", "stale"} else "unindexed",
         )
     try:
+        if item.authored:
+            staged_assets = update_markdown_assets(db, item.id, payload.nodes)
         result = db.execute(update(ShreckWorldLibraryItem).where(
             ShreckWorldLibraryItem.id == item.id,
             ShreckWorldLibraryItem.source_revision == payload.expected_revision,
@@ -352,6 +373,8 @@ def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: Organi
         db.rollback()
         if new_file:
             new_file.unlink(missing_ok=True)
+        for staged in staged_assets:
+            staged.unlink(missing_ok=True)
         raise
     return OrganizationRead(revision=next_revision, nodes=payload.nodes)
 

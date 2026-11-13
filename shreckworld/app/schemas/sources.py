@@ -69,7 +69,12 @@ ContentReference = Annotated[AuthoredContent | ExtractedContent, Field(discrimin
 
 class SectionMetadata(Contract):
     summary: str = Field(default='', max_length=10000)
+    description: str = Field(default='', max_length=10000)
     tags: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=100)
+    # Opaque, source-owned asset IDs. Never expose server filesystem paths.
+    image_asset_id: Identifier | None = None
+    markdown_asset_id: Identifier | None = None
+    legacy_image_url: str | None = Field(default=None, max_length=2048)
 
 
 class SourceSection(Contract):

@@ -27,6 +27,32 @@ cors_policy = load_cors_policy()
 app.add_middleware(CORSMiddleware, **cors_policy.model_dump(), expose_headers=["Accept-Ranges", "Content-Length", "Content-Range", "ETag"])
 
 
+def _import_graph_narrative_sources() -> None:
+    """Opt-in, insert-only import; retry unavailable graph services on startup."""
+    from time import sleep
+
+    log = logging.getLogger(__name__)
+    for attempt in range(12):
+        try:
+            from app.db.session import session_factory
+            from app.services.graph_source_import import import_graph_sources
+            import_graph_sources(session_factory, settings)
+            return
+        except (OSError, ConnectionError) as exc:
+            log.warning("Graph source import input unavailable (%s); attempt %d/12",
+                        type(exc).__name__, attempt + 1)
+        except Exception as exc:
+            # Neo4j may start after ShreckWorld; retry connection/driver failures.
+            from neo4j.exceptions import ServiceUnavailable, SessionExpired
+            if not isinstance(exc, (ServiceUnavailable, SessionExpired)):
+                log.exception("Graph source startup import failed; no automatic retry")
+                return
+            log.warning("Graph source import Neo4j unavailable (%s); attempt %d/12",
+                        type(exc).__name__, attempt + 1)
+        if attempt < 11:
+            sleep(10)
+
+
 def _queue_startup_book_map_backfill() -> None:
     try:
         from app.db.session import session_factory
@@ -44,6 +70,8 @@ def _queue_startup_book_map_backfill() -> None:
 def startup() -> None:
     settings.media_root.mkdir(parents=True, exist_ok=True)
     create_schema()
+    if settings.graph_import_on_startup:
+        Thread(target=_import_graph_narrative_sources, name="graph-source-import", daemon=True).start()
     Thread(target=_queue_startup_book_map_backfill, name="book-map-backfill-check", daemon=True).start()
     try:
         get_embedder().ensure_ready()

@@ -132,3 +132,23 @@ def save_uploaded_markdown(
     return save_imported_markdown(
         session, workspace.scoped_source(session, scope, source_id), payload,
     )
+
+
+@router.get("/sources/{source_id}/assets/{asset_id}")
+def source_section_asset(
+    source_id: str, asset_id: str,
+    scope: OntologyScope = Depends(authorized_ontology),
+    session: Session = Depends(get_db),
+):
+    """Authorized, source-scoped image and Markdown access."""
+    from pathlib import Path
+    from app.services.source_assets import read_asset
+    workspace.scoped_source(session, scope, source_id)
+    asset = read_asset(session, source_id, asset_id)
+    extension = Path(asset.storage_path).suffix
+    return FileResponse(
+        asset.storage_path, media_type=asset.mime_type,
+        filename=f"{asset.id}{extension}",
+        content_disposition_type="inline" if asset.kind == "image" else "attachment",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )

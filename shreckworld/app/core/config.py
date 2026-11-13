@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     shrecknet_jwt_issuer: str = "shrecknet"
     shrecknet_jwt_audience: str = "shreckrpg"
     admin_token: str = ""
+    # Opt-in startup import. Neo4j and legacy SQLite/media are read-only inputs.
+    graph_import_on_startup: bool = False
+    legacy_ontology_database_path: Path = Path("/legacy-shrecknet-data/shrecknet.db")
+    legacy_media_root: Path = Path("/legacy-shrecknet-media")
+    graph_neo4j_uri: str = "bolt://neo4j:7687"
+    graph_neo4j_user: str = "neo4j"
+    graph_neo4j_password: str = ""
+    graph_neo4j_database: str = "neo4j"
     celery_broker_url: str = "redis://shreckworld_redis:6379/0"
     celery_result_backend: str = "redis://shreckworld_redis:6379/1"
     celery_task_always_eager: bool = False
@@ -109,6 +117,16 @@ def get_settings(*, check_mineru: bool = False) -> Settings:
     else:
         effective_parser_device = parser_device_setting
     configured["parser_device"] = effective_parser_device
+    # Reuse the existing Neo4j connection settings only when the ShreckWorld
+    # importer is not given its own explicit overrides.
+    for target, legacy in (
+        ("graph_neo4j_uri", "SHRECKNET_NEO4J_URI"),
+        ("graph_neo4j_user", "SHRECKNET_NEO4J_USER"),
+        ("graph_neo4j_password", "SHRECKNET_NEO4J_PASSWORD"),
+        ("graph_neo4j_database", "SHRECKNET_NEO4J_DATABASE"),
+    ):
+        if not os.environ.get("SHRECKWORLD_" + target.upper()) and os.environ.get(legacy):
+            configured[target] = os.environ[legacy]
     settings = Settings(**configured)
     configured_parser = settings.pdf_parser
     if configured_parser == "mineru":

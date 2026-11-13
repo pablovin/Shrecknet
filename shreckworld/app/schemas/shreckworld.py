@@ -139,6 +139,11 @@ class ShreckWorldLibraryItemRead(BaseModel):
     id: str
     shreckworld_id: str | None
     ontology_id: int | None = None
+    source_type: Literal['narrative', 'explanatory'] = 'explanatory'
+    hierarchy_template_id: str = 'rulebook'
+    hierarchy_template_version: int = 1
+    source_revision: int = 1
+    authored: bool = False
     title: str
     authors: str | None
     description: str | None

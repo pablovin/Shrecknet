@@ -577,6 +577,8 @@ services:
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8120
+    env_file:
+      - ./configs/neo4j.env
     environment:
       <<: *shreckworld-env
       SHRECKWORLD_DATABASE_URL: sqlite:////data/shreckworld.db
@@ -585,9 +587,6 @@ services:
       SHRECKWORLD_LEGACY_ONTOLOGY_DATABASE_PATH: /legacy-shrecknet-data/shrecknet.db
       SHRECKWORLD_LEGACY_MEDIA_ROOT: /legacy-shrecknet-media
       SHRECKWORLD_GRAPH_NEO4J_URI: bolt://neo4j:7687
-      SHRECKWORLD_GRAPH_NEO4J_USER: ${SHRECKNET_NEO4J_USER:-neo4j}
-      SHRECKWORLD_GRAPH_NEO4J_PASSWORD: ${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}
-      SHRECKWORLD_GRAPH_NEO4J_DATABASE: ${SHRECKNET_NEO4J_DATABASE:-neo4j}
       SHRECKWORLD_CELERY_BROKER_URL: redis://shreckworld_redis:6379/0
       SHRECKWORLD_CELERY_RESULT_BACKEND: redis://shreckworld_redis:6379/1
       # shrecknet_api exposes its internal HTTP API on 8100; 8110 belongs to shreckLLM.

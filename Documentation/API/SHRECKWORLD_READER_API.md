@@ -2,35 +2,31 @@
 
 ## Book Map
 
-`GET /ontologies/{ontology_id}/items/{item_id}/book-map` returns the deterministic
-structural map for the item's active indexed document generation. The endpoint
-uses the same ontology authorization and item scoping as source content reads.
-The response includes `document_id`, `map_version`, flat hierarchical
-`sections` (parent IDs, heading paths, physical/displayed page ranges, block and
-chunk IDs, content types, `node_type`, a 0–1 `confidence`, and `mapping_status`).
-Sections retain stable generation-scoped IDs and direct `source_block_ids`;
-detected tables are child nodes linked to their parser evidence block.
-`mapping_status` is `verified`, `tentative`, or `unresolved`; confidence is
-deterministic structural evidence, not semantic correctness. Missing headings
-or page evidence remain visible as tentative or unresolved nodes and appear in
-`quality.uncertain_section_ids`. Unmapped block IDs and coverage counts are also
-returned.
-Pass `?document_id={generation_id}` to inspect a specific generation belonging
-to that item. Missing or not-yet-backfilled maps return 404; clients should keep
-the existing reader navigation available in that case. The map contains
-references and structural metadata, not copied source passages or summaries.
+`GET /ontologies/{ontology_id}/items/{item_id}/book-map` and the equivalent
+legacy world route return a generation's Book Map. The endpoint uses the same
+source authorization and item scoping as content reads. `map_version` defaults
+to 3 for compatibility; set `map_version=4` to request the typed tree. Pass
+`document_id` to select a generation belonging to that item. Unsupported map
+versions return 422; an unavailable representation or generation returns 404.
 
-Maps are created from normalized parser pages, blocks, sections, and chunks
-stored for one document generation. Parser headings, page provenance, and
-available heading geometry inform confidence. The current parser contract does
-not persist PDF bookmark/outline entries or a separately recognized printed
-table of contents, so those signals are not part of this version's confidence.
-Indexing activates a map in the same SQL
-transaction as those records. Backfill existing generations with
-`cd shreckworld && ../.venv/bin/python -m scripts.backfill_book_maps --dry-run`
-to preview counts, then omit `--dry-run` to write maps. The command is
-repeatable and accepts `--batch-size`; it reads no source files and performs no
-embedding inference or vector writes.
+V3 responses retain `sections`, generation-scoped IDs, page ranges, and legacy
+confidence/status fields. V4 responses contain structural and content `nodes`,
+source `evidence`, page locators, direct block ownership, chunk links, resolution
+status, and quality counters. Confidence is deterministic structural evidence,
+not semantic correctness. V4 maps contain references and metadata, not copied
+source passages, vectors, or summaries. The V4-to-V3 projection preserves the
+legacy response fields for existing readers.
+
+Maps use parser-independent PDF outline evidence, visible printed TOC candidates,
+conservative printed-page mappings, and global heading evidence. Content blocks
+are assigned once to the narrowest established interval; unsupported pages
+remain explicitly unknown. Indexing stores the V4 map in the SQL activation
+transaction with chunks and FTS. The V3 startup backfill remains available for
+older missing maps. To preview restoration from retained V4 artifacts, run
+`cd shreckworld && ../.venv/bin/python -m scripts.backfill_book_map_v4`; add
+`--write` to persist. It never parses, embeds, mutates Qdrant, or rewrites chunks
+or FTS. Its summary separates aligned and legacy-context artifacts, skips,
+failures, and generations without an artifact that need a reparse.
 
 On service startup, ShreckWorld checks for document generations without a map
 or with an older map version and enqueues the same idempotent rebuild on the
@@ -39,15 +35,25 @@ The API startup does not wait for the backfill. If the broker is unavailable,
 the service logs a safe warning and checks again on its next startup; operators
 can run the command above to backfill immediately.
 
-Text-bearing chunks include the resolved parser heading path and all extracted
-text blocks, including table content and captions. Tables are isolated as
-retrieval units when present. Image nodes retain their page/block locator and
-link a nearby caption only when the caption has a unique same-page reading-order
-match; caption text is embedded as ordinary text evidence. Image pixels are not
-embedded, and this pipeline does not run OCR or image identification. Indexes
-created with the v1 chunk recipe are not considered compatible with the v2
-recipe; explicitly reindex sources to regenerate vectors. Map-only backfill
-does not regenerate embeddings.
+Text-bearing chunks include resolved heading paths and actual extracted text.
+Structured tables use deterministic header/value rows, and captions remain
+ordinary text evidence. Image pixels are not embedded, and this pipeline does
+not run OCR or image identification. New indexes use recipe
+`book-map-v4-e5-context-v1`; prior Docling and PyMuPDF context recipes remain
+searchable while active. Reindex to opt an older generation into the new
+resolved-context recipe. Map artifact restoration does not regenerate vectors.
+
+`GET .../book-map/nodes/{node_id}/content` returns ordered direct block text and
+direct-child summaries for a V4 node. It requires `document_id`; `source_sha256`
+may pin the requested revision. `limit` defaults to 50 and is capped at 100.
+The opaque cursor is pinned to generation, source revision, node, and map digest;
+stale cursors return 409. Responses are capped at 256 KiB, and oversized text
+segments include source block identity and character offsets. Structured tables
+are returned as row groups with headers repeated on each group. Foreign nodes
+and generations return 404. Content items include page/bounds provenance and a
+revision-bound page thumbnail reference for image blocks. Read it through the
+existing authenticated document-media endpoint. Map responses never include
+whole-book text.
 
 `POST /ontologies/{ontology_id}/query` may include `book_map_node_id` together
 with one `library_item_id` and `retrieval_strategy="single"`. The service

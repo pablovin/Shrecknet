@@ -17,6 +17,7 @@ from app.schemas.shreckworld import (
 from app.schemas.document_media import MediaRequest, MediaList
 from app.models import ShreckWorldDocument, ShreckWorldDocumentBookMap
 from app.schemas.shreckworld import BookMapRead
+from app.schemas.book_map import BookMapNodeContentRead
 from app.repositories.source_scope import OntologyScope
 
 router = APIRouter(prefix="/ontologies/{ontology_id}", tags=["Ontology sources"])
@@ -62,9 +63,11 @@ def content(item_id: str, request: Request, scope: OntologyScope = Depends(autho
     return sources.download_library_item(scope, item_id, request, session)
 
 
-@router.get("/items/{item_id}/book-map", response_model=BookMapRead)
-def book_map(item_id: str, document_id: str | None = None,
+@router.get("/items/{item_id}/book-map")
+def book_map(item_id: str, document_id: str | None = None, map_version: int = 3,
              scope: OntologyScope = Depends(authorized_ontology), session: Session = Depends(get_db)):
+    if map_version not in {3, 4}:
+        raise HTTPException(status_code=422, detail="Unsupported Book Map version")
     item = sources._item_or_404(session, scope, item_id)
     statement = select(ShreckWorldDocument).where(ShreckWorldDocument.library_item_id == item.id)
     if document_id is not None:
@@ -77,7 +80,39 @@ def book_map(item_id: str, document_id: str | None = None,
     record = session.get(ShreckWorldDocumentBookMap, document.id)
     if record is None:
         raise HTTPException(status_code=404, detail="Book Map is not ready for this document generation")
-    return record.payload
+    from app.services.book_map_contract import project_v4_to_v3, read_book_map
+    from app.schemas.book_map import BookMapV4
+    try:
+        parsed = read_book_map(record.payload)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Stored Book Map is invalid") from exc
+    if map_version == 4:
+        if not isinstance(parsed, BookMapV4):
+            raise HTTPException(status_code=404, detail="Book Map V4 is unavailable for this generation")
+        return parsed
+    if isinstance(parsed, BookMapV4):
+        return project_v4_to_v3(parsed)
+    return parsed
+
+
+@router.get("/items/{item_id}/book-map/nodes/{node_id}/content", response_model=BookMapNodeContentRead)
+def book_map_node_content(item_id: str, node_id: str, document_id: str,
+                          source_sha256: str | None = None, limit: int = 50,
+                          cursor: str | None = None,
+                          scope: OntologyScope = Depends(authorized_ontology),
+                          session: Session = Depends(get_db)):
+    item = sources._item_or_404(session, scope, item_id)
+    document = session.scalar(select(ShreckWorldDocument).where(
+        ShreckWorldDocument.id == document_id,
+        ShreckWorldDocument.library_item_id == item.id))
+    if document is None:
+        raise HTTPException(status_code=404, detail="Indexed document generation not found")
+    from app.services.book_map_content import BookMapContentError, read_node_content
+    try:
+        return read_node_content(session, document=document, node_id=node_id, limit=limit,
+                                 cursor=cursor, source_sha256=source_sha256)
+    except BookMapContentError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.get("/items/{item_id}/cover")

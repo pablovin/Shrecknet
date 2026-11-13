@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -85,6 +85,7 @@ class ShreckWorldDocumentChunk(Base):
     source_block_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     page_numbers: Mapped[list[int]] = mapped_column(JSON, default=list)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    context_reduced: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     library_item: Mapped[ShreckWorldLibraryItem] = relationship(back_populates="chunks")

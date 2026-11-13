@@ -65,7 +65,7 @@ def run_entity_discovery(run_id: str) -> None:
     from collections import OrderedDict
     from sqlalchemy import select
     from app.models.document import (ShreckWorldDocument, ShreckWorldDocumentBookMap,
-        ShreckWorldDocumentBlock, ShreckWorldDocumentPage, ShreckWorldDocumentSection)
+        ShreckWorldDocumentBlock, ShreckWorldDocumentPage)
     from app.models.shreckworld import ShreckWorldLibraryItem
     from app.integrations.shreckllm import generate_shreckworld_structured_output
     from app.schemas.shreckworld import ShreckWorldModelTarget
@@ -108,17 +108,28 @@ def run_entity_discovery(run_id: str) -> None:
             block_rows = list(session.scalars(select(ShreckWorldDocumentBlock).where(
                 ShreckWorldDocumentBlock.document_id == document_id).order_by(ShreckWorldDocumentBlock.reading_order)))
             pages = {page.id: page.page_number for page in session.scalars(select(ShreckWorldDocumentPage).where(ShreckWorldDocumentPage.document_id == document_id))}
-            section_rows = {section.id: section for section in session.scalars(select(ShreckWorldDocumentSection).where(ShreckWorldDocumentSection.document_id == document_id))}
-            blocks_by_section = {}
-            for block in block_rows:
-                blocks_by_section.setdefault(block.section_id, []).append(block)
-            sections = map_row.payload.get("sections", [])
+            from app.services.book_map_contract import read_book_map
+            from app.schemas.book_map import BookMapV4
+            parsed_map = read_book_map(map_row.payload)
+            if isinstance(parsed_map, BookMapV4):
+                sections = [{"id": node.id, "heading_path": node.heading_path,
+                    "pages": node.pages.model_dump() if node.pages else {},
+                    "source_block_ids": node.source_block_ids}
+                    for node in parsed_map.nodes]
+            else:
+                sections = [{"id": section.id, "heading_path": section.heading_path,
+                    "pages": section.pages.model_dump(), "source_block_ids": section.source_block_ids}
+                    for section in parsed_map.sections]
+            included_block_ids: set[str] = set()
             batches = []
             current = []
             current_size = 0
             for section in sections:
                 section_id = section.get("id")
-                rows = blocks_by_section.get(section_id, [])
+                source_ids = section.get("source_block_ids", [])
+                rows = [block for block_id in source_ids if block_id not in included_block_ids
+                        for block in [next((value for value in block_rows if value.id == block_id), None)] if block]
+                included_block_ids.update(block.id for block in rows)
                 if not rows:
                     continue
                 content = {"section_id": section_id, "heading_path": section.get("heading_path", []), "pages": section.get("pages", {}),

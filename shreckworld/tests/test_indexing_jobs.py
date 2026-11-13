@@ -68,6 +68,20 @@ def test_polling_job_timing_and_isolation(api, runtime, monkeypatch):
     assert client.get(f"{prefix}/index-jobs/{job_id}").status_code == 401
 
 
+def test_mineru_version_in_parse_quality_is_serializable(api, runtime, monkeypatch):
+    client, headers, _ = api
+    prefix, item_id, job_id = queued_job(api, monkeypatch)
+    with session_factory()() as session:
+        job = session.get(ShreckWorldEmbeddingJob, job_id)
+        job.status = "running"
+        job.metrics_json = '{"phase":"parsing","parser_name":"mineru","parse_quality":{"mineru_version":"4.1.7"}}'
+        session.commit()
+
+    response = client.get(f"{prefix}/index-jobs/{job_id}", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["metrics"]["parse_quality"]["mineru_version"] == "4.1.7"
+
+
 def test_live_progress_structural_chunks_and_final_metrics(api, runtime, monkeypatch):
     client, headers, _ = api
     prefix, item_id, job_id = queued_job(api, monkeypatch, content=("text " * 350).encode())
@@ -109,6 +123,36 @@ def test_live_progress_structural_chunks_and_final_metrics(api, runtime, monkeyp
         assert session.execute(text("SELECT count(*) FROM shreckworld_chunk_fts")).scalar_one() == metrics["total_chunks"]
 
 
+def test_v4_map_negotiation_and_authorized_node_content(api, runtime, monkeypatch):
+    prefix, item_id, job_id = queued_job(api, monkeypatch, content=b"Combat rules provide evidence.")
+    run(item_id, job_id)
+    client, headers, world_id = api
+    legacy = f"/shreckworlds/{world_id}/library-items/{item_id}/book-map"
+    v3 = client.get(legacy, headers=headers)
+    assert v3.status_code == 200 and v3.json()["map_version"] == 3
+    assert client.get(legacy + "?map_version=9", headers=headers).status_code == 422
+    v4 = client.get(legacy + "?map_version=4", headers=headers)
+    assert v4.status_code == 200 and v4.json()["map_version"] == 4
+    node = next(node for node in v4.json()["nodes"] if node["node_type"] == "paragraph")
+    content_url = legacy + f"/nodes/{node['id']}/content?document_id={job_id}&source_sha256={item_id}"
+    # A mismatched revision is rejected before content is returned.
+    assert client.get(content_url, headers=headers).status_code == 409
+    with session_factory()() as session:
+        source_hash = session.get(ShreckWorldDocument, job_id).source_sha256
+    result = client.get(legacy + f"/nodes/{node['id']}/content?document_id={job_id}&source_sha256={source_hash}",
+                        headers=headers)
+    assert result.status_code == 200, result.text
+    assert result.json()["items"][0]["text"] == "Combat rules provide evidence."
+    from app.services.book_map_v4_backfill import backfill_book_maps_v4
+    with session_factory()() as session:
+        session.delete(session.get(ShreckWorldDocumentBookMap, job_id))
+        session.commit()
+        assert backfill_book_maps_v4(session, dry_run=True)["restored"] == 1
+        assert session.get(ShreckWorldDocumentBookMap, job_id) is None
+        assert backfill_book_maps_v4(session, dry_run=False)["restored"] == 1
+        assert session.get(ShreckWorldDocumentBookMap, job_id).map_version == 4
+
+
 def test_pymupdf_indexing_persists_parser_provenance_and_children(api, runtime, monkeypatch):
     from app.services.document_parsing import parse_source
     from test_document_metadata import pdf_bytes
@@ -143,7 +187,7 @@ def test_pymupdf_indexing_persists_parser_provenance_and_children(api, runtime, 
     with session_factory()() as session:
         document = session.get(ShreckWorldDocument, job_id)
         assert document.parser_name == "pymupdf"
-        assert document.embedding_version == "pymupdf-e5-context-v2"
+        assert document.embedding_version == "book-map-v4-e5-context-v1"
         blocks = list(session.scalars(select(ShreckWorldDocumentBlock)))
         assert next(block for block in blocks if block.docling_reference == "c0").block_metadata["pymupdf_chunk"]["element_ids"] == ["p1.b0"]
         children = list(session.scalars(select(ShreckWorldDocumentChunk).where(ShreckWorldDocumentChunk.chunk_role == "child")))

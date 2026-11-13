@@ -78,32 +78,47 @@ for payloads, errors, roles, source revision checks, and compatibility.
 
 ## Structured indexing pipeline
 
-Book Map V3 remains the current persisted and API representation. The proposed
-V4 structural resolver is not active in parsing, indexing, retrieval, or reads.
-The initial typed V4 envelope is defined in `app/schemas/book_map.py`; shared,
-storage-independent extraction evidence records live in
-`shreckdoc/shreckdoc/structure_types.py`. These types preserve optional source,
-table, and page-accounting evidence while existing normalized record constructors
-retain their defaults. Defining a schema does not enable V4 persistence or routes.
-`shreckdoc/shreckdoc/structure_validation.py` checks tree identity, ownership,
+New indexing generations persist a validated Book Map V4 tree with parser
+evidence, structural intervals, one-owner source blocks, page coverage, table
+and image nodes, caption/continuation references, and chunk links. PDF outlines,
+visible printed contents, printed-page mappings, and global heading candidates
+are reconciled in `shreckdoc` with explicit uncertainty. Content ownership and
+resolved chunk context are produced before embedding. Table cells serialize as
+header/value text when reliable; unreadable tables retain their extracted text
+fallback. Images and placeholders remain navigable without image-pixel vectors.
+SQL chunk records and Qdrant payloads retain recipe/map versions, resolved
+heading paths, source-block IDs, content type, and whether heading context was
+reduced. The additive SQLite migration gives old chunk rows a false
+`context_reduced` default.
+
+`ShreckWorldDocumentBookMap` stores V4 beside legacy V3 maps. The authorized
+`GET .../book-map` routes default to V3; `map_version=4` requests V4. V4 maps
+project to the existing V3 navigation shape for old clients. Node content is
+available through the generation-pinned content route, with source revision
+checks, cursor pinning, item authorization, and a 256 KiB response ceiling.
+Node-scoped retrieval resolves descendants against either map version. Entity
+Discovery consumes direct source-block ownership once per generation.
+
+The new indexing context uses recipe `book-map-v4-e5-context-v1`; earlier
+`docling-e5-context-v2` and `pymupdf-e5-context-v2` generations remain eligible
+while active. New indexes write `book_map_v4.json` and evidence/quality metadata
+with the ingestion artifacts. `python -m scripts.backfill_book_map_v4` previews
+artifact restoration by default; pass `--write` to restore validated maps. Old
+generations without retained V4 artifacts are classified `needs_reparse`; the
+tool does not call a parser, embedder, or vector store. The existing V3 startup
+backfill remains for missing/older V3 records and skips V4 map rows.
+
+`shreckdoc/shreckdoc/structure_validation.py` checks identity, ownership,
 generation, ordering, parent, and page-range invariants. The service-side
 `app/services/book_map_contract.py` validates versioned payloads and provides a
-read-only V4-to-V3 navigation projection; its V3 confidence value reflects the
-resolution enum, not parser confidence, and only V4 `validated` projects to V3
-`verified`. These adapters are not yet wired to API routes or indexing.
-The B06–B09 evidence utilities collect PDF outline destinations and page labels
-without using the configured content parser, extract visible TOC rows across the
-full document, map printed labels only through unique title anchors or
-corroborated in-range offsets, and rank body-heading candidates using global
-style, numbering, and repetition evidence. They retain unresolved mappings and
-rejected-candidate reasons; they do not assign final parents or discard source
-blocks.
-Synthetic evidence inputs for its implementation tests live in
+read-only V4-to-V3 projection; only V4 `validated` projects to V3 `verified`.
+Synthetic evidence inputs for implementation tests live in
 `shreckworld/tests/fixtures/bookmap_v4/`; they cover outline destinations,
 printed contents, heading candidates, and retained table/image/caption/unknown
-blocks. Their expected outcomes preserve evidence and uncertainty only; they do
-not assert final parentage or parser coverage. The V4 implementation plan and
-its migration sequence are maintained in the coordinating frontend repository.
+blocks. Resolver and ownership tests assert synthetic parentage, page coverage,
+and one-owner block assignment; they do not claim parser accuracy on external
+rulebooks. The V4 implementation plan and migration sequence are maintained in
+the coordinating frontend repository.
 
 1. Verify the real sentence-transformer model and source SHA-256 before parsing.
 2. Parse PDFs with the configured Docling or PyMuPDF layout adapter; Compose

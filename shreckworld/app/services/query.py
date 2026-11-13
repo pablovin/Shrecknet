@@ -25,6 +25,8 @@ from app.services.embedding import cosine_similarity, get_embedder
 from app.services.retrieval_index import search_chunks
 from app.services.citation_regions import citation_rectangles as _rectangles
 from app.integrations.reranker import get_reranker
+from app.services.book_map_contract import read_book_map
+from shreckdoc.structure_validation import descendants
 
 
 @dataclass
@@ -67,20 +69,29 @@ def resolve_retrieval_scope(session: Session, *, shreckworld_id: str,
         book_map = session.get(ShreckWorldDocumentBookMap, document.id)
         if book_map is None:
             raise BookMapScopeError(409, "The Book Map is not ready for this indexed generation")
-        nodes = book_map.payload.get("sections", [])
-        node_by_id = {node.get("id"): node for node in nodes if isinstance(node, dict)}
-        if book_map_node_id not in node_by_id:
-            raise BookMapScopeError(404, "Book Map node not found")
-        descendants = {book_map_node_id}
-        while True:
-            children = {node.get("id") for node in nodes
-                        if node.get("parent_id") in descendants and node.get("id")}
-            new_descendants = children - descendants
-            if not new_descendants:
-                break
-            descendants.update(new_descendants)
-        chunk_ids = {chunk_id for node_id in descendants
-                     for chunk_id in (node_by_id[node_id].get("chunk_ids") or [])}
+        try:
+            parsed_map = read_book_map(book_map.payload)
+        except Exception as exc:
+            raise BookMapScopeError(409, "The stored Book Map is invalid") from exc
+        if getattr(parsed_map, "map_version", None) == 4:
+            node_by_id = {node.id: node for node in parsed_map.nodes}
+            if book_map_node_id not in node_by_id:
+                raise BookMapScopeError(404, "Book Map node not found")
+            node_ids = descendants(parsed_map, book_map_node_id, include_self=True)
+            chunk_ids = {chunk_id for node_id in node_ids for chunk_id in node_by_id[node_id].chunk_ids}
+        else:
+            nodes = [node.model_dump() for node in parsed_map.sections]
+            node_by_id = {node.get("id"): node for node in nodes}
+            if book_map_node_id not in node_by_id:
+                raise BookMapScopeError(404, "Book Map node not found")
+            node_ids = {book_map_node_id}
+            while True:
+                children = {node.get("id") for node in nodes if node.get("parent_id") in node_ids and node.get("id")}
+                new_descendants = children - node_ids
+                if not new_descendants:
+                    break
+                node_ids.update(new_descendants)
+            chunk_ids = {chunk_id for node_id in node_ids for chunk_id in (node_by_id[node_id].get("chunk_ids") or [])}
         rows = [row for row in rows if row[0].id in chunk_ids]
     by_id = {chunk.id: (chunk, item) for chunk, item in rows}
     eligible_items = {document.library_item_id for document in documents}

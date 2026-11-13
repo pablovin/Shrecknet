@@ -23,6 +23,12 @@ for comparison. Contextual, tokenizer-bounded E5 children retain separate
 display text and semantic parents. OCR is disabled for Docling/PyMuPDF; MinerU
 may OCR image-only pages. Extraction quality varies by document, and no parser
 is guaranteed to produce a better map.
+MinerU model assets are built into its image and use a BuildKit cache keyed by
+the pinned MinerU version and model source. The cache preserves completed and
+partial downloads across repeated builds, including builds canceled by another
+service failing. Keep Docker BuildKit enabled; `docker compose build --no-cache`
+intentionally bypasses reusable image layers, though the BuildKit model cache
+remains available.
 Hash embeddings are no longer a fallback. Existing hash indexes require
 reindexing before semantic retrieval; original source reading remains available.
 

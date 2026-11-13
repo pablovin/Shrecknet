@@ -29,6 +29,7 @@ class _NodeLike(Protocol):
     child_ids: list[str]
     source_block_ids: list[str]
     evidence_ids: list[str]
+    related_node_ids: list[str]
     structural_node_id: str | None
     position: _PositionLike
     pages: _PageRangeLike | None
@@ -126,6 +127,8 @@ def validate_book_map(tree: BookMapLike) -> list[str]:
             errors.append(f"node {node.id} references a different document generation")
         if len(node.child_ids) != len(set(node.child_ids)):
             errors.append(f"node {node.id} has duplicate child IDs")
+        if any(related_id == node.id or related_id not in by_id for related_id in node.related_node_ids):
+            errors.append(f"node {node.id} has an invalid related node reference")
         for child_id in node.child_ids:
             child = by_id.get(child_id)
             if child is None:

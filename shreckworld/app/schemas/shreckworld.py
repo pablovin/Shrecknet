@@ -160,7 +160,9 @@ class IndexingJobMetrics(BaseModel):
     parser_version: str | None = None
     parser_device: str | None = None
     parser_table_former_mode: Literal["fast", "accurate"] | None = None
-    parse_quality: dict[str, int | None] = Field(default_factory=dict)
+    # Parser quality includes counts and parser metadata such as MinerU's
+    # semantic version (for example, "4.1.7").
+    parse_quality: dict[str, int | float | str | None] = Field(default_factory=dict)
     sections: int = 0
     blocks: int = 0
     parent_chunks: int = 0
@@ -183,6 +185,21 @@ class IndexingJobMetrics(BaseModel):
     parser_table_structure_enabled: bool | None = None
     parser_seconds: dict[str, float] = Field(default_factory=dict)
     embedding_batch_size: int | None = None
+    book_map_version: int | None = None
+    resolved_nodes: int = 0
+    uncertain_nodes: int = 0
+    unresolved_nodes: int = 0
+    resolver_conflicts: int = 0
+    extracted_pages: int = 0
+    unknown_pages: int = 0
+    context_reduced_chunks: int = 0
+    table_text_fallbacks: int = 0
+    table_nodes: int = 0
+    image_nodes: int = 0
+    textless_image_nodes: int = 0
+    intentional_image_pixel_exclusions: int = 0
+    embedded_source_blocks: int = 0
+    resolver_seconds: float | None = None
 
 
 def _utc(value: datetime) -> datetime:

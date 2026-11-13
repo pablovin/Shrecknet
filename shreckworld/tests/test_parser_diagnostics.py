@@ -30,6 +30,7 @@ def test_parse_source_retains_diagnostics_and_removes_capture_handler(tmp_path, 
     from test_document_metadata import pdf_bytes
     source = tmp_path / "source.pdf"
     source.write_bytes(pdf_bytes())
+    monkeypatch.setenv("SHRECKWORLD_PDF_PARSER", "docling")
     class Adapter:
         def __init__(self, *args, **kwargs):
             assert kwargs["require_complete"]

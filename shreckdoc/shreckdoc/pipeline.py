@@ -16,7 +16,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal
+from typing import Any, Callable, Iterable, Literal, Mapping
 from uuid import NAMESPACE_URL, uuid5
 
 from .structure_types import (
@@ -96,6 +96,7 @@ class NormalizedChunk:
     embedding_eligible: bool
     fulltext_eligible: bool = True
     text_embedding: list[float] | None = None
+    context_reduced: bool = False
 
     @property
     def heading_path_text(self) -> str:
@@ -678,8 +679,9 @@ def _token_window_split(
     header = NormalizedChunk(**{**asdict(prototype), "display_text": "", "embedding_text": ""})
     content_budget = max_tokens - _token_count(tokenizer, build_embedding_text(header))
     if content_budget < 8:
-        # An extreme heading path can exhaust the model budget. Keep the book
-        # ingestible by omitting this child, while retaining its complete parent.
+        # The caller reduces distant heading context before splitting. If the
+        # remaining book/system header still leaves no room, return no child so
+        # the ingestion coverage gate fails instead of silently truncating text.
         logger.warning(
             "embedding_child_skipped reason=context_header_exceeds_budget section=%s budget=%s",
             prototype.heading_path_text,
@@ -800,6 +802,25 @@ def _split_table_for_embedding(
     return pieces
 
 
+def _fit_heading_context(tokenizer: Any, prototype: NormalizedChunk, text: str,
+                         max_tokens: int) -> NormalizedChunk:
+    """Trim only distant heading context, retaining source text and nearest heading."""
+    candidate = NormalizedChunk(**asdict(prototype))
+    original_path = list(candidate.heading_path)
+    while _token_count(tokenizer, build_embedding_text(NormalizedChunk(
+        **{**asdict(candidate), "display_text": text, "embedding_text": ""}
+    ))) > max_tokens and len(candidate.heading_path) > 1:
+        candidate.heading_path = candidate.heading_path[1:]
+        candidate.primary_heading = candidate.heading_path[-1]
+    if _token_count(tokenizer, build_embedding_text(NormalizedChunk(
+        **{**asdict(candidate), "display_text": text, "embedding_text": ""}
+    ))) > max_tokens and candidate.heading_path:
+        candidate.heading_path = []
+        candidate.primary_heading = None
+    candidate.context_reduced = candidate.context_reduced or candidate.heading_path != original_path
+    return candidate
+
+
 def _split_list_for_embedding(
     tokenizer: Any, prototype: NormalizedChunk, text: str,
     max_tokens: int = MAX_EMBEDDING_TOKENS,
@@ -831,11 +852,18 @@ def build_chunks(
     ontology_id: int | str, book_title: str, rpg_system: str, tokenizer: Any,
     max_embedding_tokens: int = MAX_EMBEDDING_TOKENS,
     preserve_unit_boundaries: bool = False,
+    table_text_by_block: Mapping[str, str] | None = None,
+    table_row_groups_by_block: Mapping[str, list[list[str]]] | None = None,
 ) -> list[NormalizedChunk]:
     block_map = {block.block_id: block for block in document.blocks}
     child_section_ids = {section.parent_section_id for section in document.sections if section.parent_section_id}
     chunks: list[NormalizedChunk] = []
     chunk_index = 0
+    def block_text(block: NormalizedBlock) -> str:
+        if block.block_type == "table" and table_text_by_block and block.block_id in table_text_by_block:
+            return table_text_by_block[block.block_id]
+        return block.display_text
+
     for section in document.sections:
         owned = [block_map[block_id] for block_id in section.block_ids if block_id in block_map]
         evidence = [
@@ -845,7 +873,7 @@ def build_chunks(
         ]
         if not evidence:
             continue
-        display = "\n\n".join(block.display_text for block in evidence if block.display_text).strip()
+        display = "\n\n".join(block_text(block) for block in evidence if block_text(block)).strip()
         if not display:
             continue
         kind = _content_type(evidence, section)
@@ -899,7 +927,7 @@ def build_chunks(
             # still be embedded; caption blocks remain the normal path.
             if unit.block_type == "picture" and not unit.display_text.strip():
                 continue
-            unit_text = unit.display_text
+            unit_text = block_text(unit)
             source_ids = [unit.block_id]
             if not unit_text:
                 continue
@@ -916,10 +944,28 @@ def build_chunks(
                 parent_section_id=section.section_id, source_block_ids=source_ids,
                 chunk_index=chunk_index, embedding_eligible=True,
             )
+            prototype = _fit_heading_context(tokenizer, prototype, unit_text, max_embedding_tokens)
             if unit.block_type == "table":
-                pieces = _split_table_for_embedding(
-                    tokenizer, prototype, unit_text, max_embedding_tokens
-                )
+                row_groups = (table_row_groups_by_block or {}).get(unit.block_id)
+                if row_groups:
+                    lines = [line for line in unit_text.splitlines() if line.strip()]
+                    header = lines[:2] if len(lines) > 1 and re.fullmatch(r"\s*\|?\s*:?-+.*", lines[1]) else lines[:1]
+                    bounded: list[str] = []
+                    current: list[str] = []
+                    for row_group in row_groups:
+                        candidate = "\n".join([*header, *current, *row_group])
+                        probe = NormalizedChunk(**{**asdict(prototype), "display_text": candidate, "embedding_text": ""})
+                        if current and _token_count(tokenizer, build_embedding_text(probe)) > max_embedding_tokens:
+                            bounded.append("\n".join([*header, *current]))
+                            current = list(row_group)
+                        else:
+                            current.extend(row_group)
+                    if current:
+                        bounded.append("\n".join([*header, *current]))
+                    pieces = [piece for group in bounded or [unit_text]
+                              for piece in _split_table_for_embedding(tokenizer, prototype, group, max_embedding_tokens)]
+                else:
+                    pieces = _split_table_for_embedding(tokenizer, prototype, unit_text, max_embedding_tokens)
             elif unit.block_type in {"list", "list_item"}:
                 pieces = _split_list_for_embedding(
                     tokenizer, prototype, unit_text, max_embedding_tokens

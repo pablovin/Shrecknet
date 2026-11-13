@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -51,27 +50,13 @@ def test_book_map_node_query_limits_vector_lexical_and_exact_candidates_to_desce
     run(item_id, job_id)
     with session_factory()() as session:
         record = session.get(ShreckWorldDocumentBookMap, job_id)
-        target = next(node for node in record.payload["sections"] if node["title"] == "Combat")
-        selected_chunk_id = target["chunk_ids"][0]
+        target = next(node for node in record.payload["nodes"] if node["title"] == "Combat")
+        from app.schemas.book_map import BookMapV4
+        from shreckdoc.structure_validation import descendants
+        tree = BookMapV4.model_validate(record.payload)
+        node_ids = descendants(tree, target["id"], include_self=True)
+        selected_chunk_id = next(chunk_id for node in tree.nodes if node.id in node_ids for chunk_id in node.chunk_ids)
         sibling_chunk_id = "00000000-0000-0000-0000-000000000001"
-        session.add(ShreckWorldDocumentChunk(
-            id=sibling_chunk_id, document_id=job_id, library_item_id=item_id,
-            page_number=2, ordinal=999, text="Unrelated sibling section.",
-            embedding_json=json.dumps([1.0, 0.0]), chunk_role="child", section_id="sibling-section",
-            content_type="narrative", embedding_text="Unrelated sibling section.",
-            heading_path=["Other"], source_block_ids=target["source_block_ids"], page_numbers=[2],
-        ))
-        record.payload = {
-            **record.payload,
-            "sections": [*record.payload["sections"], {
-                "id": "sibling-node", "title": "Other", "node_type": "section", "level": 1,
-                "parent_id": None, "heading_path": ["Other"], "pages": {"start": 2, "end": 2,
-                    "start_label": None, "end_label": None}, "block_ids": [], "source_block_ids": [],
-                "caption_block_ids": [], "chunk_ids": [sibling_chunk_id], "content_types": ["text"],
-                "confidence": 1.0, "mapping_status": "verified",
-            }],
-        }
-        session.commit()
 
     vector_scope = []
     def vectors(**kwargs):

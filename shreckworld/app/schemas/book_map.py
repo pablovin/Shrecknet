@@ -87,6 +87,7 @@ class BookMapNode(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
     chunk_ids: list[str] = Field(default_factory=list)
     caption_node_ids: list[str] = Field(default_factory=list)
+    related_node_ids: list[str] = Field(default_factory=list)
     content_ref: str | None = None
     table_ref: str | None = None
     media_ref: str | None = None
@@ -108,6 +109,18 @@ class BookMapQuality(BaseModel):
     uncertain_node_ids: list[str] = Field(default_factory=list)
     validation_error_count: int = Field(default=0, ge=0)
     validation_warning_count: int = Field(default=0, ge=0)
+    extracted_page_count: int = Field(default=0, ge=0)
+    unknown_page_count: int = Field(default=0, ge=0)
+    # Compatibility summary fields retained for existing map inspectors.
+    coverage: float = Field(default=0, ge=0, le=1)
+    section_count: int = Field(default=0, ge=0)
+    block_count: int = Field(default=0, ge=0)
+    mapped_block_count: int = Field(default=0, ge=0)
+    unmapped_block_count: int = Field(default=0, ge=0)
+    uncertain_section_ids: list[str] = Field(default_factory=list)
+    table_node_count: int = Field(default=0, ge=0)
+    image_node_count: int = Field(default=0, ge=0)
+    unparsed_page_count: int = Field(default=0, ge=0)
 
 
 class BookMapV4(BaseModel):
@@ -130,3 +143,36 @@ class BookMapV4(BaseModel):
         if len(value) != 64 or any(character not in "0123456789abcdef" for character in value.lower()):
             raise ValueError("source_sha256 must be a 64-character hexadecimal digest")
         return value.lower()
+
+
+class BookMapContentItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    block_id: str = Field(min_length=1)
+    content_type: str = Field(min_length=1)
+    page_numbers: list[int] = Field(default_factory=list)
+    bounding_boxes: list[dict[str, object]] = Field(default_factory=list)
+    media_ref: str | None = None
+    text: str
+    text_offset: int | None = Field(default=None, ge=0)
+    text_truncated: bool = False
+
+
+class BookMapChildSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    node_type: BookMapNodeType
+    title: str | None = None
+    pages: BookMapPageRange | None = None
+
+
+class BookMapNodeContentRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    source_sha256: str
+    node_id: str
+    items: list[BookMapContentItem]
+    children: list[BookMapChildSummary]
+    next_cursor: str | None = None

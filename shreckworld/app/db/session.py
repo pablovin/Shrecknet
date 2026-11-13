@@ -43,6 +43,7 @@ def create_schema() -> None:
                 "content_type": "VARCHAR(32)", "embedding_text": "TEXT",
                 "heading_path": "JSON DEFAULT '[]'", "source_block_ids": "JSON DEFAULT '[]'",
                 "page_numbers": "JSON DEFAULT '[]'", "token_count": "INTEGER",
+                "context_reduced": "BOOLEAN NOT NULL DEFAULT 0",
             }
             for name, definition in additions.items():
                 if name not in columns:

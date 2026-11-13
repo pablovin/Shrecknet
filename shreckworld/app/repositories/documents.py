@@ -5,6 +5,7 @@ from app.repositories.source_scope import source_scope, item_scope_clause, item_
 
 import json
 import re
+from dataclasses import asdict
 from typing import Any
 
 from sqlalchemy import delete, select, text, update
@@ -18,6 +19,8 @@ from app.models import (
 )
 from app.services.book_map import build_persisted_book_map
 
+BOOK_MAP_EMBEDDING_VERSION = "book-map-v4-e5-context-v1"
+
 
 def active_documents(
     session: Session, world_id: str, fingerprint: str, library_item_id: str | None = None,
@@ -26,7 +29,8 @@ def active_documents(
     statement = select(ShreckWorldDocument).join(ShreckWorldLibraryItem).where(
         item_scope_clause(world_id), ShreckWorldDocument.is_active.is_(True),
         ShreckWorldDocument.embedding_fingerprint == fingerprint,
-        ShreckWorldDocument.embedding_version.in_((EMBEDDING_VERSION, "pymupdf-e5-context-v2")))
+        ShreckWorldDocument.embedding_version.in_((BOOK_MAP_EMBEDDING_VERSION, EMBEDDING_VERSION,
+                                                    "pymupdf-e5-context-v2")))
     if library_item_id is not None:
         statement = statement.where(ShreckWorldLibraryItem.id == library_item_id)
     elif library_item_ids is not None:
@@ -35,7 +39,8 @@ def active_documents(
 
 
 def activate_document(session: Session, *, item: ShreckWorldLibraryItem, document: ShreckWorldDocument,
-                      normalized: NormalizedDocument, chunks: list[ShreckWorldDocumentChunk]) -> list[str]:
+                      normalized: NormalizedDocument, chunks: list[ShreckWorldDocumentChunk],
+                      book_map_payload: dict | None = None) -> list[str]:
     previous = list(session.scalars(select(ShreckWorldDocument.id).where(
         ShreckWorldDocument.library_item_id == item.id, ShreckWorldDocument.is_active.is_(True))))
     session.execute(update(ShreckWorldDocument).where(ShreckWorldDocument.library_item_id == item.id).values(is_active=False))
@@ -55,7 +60,10 @@ def activate_document(session: Session, *, item: ShreckWorldLibraryItem, documen
     session.add_all([ShreckWorldDocumentBlock(id=block.block_id, document_id=document.id,
         section_id=block.section_id, block_type=block.block_type, display_text=block.display_text,
         reading_order=block.reading_order, docling_reference=block.docling_reference,
-        provenance=block.metadata.get("provenance", []), block_metadata=block.metadata) for block in normalized.blocks])
+        provenance=block.metadata.get("provenance", []), block_metadata={
+            **block.metadata,
+            **({"table_structure": asdict(block.table_structure)} if block.table_structure else {}),
+        }) for block in normalized.blocks])
     session.add_all(chunks)
     if session.bind.dialect.name == "sqlite":
         rows = [{"chunk_id": chunk.id, "document_id": document.id, "title": item.title,
@@ -65,7 +73,11 @@ def activate_document(session: Session, *, item: ShreckWorldLibraryItem, documen
             session.execute(text("INSERT INTO shreckworld_chunk_fts(chunk_id, document_id, title, heading_path, text) VALUES (:chunk_id,:document_id,:title,:heading_path,:text)"), rows)
     session.flush()
     # The structural map is created from the same SQL generation before activation commits.
-    build_persisted_book_map(session, document)
+    if book_map_payload is None:
+        build_persisted_book_map(session, document)
+    else:
+        from app.models import ShreckWorldDocumentBookMap
+        session.add(ShreckWorldDocumentBookMap(document_id=document.id, map_version=4, payload=book_map_payload))
     session.flush()
     return previous
 

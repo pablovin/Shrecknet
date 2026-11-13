@@ -1,15 +1,26 @@
 # ShreckWorld structured indexing and job polling
 
-Each successfully activated document generation now includes a deterministic
-Book Map created from the same normalized sections, blocks, pages, and chunks.
-It is committed with the generation, so a failed map build prevents activation
-and leaves the prior searchable generation in place. Existing stored generations
-can be backfilled without rerunning embeddings using the command documented in
-the [reader API](SHRECKWORLD_READER_API.md#book-map). Backfill does not silently
-reparse or regenerate vectors.
-At startup, the API automatically enqueues backfill when it finds missing maps;
-the regular new-indexing path continues to create the map before activating a
-generation.
+Each newly indexed generation includes a validated Book Map V4 built from
+independent structural evidence, normalized blocks/pages, resolved sections,
+and the exact chunks created for the generation. Map publication is part of the
+SQL activation transaction. A failed build prevents activation and leaves the
+prior searchable generation in place. The manifest records map/resolver/chunking
+versions, recipe alignment, and quality counters. Job metrics include resolver
+time, conflicts, coverage, uncertain/unresolved nodes, table fallbacks, and
+context-reduced chunks, plus retained image/table nodes and text-bearing source
+blocks. SQL and Qdrant child records carry recipe/map versions, resolved paths,
+source block references, content type, and context-reduction status.
+
+The API startup still backfills missing or old V3 maps. For existing V4
+artifacts, run the dry-run restore command documented in the
+[reader API](SHRECKWORLD_READER_API.md#book-map); `--write` persists a validated
+artifact. This operation never parses, embeds, mutates Qdrant, or rewrites
+chunks/FTS. Generations without a retained artifact are classified as requiring
+a reparse.
+
+New vectors use recipe `book-map-v4-e5-context-v1`; existing
+`docling-e5-context-v2` and `pymupdf-e5-context-v2` indexes remain eligible for
+active retrieval until explicitly reindexed.
 
 New items are directly owned by ontologies. Use `/ontologies/{ontology_id}/items` and its item/index subroutes; no ShreckWorld creation is required. The `/admin/shreckworlds/.../library-items` routes below remain compatibility contracts. See [direct routes and migration](SHRECKWORLD_READER_API.md#direct-ontology-item-routes) for authorization, item ownership, deployment and rollback.
 
@@ -166,7 +177,9 @@ does not finish parsing: document assembly, canonical export, normalization, and
 cache publication may remain. Older Docling versions without the public callback
 retain indeterminate parsing and report page counts after normalization. PyMuPDF
 and MinerU do not report per-page progress through this adapter: parsing remains
-indeterminate until conversion finishes. A heartbeat continues during remote
+indeterminate until conversion finishes. Their job response still exposes the
+overall `progress` percentage and `metrics.phase`; frontends can render that
+existing percentage consistently for all parser choices. A heartbeat continues during remote
 task polling and canonical exports. Child counts become known after chunk
 construction. Docling uses CPU PDF rendering,
 layout detection, and fast table reconstruction when enabled.
@@ -175,7 +188,10 @@ layout detection, and fast table reconstruction when enabled.
 heading-only pages; `empty_pages` is the remaining page count. `parse_quality`
 reports observed native/parser page counts (`docling_pages`, `pymupdf_pages`, or `mineru_pages`), pages without structured blocks,
 detected/empty tables and lists, pictures, and explicit diagnostic count, without
-guessing unrecognized structures. `sections`, `blocks`, and `parent_chunks` count
+guessing unrecognized structures. It may also include parser metadata such as
+`mineru_version` as a string (for example, `"4.1.7"`); consumers should preserve
+quality values as typed JSON values rather than assuming every value is a count.
+`sections`, `blocks`, and `parent_chunks` count
 normalized/stored structures. `processed_chunks`/`total_chunks` count embedded
 children, not parents. `extracted_characters` counts normalized block text.
 Warnings include parser diagnostics and pages without retrievable native text.

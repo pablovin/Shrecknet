@@ -23,6 +23,7 @@
       "evidence_ids": [],
       "chunk_ids": [],
       "caption_node_ids": [],
+      "related_node_ids": [],
       "content_ref": null,
       "table_ref": null,
       "media_ref": null,
@@ -42,7 +43,18 @@
     "unresolved_node_ids": [],
     "uncertain_node_ids": [],
     "validation_error_count": 0,
-    "validation_warning_count": 0
+    "validation_warning_count": 0,
+    "extracted_page_count": 0,
+    "unknown_page_count": 0,
+    "coverage": 0,
+    "section_count": 0,
+    "block_count": 0,
+    "mapped_block_count": 0,
+    "unmapped_block_count": 0,
+    "uncertain_section_ids": [],
+    "table_node_count": 0,
+    "image_node_count": 0,
+    "unparsed_page_count": 0
   },
   "index_alignment": "aligned"
 }

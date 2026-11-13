@@ -34,8 +34,11 @@ def upsert_item_chunks(item: ShreckWorldLibraryItem, chunks: list[ShreckWorldDoc
         points.append(PointStruct(id=chunk.id, vector=vector, payload={
             "ontology_id": item.ontology_id, "shreckworld_id": item.shreckworld_id, "library_item_id": item.id,
             "document_id": document.id, "embedding_fingerprint": document.embedding_fingerprint,
+            "embedding_version": document.embedding_version, "map_version": 4,
             "chunk_id": chunk.id, "section_id": chunk.section_id,
             "page_number": chunk.page_number, "ordinal": chunk.ordinal,
+            "content_type": chunk.content_type, "heading_path": chunk.heading_path,
+            "source_block_ids": chunk.source_block_ids, "context_reduced": chunk.context_reduced,
             "authority_tier": item.authority_tier, "authority_priority": item.authority_priority,
         }))
     # Bounded requests avoid one huge JSON body for an illustrated rulebook.

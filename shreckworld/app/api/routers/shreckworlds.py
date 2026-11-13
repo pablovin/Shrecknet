@@ -23,7 +23,9 @@ from app.api.deps import ShrecknetPrincipal, get_current_user, require_world_man
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.jobs.shreckworld_agent.agent import QueryScopeError, run_shreckworld_agent, validate_query_scope
-from app.models import ShreckWorld, ShreckWorldAgentJob, ShreckWorldEmbeddingJob, ShreckWorldLibraryItem
+from app.models import (ShreckWorld, ShreckWorldAgentJob, ShreckWorldDocument,
+                        ShreckWorldDocumentBookMap, ShreckWorldEmbeddingJob,
+                        ShreckWorldLibraryItem)
 from app.schemas.shreckworld import (
     AnswerPresentation, AuthorityTier, EmbeddingJobRead, GroundedClaim, GroundedConflict, ShreckWorldAgentJobRead,
     ShreckWorldCreate, ShreckWorldLibraryItemRead,
@@ -34,6 +36,7 @@ from app.schemas.shreckworld import (
 )
 from app.repositories.source_scope import OntologyScope, source_scope, item_scope_clause, item_in_scope
 from app.schemas.document_media import MediaRequest, MediaList
+from app.schemas.book_map import BookMapNodeContentRead
 from app.services.query import BookMapScopeError, query_shreckworld
 from app.services.rule_resolution import resolve_action
 from app.services.embedding import EmbeddingInputError, EmbeddingUnavailable, get_embedder
@@ -291,6 +294,51 @@ def download_library_cover(shreckworld_id: str, item_id: str, session: Session =
     if not item.cover_path or not Path(item.cover_path).is_file():
         raise HTTPException(status_code=404, detail="Source cover not found")
     return FileResponse(item.cover_path, media_type="image/png", filename="cover.png")
+
+
+@query_router.get("/{shreckworld_id}/library-items/{item_id}/book-map", dependencies=[Depends(get_current_user)])
+def legacy_book_map(shreckworld_id: str, item_id: str, document_id: str | None = None,
+                    map_version: int = 3, session: Session = Depends(get_db)):
+    if map_version not in {3, 4}:
+        raise HTTPException(status_code=422, detail="Unsupported Book Map version")
+    item = _item_or_404(session, shreckworld_id, item_id)
+    statement = select(ShreckWorldDocument).where(ShreckWorldDocument.library_item_id == item.id)
+    statement = statement.where(ShreckWorldDocument.id == document_id) if document_id else statement.where(ShreckWorldDocument.is_active.is_(True))
+    document = session.scalar(statement.order_by(ShreckWorldDocument.created_at.desc()).limit(1))
+    if document is None:
+        raise HTTPException(status_code=404, detail="Indexed document generation not found")
+    record = session.get(ShreckWorldDocumentBookMap, document.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Book Map is unavailable")
+    from app.services.book_map_contract import project_v4_to_v3, read_book_map
+    from app.schemas.book_map import BookMapV4
+    try:
+        parsed = read_book_map(record.payload)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Stored Book Map is invalid") from exc
+    if map_version == 4:
+        if not isinstance(parsed, BookMapV4):
+            raise HTTPException(status_code=404, detail="Book Map V4 is unavailable")
+        return parsed
+    return project_v4_to_v3(parsed) if isinstance(parsed, BookMapV4) else parsed
+
+
+@query_router.get("/{shreckworld_id}/library-items/{item_id}/book-map/nodes/{node_id}/content", response_model=BookMapNodeContentRead, dependencies=[Depends(get_current_user)])
+def legacy_book_map_node_content(shreckworld_id: str, item_id: str, node_id: str,
+                                document_id: str, source_sha256: str | None = None,
+                                limit: int = 50, cursor: str | None = None,
+                                session: Session = Depends(get_db)):
+    item = _item_or_404(session, shreckworld_id, item_id)
+    document = session.scalar(select(ShreckWorldDocument).where(
+        ShreckWorldDocument.id == document_id, ShreckWorldDocument.library_item_id == item.id))
+    if document is None:
+        raise HTTPException(status_code=404, detail="Indexed document generation not found")
+    from app.services.book_map_content import BookMapContentError, read_node_content
+    try:
+        return read_node_content(session, document=document, node_id=node_id, limit=limit,
+                                 cursor=cursor, source_sha256=source_sha256)
+    except BookMapContentError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @admin_router.post("/{shreckworld_id}/library-items/{item_id}/embed", response_model=EmbeddingJobRead, status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_world_manager)])

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -210,13 +211,39 @@ def upload_entry_image(
     return read_collection(db, record)
 
 
+def remove_entry_image(
+    db: Session, scope: OntologyScope, collection_id: str, entry_id: str,
+    expected_revision: int,
+) -> CollectionRead:
+    """Detach artwork without erasing historical on-disk revisions."""
+    record = scoped_collection(db, scope, collection_id)
+    nodes = [CollectionEntry.model_validate(node) for node in record.nodes or []]
+    if not any(node.id == entry_id for node in nodes):
+        fail(404, "Entry not found")
+    revised = [
+        node.model_copy(update={"image_key": None}) if node.id == entry_id else node
+        for node in nodes
+    ]
+    result = db.execute(update(SourceCollection).where(
+        SourceCollection.id == record.id, SourceCollection.ontology_id == scope.ontology_id,
+        SourceCollection.revision == expected_revision,
+    ).values(nodes=[node.model_dump(mode="json") for node in revised],
+             revision=expected_revision + 1))
+    if result.rowcount != 1:
+        db.rollback()
+        fail(409, "Hierarchy changed during artwork removal")
+    db.commit()
+    db.refresh(record)
+    return read_collection(db, record)
+
+
 def entry_image(db: Session, scope: OntologyScope, collection_id: str, entry_id: str) -> Path:
     record = scoped_collection(db, scope, collection_id)
     node = next((item for item in record.nodes or [] if item["id"] == entry_id), None)
     if not node or not node.get("image_key"):
         fail(404, "Entry image not found")
     key = node["image_key"]
-    if not isinstance(key, str) or not __import__("re").fullmatch(r"[a-f0-9]{32}\.(png|jpg|webp)", key):
+    if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{32}\.(png|jpg|webp)", key):
         fail(404, "Entry artwork unavailable")
     path = (_image_root(record, entry_id) / key).resolve()
     media = get_settings().media_root.resolve()

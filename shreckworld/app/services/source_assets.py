@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.sources import SourceAsset
+from app.models import ShreckWorldLibraryItem
 from app.schemas.sources import AuthoredContent, SourceSection
 
 
@@ -25,11 +26,11 @@ def markdown_bytes(section: SourceSection) -> bytes:
     return ("\n\n".join(p.text.rstrip() for p in ref.paragraphs if p.text.strip()).rstrip() + "\n").encode("utf-8")
 
 
-def stage_asset(source_id: str, identifier: str, kind: str, data: bytes, extension: str) -> tuple[Path, str, bool]:
+def stage_asset(ontology_id: int, source_id: str, identifier: str, kind: str, data: bytes, extension: str) -> tuple[Path, str, bool]:
     if kind not in {"markdown", "image"} or extension not in {"md", "png", "jpg", "webp"}:
         raise ValueError("Unsupported asset kind or extension")
     digest = sha256(data).hexdigest()
-    root = (get_settings().media_root / "ontologies" / source_id / "assets" / identifier).resolve()
+    root = (get_settings().media_root / "ontologies" / str(ontology_id) / source_id / "assets" / identifier).resolve()
     media = get_settings().media_root.resolve()
     if media not in root.parents:
         raise ValueError("Asset storage escaped protected media")
@@ -64,7 +65,7 @@ def read_asset(db: Session, source_id: str, identifier: str) -> SourceAsset:
     if linked != identifier:
         raise HTTPException(404, "Source asset is no longer referenced")
     path = Path(asset.storage_path).resolve()
-    root = (get_settings().media_root / "ontologies" / source_id).resolve()
+    root = (get_settings().media_root / "ontologies" / str(item.ontology_id) / source_id).resolve()
     if root not in path.parents or not path.is_file():
         raise HTTPException(404, "Source asset file unavailable")
     return asset
@@ -95,8 +96,11 @@ def update_markdown_assets(db: Session, source_id: str, nodes: list[SourceSectio
         digest = sha256(content).hexdigest()
         if digest == asset.content_sha256:
             continue
+        item = db.get(ShreckWorldLibraryItem, source_id)
+        if item is None or item.ontology_id is None:
+            raise HTTPException(422, "Source ontology ownership is unavailable")
         try:
-            path, _, created = stage_asset(source_id, identifier, "markdown", content, "md")
+            path, _, created = stage_asset(item.ontology_id, source_id, identifier, "markdown", content, "md")
         except OSError as exc:
             for staged_path in staged:
                 staged_path.unlink(missing_ok=True)

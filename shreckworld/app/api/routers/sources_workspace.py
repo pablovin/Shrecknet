@@ -1,7 +1,8 @@
 """Ontology-scoped Sources workspace endpoints. Existing PDF APIs remain compatible."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, ShrecknetPrincipal
@@ -87,3 +88,28 @@ def update_organization(
 ):
     item = workspace.scoped_source(session, scope, source_id)
     return workspace.save_organization(session, item, payload)
+
+
+@router.get("/source-hierarchies/{template_id}/versions/{version}/image")
+def hierarchy_image(
+    template_id: str, version: int,
+    scope: OntologyScope = Depends(authorized_ontology), session: Session = Depends(get_db),
+):
+    path = workspace.hierarchy_image_path(session, template_id, version)
+    media_type = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp",
+    }[path.suffix.lower()]
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=300"})
+
+
+@router.post("/source-hierarchies/{template_id}/image", response_model=HierarchyRead, dependencies=manager)
+async def upload_hierarchy_image(
+    template_id: str, image: UploadFile = File(...),
+    expected_version: int = Query(ge=1),
+    scope: OntologyScope = Depends(authorized_ontology), session: Session = Depends(get_db),
+):
+    # Bounded read guards against multi-gigabyte uploads before writing to media.
+    raw = await image.read(5 * 1024 * 1024 + 1)
+    return workspace.save_hierarchy_image(
+        session, template_id, expected_version, raw, image.content_type,
+    )

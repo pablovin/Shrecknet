@@ -53,66 +53,100 @@ def _paragraphs_from_proposal(proposal: dict[str, Any]) -> dict[str, Any] | None
 
 
 def _historical_scene_ranges(path: Path) -> tuple[dict[tuple[str, str, str], dict], int]:
-    """Read only completed Architect analysis evidence; never guess via similarity."""
-    if not path.is_file():
-        logger.info("No historical Architect jobs DB mounted; using document-only provenance")
-        return {}, 0
-    conn = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True)
+    """Recover exact Architect identities from live jobs, durable archives, and artifacts.
+
+    Background jobs may be removed by Shrecknet startup cleanup. The Architect
+    pipeline also writes persistent pipeline_output.json files in local_tests.
+    Only exact instance + scene ID + original entity ID matches are accepted.
+    """
     unique: dict[tuple[str, str, str], dict] = {}
     conflicting: set[tuple[str, str, str]] = set()
     scanned = 0
-    try:
-        conn.row_factory = sqlite3.Row
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='background_jobs'").fetchone():
-            return {}, 0
-        for row in conn.execute("""
-            SELECT details FROM background_jobs
-            WHERE job_type = 'architect_analysis' AND details IS NOT NULL
-            ORDER BY id DESC
-        """):
-            raw = row["details"]
-            if not raw or len(raw) > _MAX_DETAILS_BYTES:
+
+    def add_pipeline(pipeline: object, extra_instance: str = "") -> None:
+        nonlocal scanned
+        if not isinstance(pipeline, dict):
+            return
+        instance = str(pipeline.get("ontology_instance_id") or extra_instance or "").strip()
+        outputs = pipeline.get("outputs") or {}
+        scenes = outputs.get("scenes") or outputs.get("scene_proposals") or []
+        if not instance or not isinstance(scenes, list):
+            return
+        scanned += 1
+        for proposal in scenes:
+            if not isinstance(proposal, dict):
                 continue
+            scene_id = str(proposal.get("scene_id") or "").strip()
+            derived = proposal.get("derived_from") or {}
+            entity_id = str(proposal.get("source_entity_instance_id") or (
+                derived.get("entity_instance_id") if isinstance(derived, dict) else ""
+            ) or "").strip()
+            if not scene_id or not entity_id:
+                continue
+            span = _paragraphs_from_proposal(proposal)
+            if span is None:
+                continue
+            key = (instance, scene_id, entity_id)
+            if key in conflicting:
+                continue
+            if key in unique and unique[key] != span:
+                unique.pop(key, None)
+                conflicting.add(key)
+            else:
+                unique[key] = span
+
+    def load_json(raw: str) -> None:
+        try:
+            details = json.loads(raw)
+            if not isinstance(details, dict):
+                return
+            pipeline = details.get("pipeline_output") or details
+            if isinstance(pipeline, str):
+                pipeline = json.loads(pipeline)
+            add_pipeline(pipeline, str(details.get("ontology_instance_id") or ""))
+        except (ValueError, TypeError):
+            return
+
+    if path.is_file():
+        conn = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True)
+        try:
+            conn.row_factory = sqlite3.Row
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='background_jobs'").fetchone():
+                for row in conn.execute("""
+                    SELECT details FROM background_jobs
+                    WHERE job_type = 'architect_analysis' AND details IS NOT NULL
+                    ORDER BY id DESC
+                """):
+                    raw = row["details"]
+                    if raw and len(raw) <= _MAX_DETAILS_BYTES:
+                        load_json(raw)
+        finally:
+            conn.close()
+
+    # Preserved by Shrecknet's startup job cleanup.
+    archived_dir = path.parent / "architect_provenance"
+    if archived_dir.is_dir():
+        for artifact in archived_dir.glob("analysis-job-*.json"):
             try:
-                details = json.loads(raw)
-                pipeline = details.get("pipeline_output") or {}
-                if isinstance(pipeline, str):
-                    pipeline = json.loads(pipeline)
-                if not isinstance(pipeline, dict):
-                    continue
-                instance = str(pipeline.get("ontology_instance_id") or
-                               details.get("ontology_instance_id") or "").strip()
-                outputs = pipeline.get("outputs") or {}
-                scenes = outputs.get("scenes") or outputs.get("scene_proposals") or []
-                if not instance or not isinstance(scenes, list):
-                    continue
-            except (ValueError, TypeError, AttributeError):
-                continue
-            scanned += 1
-            for proposal in scenes:
-                if not isinstance(proposal, dict):
-                    continue
-                scene_id = str(proposal.get("scene_id") or "").strip()
-                entity_id = str(proposal.get("source_entity_instance_id") or
-                                (proposal.get("derived_from") or {}).get("entity_instance_id") or "").strip()
-                if not scene_id or not entity_id:
-                    continue
-                span = _paragraphs_from_proposal(proposal)
-                if span is None:
-                    continue
-                key = (instance, scene_id, entity_id)
-                if key in conflicting:
-                    continue
-                if key in unique and unique[key] != span:
-                    unique.pop(key, None)
-                    conflicting.add(key)
-                else:
-                    unique[key] = span
-        if conflicting:
-            logger.warning("Ambiguous historical Architect paragraph records: %d", len(conflicting))
-        return unique, scanned
-    finally:
-        conn.close()
+                if artifact.stat().st_size <= _MAX_DETAILS_BYTES:
+                    load_json(artifact.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError):
+                logger.warning("Could not read historical Architect evidence artifact")
+
+    # Existing Architect analysis artifacts predate the safe cleanup archive.
+    # The pipeline uses the historical 'arhictect' spelling on disk.
+    artifacts_dir = path.parent / "local_tests" / "arhictect" / "Analyses"
+    if artifacts_dir.is_dir():
+        for artifact in artifacts_dir.glob("*/pipeline_output.json"):
+            try:
+                if artifact.stat().st_size <= _MAX_DETAILS_BYTES:
+                    load_json(artifact.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError):
+                logger.warning("Could not read Architect pipeline output artifact")
+
+    if conflicting:
+        logger.warning("Skipping %d ambiguous Architect paragraph matches", len(conflicting))
+    return unique, scanned
 
 
 def _source_mappings(session_factory) -> dict[tuple[int, str, str], tuple[str, str, str | None]]:
@@ -191,7 +225,10 @@ def _write_batch(tx, batch: list[dict]) -> None:
               -[:DERIVED_FROM]->(entity:EntityInstance {entity_instance_id: record.entity_id})
         WHERE toInteger(page.ontology_id) = record.ontology_id
           AND toString(scene.instance_id) = record.instance_id
-        SET scene.source_provenance_json = record.payload
+        SET scene.source_provenance_json = record.payload,
+            scene.source_id = record.source_id,
+            scene.source_section_id = record.section_id,
+            scene.source_markdown_asset_id = record.markdown_asset_id
     """, records=batch).consume()
 
 
@@ -246,7 +283,10 @@ def _reconcile(session_factory, settings) -> dict[str, int]:
                     continue
                 batch.append({"ontology_id": key[0], "instance_id": identity[0],
                               "scene_id": identity[1], "entity_id": key[2],
-                              "payload": json.dumps(payload, ensure_ascii=False)})
+                              "payload": json.dumps(payload, ensure_ascii=False),
+                              "source_id": payload.get("source_id"),
+                              "section_id": payload.get("section_id"),
+                              "markdown_asset_id": payload.get("markdown_asset_id")})
                 if len(batch) >= _BATCH_SIZE:
                     graph.execute_write(_write_batch, batch)
                     stats["updated"] += len(batch)

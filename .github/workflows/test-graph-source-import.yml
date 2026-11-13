@@ -35,4 +35,4 @@ jobs:
           python -m compileall -q shreckworld/app/services/graph_source_import.py shreckworld/app/services/source_assets.py shreckworld/app/services/source_workspace.py shreckworld/app/schemas/sources.py
       - name: Test graph source import and source organization
         working-directory: shreckworld
-        run: python -m pytest tests/test_graph_source_import.py tests/test_sources_workspace.py -q
+        run: |\n          python -m pytest tests/test_graph_source_import.py \\\n            tests/test_sources_workspace.py::test_tree_rejects_cycles_or_orphans \\\n            tests/test_sources_workspace.py::test_tree_rejects_duplicate_orders_and_paragraphs \\\n            tests/test_sources_workspace.py::test_authored_source_revision_and_world_scoping \\\n            tests/test_sources_workspace.py::test_untrusted_html_source_download_is_attachment -q

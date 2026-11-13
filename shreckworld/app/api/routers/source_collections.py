@@ -10,7 +10,7 @@ from app.api.routers.sources_workspace import require_source_admin
 from app.db.session import get_db
 from app.integrations.ontologies import authorized_ontology
 from app.repositories.source_scope import OntologyScope
-from app.schemas.source_collections import CollectionCreate, CollectionRead, CollectionUpdate
+from app.schemas.source_collections import CollectionCreate, CollectionRead, CollectionUpdate, CollectionTemplateUpdate
 from app.services import source_collections as collections
 
 router = APIRouter(prefix="/ontologies/{ontology_id}/source-collections", tags=["Source collections"])
@@ -48,6 +48,14 @@ def save_collection(
     scope: OntologyScope = Depends(authorized_ontology), db: Session = Depends(get_db),
 ):
     return collections.save_collection(db, scope, collection_id, payload)
+
+
+@router.put("/{collection_id}/template", response_model=CollectionRead, dependencies=manager)
+def upgrade_template(
+    collection_id: str, payload: CollectionTemplateUpdate,
+    scope: OntologyScope = Depends(authorized_ontology), db: Session = Depends(get_db),
+):
+    return collections.upgrade_collection_template(db, scope, collection_id, payload)
 
 
 @router.delete("/{collection_id}", status_code=204, dependencies=manager)

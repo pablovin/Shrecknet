@@ -1,4 +1,5 @@
 from app.models.sources import SourceHierarchy, SourceOrganization
+from app.models.source_collection import SourceCollection
 from app.models.document import (ShreckWorldDocument, ShreckWorldDocumentPage, ShreckWorldDocumentSection, ShreckWorldDocumentBlock, ShreckWorldDocumentBookMap)
 from app.models.shreckworld import (
     ShreckWorld,
@@ -20,6 +21,7 @@ from app.models.game_engine import (
 )
 
 __all__ = [
+    "SourceCollection",
     "ShreckWorldDocument",
     "ShreckWorldDocumentPage",
     "ShreckWorldDocumentSection",

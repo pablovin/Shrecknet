@@ -39,7 +39,10 @@ def migrate_sources(engine: Engine) -> None:
             # Additional starter templates are independent of the Rulebook backfill.
             for id, name, description, section_types in [
                 ("rpg-campaign", "RPG Campaign", "Adventures, story arcs and stories", ["Adventure", "Story Arc", "Story"]),
+                ("campaign-sessions", "Campaign Adventures", "Adventure cards, story arcs and playable sessions", ["Adventure", "Story Arc", "Session"]),
                 ("novel", "Novel", "Books, parts and chapters", ["Book", "Part", "Chapter"]),
+                ("world-lore", "World Lore", "World setting, cultures and detailed topics", ["Topic", "Entry", "Section"]),
+                ("plain-document", "Markdown Document", "A single editable Markdown document", ["Document"]),
             ]:
                 exists = connection.execute(
                     text("SELECT 1 FROM source_hierarchies WHERE id=:id AND version=1"), {"id": id},

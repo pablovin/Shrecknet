@@ -43,8 +43,10 @@ documents structural navigation and the embedding-free backfill command.
 
 CPU embedding uses ONNX Runtime by default. In Shrecknet's configuration frontend,
 select `Shreckworld → Embedding backend` to choose `onnx`, `torch`, or `openvino`.
-Compose images include all three; after changing, drain indexing, run prefetch,
-restart API/worker, and reindex sources. An explicit
+Compose builds the shared ShreckWorld image once through the API service for
+prefetch, API, and worker.
+Compose images include all three embedding backends; after changing, drain
+indexing, run prefetch, restart API/worker, and reindex sources. An explicit
 `SHRECKWORLD_EMBEDDING_BACKEND` environment value overrides the frontend setting.
 Local OpenVINO installs use `./shreckworld[openvino]`.
 Prefetch exports portable models; each host optimizes at load

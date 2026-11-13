@@ -151,6 +151,7 @@ class BookMapContentItem(BaseModel):
     block_id: str = Field(min_length=1)
     content_type: str = Field(min_length=1)
     page_numbers: list[int] = Field(default_factory=list)
+    position: BookMapPosition
     bounding_boxes: list[dict[str, object]] = Field(default_factory=list)
     media_ref: str | None = None
     text: str
@@ -165,6 +166,7 @@ class BookMapChildSummary(BaseModel):
     node_type: BookMapNodeType
     title: str | None = None
     pages: BookMapPageRange | None = None
+    position: BookMapPosition
 
 
 class BookMapNodeContentRead(BaseModel):

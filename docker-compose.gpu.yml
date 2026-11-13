@@ -18,9 +18,6 @@ services:
               capabilities: [gpu]
 
   shreckworld_worker:
-    build:
-      args:
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
     environment:
       SHRECKWORLD_PARSER_DEVICE: ${SHRECKWORLD_PARSER_DEVICE:-}
       SHRECKWORLD_EMBEDDING_DEVICE: ${SHRECKWORLD_EMBEDDING_DEVICE:-}
@@ -34,9 +31,6 @@ services:
               capabilities: [gpu]
 
   shreckworld_model_prefetch:
-    build:
-      args:
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
     environment:
       SHRECKWORLD_PARSER_DEVICE: ${SHRECKWORLD_PARSER_DEVICE:-}
       SHRECKWORLD_EMBEDDING_DEVICE: ${SHRECKWORLD_EMBEDDING_DEVICE:-}

@@ -55,6 +55,12 @@ revision-bound page thumbnail reference for image blocks. Read it through the
 existing authenticated document-media endpoint. Map responses never include
 whole-book text.
 
+Every direct content item and child summary includes `position` with
+`physical_page` and `reading_order`. Consumers use this source position to
+interleave node-owned blocks and child summaries without sorting V4 hierarchy
+siblings or duplicating child content. Items without page provenance use the
+selected node's physical-page position and retain parser reading order.
+
 `POST /ontologies/{ontology_id}/query` may include `book_map_node_id` together
 with one `library_item_id` and `retrieval_strategy="single"`. The service
 resolves that node and its descendants against the item's active compatible

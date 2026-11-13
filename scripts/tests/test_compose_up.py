@@ -10,6 +10,7 @@ import compose_up
 
 def _fake_docker(monkeypatch, *, gpu_available: bool):
     commands = []
+    compose_environments = []
 
     def run(command, **kwargs):
         commands.append(command)
@@ -17,24 +18,27 @@ def _fake_docker(monkeypatch, *, gpu_available: bool):
             return SimpleNamespace(returncode=0)
         if command[:2] == ["docker", "run"]:
             return SimpleNamespace(returncode=0 if gpu_available else 1)
+        if command[:2] == ["docker", "compose"]:
+            compose_environments.append(kwargs.get("env", {}))
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(compose_up.subprocess, "run", run)
-    return commands
+    return commands, compose_environments
 
 
 def test_launcher_uses_cuda_overlay_when_docker_can_access_gpu(tmp_path, monkeypatch):
-    commands = _fake_docker(monkeypatch, gpu_available=True)
+    commands, compose_environments = _fake_docker(monkeypatch, gpu_available=True)
 
     assert compose_up.main(["--build"], root=tmp_path) == 0
     assert commands[-1] == [
         "docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.gpu.yml",
         "up", "--build",
     ]
+    assert compose_environments[-1]["COMPOSE_BAKE"] == "true"
 
 
 def test_launcher_uses_cpu_stack_when_auto_parser_has_no_gpu(tmp_path, monkeypatch):
-    commands = _fake_docker(monkeypatch, gpu_available=False)
+    commands, _ = _fake_docker(monkeypatch, gpu_available=False)
     monkeypatch.setattr(compose_up, "ROOT", tmp_path)
     config_path = tmp_path / "shrecknet/databases/service-config/shreckworld.json"
     config_path.parent.mkdir(parents=True)
@@ -52,7 +56,7 @@ def test_launcher_uses_cpu_stack_when_auto_parser_has_no_gpu(tmp_path, monkeypat
     ],
 )
 def test_cpu_stack_refuses_explicit_cuda_settings(tmp_path, monkeypatch, runtime_config, expected_setting):
-    commands = _fake_docker(monkeypatch, gpu_available=False)
+    commands, _ = _fake_docker(monkeypatch, gpu_available=False)
     config_path = tmp_path / "shrecknet/databases/service-config/shreckworld.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_text(runtime_config)
@@ -63,7 +67,7 @@ def test_cpu_stack_refuses_explicit_cuda_settings(tmp_path, monkeypatch, runtime
 
 
 def test_mineru_profile_is_started_by_launcher_when_gpu_is_available(tmp_path, monkeypatch):
-    commands = _fake_docker(monkeypatch, gpu_available=True)
+    commands, _ = _fake_docker(monkeypatch, gpu_available=True)
     assert compose_up.main(["--build", "-d", "--mineru"], root=tmp_path) == 0
     assert commands[-1] == [
         "docker", "compose", "-f", "docker-compose.yml", "--profile", "mineru",
@@ -72,7 +76,19 @@ def test_mineru_profile_is_started_by_launcher_when_gpu_is_available(tmp_path, m
 
 
 def test_mineru_profile_requires_docker_gpu_access(tmp_path, monkeypatch):
-    commands = _fake_docker(monkeypatch, gpu_available=False)
+    commands, _ = _fake_docker(monkeypatch, gpu_available=False)
     with pytest.raises(SystemExit, match="--mineru option requires"):
         compose_up.main(["--build", "--mineru"], root=tmp_path)
     assert not any(command[:2] == ["docker", "compose"] for command in commands)
+
+
+def test_launcher_respects_explicit_bake_opt_out(tmp_path, monkeypatch):
+    commands, compose_environments = _fake_docker(monkeypatch, gpu_available=False)
+    monkeypatch.setenv("COMPOSE_BAKE", "false")
+    config_path = tmp_path / "shrecknet/databases/service-config/shreckworld.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text('{"parser_device":"auto","embedding_device":"cpu"}')
+
+    assert compose_up.main(["--build"], root=tmp_path) == 0
+    assert commands[-1][-2:] == ["up", "--build"]
+    assert compose_environments[-1]["COMPOSE_BAKE"] == "false"

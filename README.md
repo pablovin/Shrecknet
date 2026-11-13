@@ -111,6 +111,16 @@ For existing installs, the shreckLLM runtime config database is the source of tr
 docker compose --env-file configs/compose.env --env-file configs/neo4j.env --env-file .env up --build -d
 ```
 
+That command builds the local images before starting them. After a successful
+build, start the already-built stack with the same command and `--build` removed
+to avoid rebuilding during routine restarts. Use `--build` after changing
+application/dependency files; BuildKit caches Python wheels and MinerU assets,
+while the persistent `hf-model-cache` volume stores Shrecknet and ShreckWorld
+model artifacts. These caches speed up subsequent builds and avoid repeating
+completed downloads. The first build and model prefetch still need to download
+their artifacts. `scripts/compose_up.py` enables Compose Bake for builds by
+default; set `COMPOSE_BAKE=false` to opt out.
+
 Shortcut launchers:
 
 - `./run.sh` (Linux/macOS)

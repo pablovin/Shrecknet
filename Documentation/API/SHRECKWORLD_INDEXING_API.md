@@ -261,8 +261,12 @@ remains liveness only; Compose uses `/ready` for health.
 | `RERANKER_ENABLED` | `true`; failed optional reranking retains RRF order and trace warning |
 | `QDRANT_COLLECTION` | `shreckworld_semantic_v2` |
 
-Compose prefetches models with `shreckworld_model_prefetch`; API/worker mount the
-cache read-only and disable runtime downloads. Both images require Docling and
+Compose prefetches models with `shreckworld_model_prefetch`; it checks the
+persistent Hugging Face volume locally first and contacts the model source only
+when the requested snapshot is missing. API/worker mount the cache read-only and
+disable runtime downloads. Prefetch does not recursively change ownership of
+cached model files; the default downloaded permissions allow the service user
+to read them. Both images require Docling and
 Sentence Transformers; the old `[semantic]` extra remains accepted but is no
 longer needed. The worker wrapper preflights E5 and parser artifacts before
 starting a single-task threaded Celery worker, avoiding PyTorch prefork issues.
@@ -293,7 +297,7 @@ Compose selects `SHRECKWORLD_PDF_PARSER=pymupdf` unless the root `.env`
 overrides it. Rebuild and recreate the API and worker after updating:
 
 ```bash
-docker compose build shreckworld_api shreckworld_worker
+docker compose build shreckworld_api
 docker compose up -d shreckworld_api shreckworld_worker
 ```
 
@@ -492,10 +496,11 @@ access. `sdk.shreckworld.readiness()` returns verified model identity. See the
 
 1. Back up the current SQLite database consistently and retain original source
    files before upgrading. Do not deploy while old workers are indexing.
-2. Build `shreckworld_api`, `shreckworld_worker`, and `shreckworld_model_prefetch`
-   with Compose (including the named `shreckdoc` context). Run model prefetch to
-   successful completion. A network/model-download failure is a deployment error,
-   not a reason to enable hash fallback.
+2. Build `shreckworld_api` with Compose (including the named `shreckdoc`
+   context). It builds the shared `shreckworld:local` image used by model
+   prefetch, API, and worker, avoiding duplicate service image builds. Run model
+   prefetch to successful completion. A network/model-download failure is a
+   deployment error, not a reason to enable hash fallback.
 3. Run the updated `create_schema()` before workers consume jobs. It adds new
    structured-document tables, nullable chunk provenance/context fields, job
    timing/metrics columns, SQLite FTS5, and its cleanup trigger idempotently.

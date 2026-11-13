@@ -90,8 +90,7 @@ services:
         import time
         from pathlib import Path
 
-        from huggingface_hub import HfApi
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import HfApi, snapshot_download
         from huggingface_hub.errors import LocalEntryNotFoundError
         from sentence_transformers import CrossEncoder, SentenceTransformer
 
@@ -101,12 +100,6 @@ services:
         hf_home.mkdir(parents=True, exist_ok=True)
         target_uid = int(os.getenv("SHRECKNET_CONTAINER_UID", "1000"))
         target_gid = int(os.getenv("SHRECKNET_CONTAINER_GID", "1000"))
-        os.chown(hf_home, target_uid, target_gid)
-        for p in hf_home.rglob("*"):
-            try:
-                os.chown(p, target_uid, target_gid)
-            except OSError:
-                pass
 
         def dir_size_bytes(path: Path) -> int:
             total = 0
@@ -131,37 +124,9 @@ services:
                 return False, "local snapshot not found"
             except Exception as exc:
                 return False, f"local snapshot check failed: {exc}"
-
-            try:
-                info = HfApi().model_info(model_id)
-            except Exception as exc:
-                # If metadata cannot be fetched, keep the local cache when snapshot exists.
-                return True, f"metadata unavailable, trusting local snapshot ({exc})"
-
-            missing = []
-            size_mismatch = []
-            for sibling in info.siblings or []:
-                rel = getattr(sibling, "rfilename", None)
-                if not rel:
-                    continue
-                local_file = snapshot_path / rel
-                if not local_file.exists():
-                    missing.append(rel)
-                    continue
-                expected_size = getattr(sibling, "size", None)
-                if expected_size is not None:
-                    try:
-                        actual_size = local_file.stat().st_size
-                        if actual_size != expected_size:
-                            size_mismatch.append((rel, actual_size, expected_size))
-                    except OSError:
-                        size_mismatch.append((rel, -1, expected_size))
-
-            if missing:
-                return False, f"missing_files={len(missing)}"
-            if size_mismatch:
-                return False, f"size_mismatch_files={len(size_mismatch)}"
-            return True, "all expected files are present"
+            # A local-only snapshot resolution verifies the requested cached
+            # revision without a remote metadata request or a full tree scan.
+            return True, f"local snapshot present at {snapshot_path}"
 
         print(f"[MODEL_PREFETCH] model={model_id} device={device} cache={hf_home}")
         print("[MODEL_PREFETCH] checking local cache...")
@@ -258,9 +223,7 @@ services:
             size_mb = dir_size_bytes(repo_cache_dir) / (1024 * 1024)
             print(f"[MODEL_PREFETCH] download_done elapsed_s={elapsed:.1f} model_cache_mb={size_mb:.1f}")
         else:
-            repo_cache_dir = hf_home / f"models--{model_id.replace('/', '--')}"
-            size_mb = dir_size_bytes(repo_cache_dir) / (1024 * 1024)
-            print(f"[MODEL_PREFETCH] cache hit model_cache_mb={size_mb:.1f} status='{cache_status}'")
+            print(f"[MODEL_PREFETCH] cache hit status='{cache_status}'")
 
         print("[MODEL_PREFETCH] loading SentenceTransformer from cache...")
         os.setgid(target_gid)
@@ -280,7 +243,6 @@ services:
         PY
         echo "[MODEL_PREFETCH] downloading Docling layout and table artifacts"
         docling-tools models download layout tableformer -o /hf-cache/docling
-        chown -R "$${SHRECKNET_CONTAINER_UID:-1000}:$${SHRECKNET_CONTAINER_GID:-1000}" /hf-cache/docling
 
   shrecknet_permissions:
     image: alpine:3.20
@@ -585,12 +547,8 @@ services:
       start_period: 180s
 
   shreckworld_model_prefetch:
-    build:
-      context: ./shreckworld
-      dockerfile: Dockerfile
-      additional_contexts:
-        shreckdoc: ./shreckdoc
-        shreckconfig: ./shreckconfig
+    image: shreckworld:local
+    pull_policy: never
     restart: "no"
     init: true
     user: "0:0"
@@ -602,13 +560,13 @@ services:
       <<: *shreckworld-env
       HF_HUB_OFFLINE: "0"
       TRANSFORMERS_OFFLINE: "0"
-      SHRECKNET_CONTAINER_UID: ${SHRECKNET_CONTAINER_UID:-1000}
-      SHRECKNET_CONTAINER_GID: ${SHRECKNET_CONTAINER_GID:-1000}
     volumes:
       - hf-model-cache:/hf-cache
       - ./shrecknet/databases/service-config:/service-config:ro
 
   shreckworld_api:
+    image: shreckworld:local
+    pull_policy: never
     build:
       context: ./shreckworld
       dockerfile: Dockerfile
@@ -665,12 +623,8 @@ services:
       start_period: 30s
 
   shreckworld_worker:
-    build:
-      context: ./shreckworld
-      dockerfile: Dockerfile
-      additional_contexts:
-        shreckdoc: ./shreckdoc
-        shreckconfig: ./shreckconfig
+    image: shreckworld:local
+    pull_policy: never
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"

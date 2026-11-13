@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (ShreckWorldDocument, ShreckWorldDocumentBlock,
                         ShreckWorldDocumentBookMap)
-from app.schemas.book_map import BookMapV4
+from app.schemas.book_map import BookMapNode, BookMapV4
 from app.services.book_map_contract import read_book_map
 from shreckdoc.structure_types import TableCell, TableStructure
 from shreckdoc.table_text import serialize_table_text
@@ -20,6 +20,12 @@ class BookMapContentError(ValueError):
     def __init__(self, status_code: int, detail: str):
         super().__init__(detail)
         self.status_code, self.detail = status_code, detail
+
+
+def _source_position(block: ShreckWorldDocumentBlock, node: BookMapNode) -> dict[str, int]:
+    pages = [entry.get("page_no") for entry in block.provenance if entry.get("page_no")]
+    return {"physical_page": min(pages, default=node.position.physical_page),
+            "reading_order": block.reading_order}
 
 
 def read_node_content(session: Session, *, document: ShreckWorldDocument,
@@ -66,7 +72,8 @@ def read_node_content(session: Session, *, document: ShreckWorldDocument,
             raise BookMapContentError(422, "Invalid content cursor")
 
     all_child_summaries = [{"id": nodes[child].id, "node_type": nodes[child].node_type,
-        "title": nodes[child].title, "pages": nodes[child].pages.model_dump() if nodes[child].pages else None}
+        "title": nodes[child].title, "pages": nodes[child].pages.model_dump() if nodes[child].pages else None,
+        "position": nodes[child].position.model_dump()}
         for child in node.child_ids]
     child_summaries = all_child_summaries[child_offset:child_offset + limit]
     block_ids = node.source_block_ids
@@ -85,6 +92,7 @@ def read_node_content(session: Session, *, document: ShreckWorldDocument,
                 for row_group in serialized.row_groups:
                     items.append({"block_id": block.id, "content_type": "table_row_group",
                         "page_numbers": [entry.get("page_no") for entry in block.provenance if entry.get("page_no")],
+                        "position": _source_position(block, node),
                         "bounding_boxes": [entry.get("bbox") for entry in block.provenance if entry.get("bbox")],
                         "media_ref": None,
                         "text": "\n".join([*header, *row_group])})
@@ -94,8 +102,9 @@ def read_node_content(session: Session, *, document: ShreckWorldDocument,
                 pass
         items.append({"block_id": block.id, "content_type": block.block_type,
                       "page_numbers": [entry.get("page_no") for entry in block.provenance if entry.get("page_no")],
+                      "position": _source_position(block, node),
                       "bounding_boxes": [entry.get("bbox") for entry in block.provenance if entry.get("bbox")],
-                      "media_ref": (f"p{next((entry.get('page_no') for entry in block.provenance if entry.get('page_no')), 1)}-thumbnail"
+                      "media_ref": (f"p{next((entry.get('page_no') for entry in block.provenance if entry.get('page_no')), node.position.physical_page)}-thumbnail"
                                     if block.block_type in {"picture", "image"} else None),
                       "text": block.display_text})
     page = items[offset:offset + limit]

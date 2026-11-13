@@ -124,7 +124,9 @@ def main(argv: Sequence[str] | None = None, *, root: Path = ROOT) -> int:
         print("No Docker-accessible NVIDIA GPU detected; using the CPU Compose build.", flush=True)
 
     compose_args.extend(["up", *args])
-    return subprocess.run(compose_args, cwd=root, check=False).returncode
+    compose_env = os.environ.copy()
+    compose_env.setdefault("COMPOSE_BAKE", "true")
+    return subprocess.run(compose_args, cwd=root, env=compose_env, check=False).returncode
 
 
 if __name__ == "__main__":

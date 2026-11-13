@@ -127,3 +127,31 @@ def test_generated_markdown_preserves_section_nesting_and_html():
         "# Campaign\\n\\n## War\\n\\n### The Battle\\n\\n"
         "<p><strong>Victory</strong> was costly.</p>\\n"
     )
+
+
+def test_html_upload_keeps_narrative_type_and_template(db: Session, tmp_path: Path, monkeypatch):
+    from io import BytesIO
+    from fastapi import UploadFile
+    from app.api.routers import shreckworlds
+    from app.models import SourceHierarchy
+
+    db.add(SourceHierarchy(
+        id="campaign", version=1, name="Campaign",
+        section_types=["Adventure", "Chapter"], archived=False,
+    ))
+    db.commit()
+    monkeypatch.setattr(shreckworlds, "get_settings", lambda: SimpleNamespace(
+        media_root=tmp_path, max_document_bytes=10_000,
+    ))
+    result = shreckworlds.upload_library_item(
+        OntologyScope(7, "Test World"), pdf=UploadFile(
+            filename="chapter.html", file=BytesIO(b"<h1>Chapter</h1><p>The hero returns.</p>"),
+        ), auto_extract_metadata=True, source_type="narrative",
+        hierarchy_template_id="campaign", hierarchy_template_version=1,
+        session=db,
+    )
+    assert result.source_type == "narrative"
+    assert result.hierarchy_template_id == "campaign"
+    assert result.hierarchy_template_version == 1
+    assert result.authored is False
+    assert Path(result.storage_path).read_bytes().startswith(b"<h1>Chapter</h1>")

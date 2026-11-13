@@ -143,6 +143,11 @@ def test_image_upload_changes_only_target_entry_and_keeps_old_revision(db, tmp_p
     assert updated.revision == 3
     assert updated.nodes[0].image_key.endswith(".png")
     assert source_collections.entry_image(db, scope, col.id, "adventure").exists()
+    no_art = source_collections.remove_entry_image(db, scope, col.id, "adventure", 3)
+    assert no_art.revision == 4 and no_art.nodes[0].image_key is None
+    with pytest.raises(HTTPException) as missing_image:
+        source_collections.entry_image(db, scope, col.id, "adventure")
+    assert missing_image.value.status_code == 404
     with pytest.raises(HTTPException):
         source_collections.upload_entry_image(
             db, scope, col.id, "adventure", 2, b"evil", "image/png",

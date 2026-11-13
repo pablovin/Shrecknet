@@ -15,6 +15,7 @@ from app.schemas.sources import (
     SourceCreate, SourceSettings,
 )
 from app.services import source_workspace as workspace
+from app.services.source_documents import DocumentRead, DocumentSave, read_document, save_imported_markdown
 
 router = APIRouter(prefix="/ontologies/{ontology_id}", tags=["Sources workspace"])
 def require_source_admin(principal: ShrecknetPrincipal = Depends(get_current_user)) -> None:
@@ -112,4 +113,22 @@ async def upload_hierarchy_image(
     raw = await image.read(5 * 1024 * 1024 + 1)
     return workspace.save_hierarchy_image(
         session, template_id, expected_version, raw, image.content_type,
+    )
+
+
+@router.get("/sources/{source_id}/document", response_model=DocumentRead)
+def source_document_preview(
+    source_id: str, scope: OntologyScope = Depends(authorized_ontology),
+    session: Session = Depends(get_db),
+):
+    return read_document(workspace.scoped_source(session, scope, source_id))
+
+
+@router.put("/sources/{source_id}/document", response_model=DocumentRead, dependencies=manager)
+def save_uploaded_markdown(
+    source_id: str, payload: DocumentSave,
+    scope: OntologyScope = Depends(authorized_ontology), session: Session = Depends(get_db),
+):
+    return save_imported_markdown(
+        session, workspace.scoped_source(session, scope, source_id), payload,
     )

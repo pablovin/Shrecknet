@@ -117,6 +117,16 @@ def get_settings(*, check_mineru: bool = False) -> Settings:
     else:
         effective_parser_device = parser_device_setting
     configured["parser_device"] = effective_parser_device
+    # Reuse the existing Neo4j connection settings only when the ShreckWorld
+    # importer is not given its own explicit overrides.
+    for target, legacy in (
+        ("graph_neo4j_uri", "SHRECKNET_NEO4J_URI"),
+        ("graph_neo4j_user", "SHRECKNET_NEO4J_USER"),
+        ("graph_neo4j_password", "SHRECKNET_NEO4J_PASSWORD"),
+        ("graph_neo4j_database", "SHRECKNET_NEO4J_DATABASE"),
+    ):
+        if not os.environ.get("SHRECKWORLD_" + target.upper()) and os.environ.get(legacy):
+            configured[target] = os.environ[legacy]
     settings = Settings(**configured)
     configured_parser = settings.pdf_parser
     if configured_parser == "mineru":

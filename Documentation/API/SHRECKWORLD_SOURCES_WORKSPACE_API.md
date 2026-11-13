@@ -205,8 +205,9 @@ together before upgrades.
   into full-text or semantic retrieval. Narrative source indexing is a separate
   integration step; until then it is not queryable by Elder/ShreckWorld.
 - Hierarchy template images are stored in protected media with version-pinned authenticated reads and an administrator-only upload endpoint. Image uploads append a template version.
-- This slice does **not** migrate existing Story/Adventure graph nodes, revise
-  scene provenance, or modify the Architect.
+- The original Sources workspace does not change Story/Adventure graph nodes, scene
+  provenance, or the Architect. The opt-in startup importer described below
+  **copies** scene-derived narrative material into Sources without altering the graph.
 - Older source routes and SDK consumers remain supported.
 
 ## Deployment and rollback
@@ -225,8 +226,9 @@ frontend test/lint/build commands from `shreckos/` before enabling in production
 
 Set `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=true` to run the **insert-only,
 read-only-from-graph** import after ShreckWorld initializes its own SQL schema.
-The default is false. The startup task runs in a daemon thread; failures are
-logged without blocking normal service startup. Reboot to retry an unavailable
+The default is false. The startup task runs in a daemon thread with bounded connection retries
+(up to 12 attempts at ten-second intervals); failures are logged without
+blocking normal service startup. Reboot to retry an unavailable
 Neo4j connection or a previously failed group. Concurrent importer processes
 use a file lock under the ShreckWorld media directory.
 

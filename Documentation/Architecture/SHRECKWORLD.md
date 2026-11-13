@@ -85,6 +85,12 @@ storage-independent extraction evidence records live in
 `shreckdoc/shreckdoc/structure_types.py`. These types preserve optional source,
 table, and page-accounting evidence while existing normalized record constructors
 retain their defaults. Defining a schema does not enable V4 persistence or routes.
+`shreckdoc/shreckdoc/structure_validation.py` checks tree identity, ownership,
+generation, ordering, parent, and page-range invariants. The service-side
+`app/services/book_map_contract.py` validates versioned payloads and provides a
+read-only V4-to-V3 navigation projection; its V3 confidence value reflects the
+resolution enum, not parser confidence, and only V4 `validated` projects to V3
+`verified`. These adapters are not yet wired to API routes or indexing.
 Synthetic evidence inputs for its implementation tests live in
 `shreckworld/tests/fixtures/bookmap_v4/`; they cover outline destinations,
 printed contents, heading candidates, and retained table/image/caption/unknown

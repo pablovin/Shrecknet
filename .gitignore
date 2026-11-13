@@ -42,6 +42,9 @@ databases/
 !shrecknet/tests/fixtures/identity_synthesis.json
 !shrecknet/tests/fixtures/neutral_prior_identity_synthesis.json
 !shrecknet/tests/fixtures/trait_weighted_sources.json
+!shreckworld/tests/fixtures/bookmap_v4/evidence_cases.json
+!shreckworld/tests/fixtures/bookmap_v4/contracts/book_map_v3.json
+!shreckworld/tests/fixtures/bookmap_v4/contracts/book_map_v4.json
 !configs/*.json
 !shreckCompanion/configs/
 !shreckCompanion/configs/*.json

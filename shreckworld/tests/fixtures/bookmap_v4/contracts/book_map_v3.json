@@ -1,0 +1,14 @@
+{
+  "document_id": "synthetic-document-v3",
+  "map_version": 3,
+  "sections": [],
+  "unmapped_block_ids": [],
+  "quality": {
+    "section_count": 0,
+    "block_count": 0,
+    "mapped_block_count": 0,
+    "coverage": 1.0,
+    "unmapped_block_count": 0,
+    "uncertain_section_ids": []
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "map_version": 4,
+  "document_id": "synthetic-document-v4",
+  "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "root_id": "root",
+  "resolver_version": "structure-v1",
+  "chunking_version": "context-v1",
+  "nodes": [
+    {
+      "id": "root",
+      "document_id": "synthetic-document-v4",
+      "node_type": "document",
+      "title": "Synthetic Source",
+      "position": {"physical_page": 1, "reading_order": 0, "x": null, "y": null},
+      "level": 0,
+      "parent_id": null,
+      "child_ids": [],
+      "heading_path": [],
+      "structural_node_id": null,
+      "page_locators": [],
+      "pages": null,
+      "source_block_ids": [],
+      "evidence_ids": [],
+      "chunk_ids": [],
+      "caption_node_ids": [],
+      "content_ref": null,
+      "table_ref": null,
+      "media_ref": null,
+      "resolution_status": "resolved",
+      "content_confidence": null,
+      "parent_confidence": null,
+      "structural_source": null,
+      "validation_errors": [],
+      "validation_warnings": []
+    }
+  ],
+  "evidence": [],
+  "quality": {
+    "node_count": 1,
+    "source_block_count": 0,
+    "owned_block_count": 0,
+    "unresolved_node_ids": [],
+    "uncertain_node_ids": [],
+    "validation_error_count": 0,
+    "validation_warning_count": 0
+  },
+  "index_alignment": "aligned"
+}

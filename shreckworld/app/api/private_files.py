@@ -14,8 +14,15 @@ from fastapi.responses import StreamingResponse
 def private_file_response(path: Path, *, request: Request, media_type: str, filename: str, revision: str) -> Response:
     size = path.stat().st_size
     etag = f'"{revision}"'
+    # Untrusted HTML documents must never execute under the authenticated service
+    # origin when a user opens the raw original URL in a browser.
+    html_source = Path(filename).suffix.lower() in {".html", ".htm"} or media_type.lower().split(";")[0] in {"text/html", "application/xhtml+xml"}
+    disposition = "attachment" if html_source else "inline"
     headers = {'Accept-Ranges': 'bytes', 'Cache-Control': 'private, no-store', 'ETag': etag,
-               'Content-Disposition': "inline; filename*=UTF-8''" + quote(filename, safe='')}
+               'X-Content-Type-Options': 'nosniff',
+               'Content-Disposition': disposition + "; filename*=UTF-8''" + quote(filename, safe='')}
+    if html_source:
+        headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
     start, end, status = 0, size - 1, 200
     value = request.headers.get('range')
     if value and request.headers.get('if-range', etag) == etag:

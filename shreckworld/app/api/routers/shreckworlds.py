@@ -195,12 +195,15 @@ def upload_library_item(
     form_authors: str | None = Form(None, alias="authors", validation_alias="authors"),
     form_description: str | None = Form(None, alias="description", validation_alias="description"),
     session: Session = Depends(get_db),
+    source_type: Literal["narrative", "explanatory"] = Form("explanatory"),
+    hierarchy_template_id: str = Form("rulebook"),
+    hierarchy_template_version: int = Form(1),
 ) -> ShreckWorldLibraryItem:
     _world_or_404(session, shreckworld_id)
     extension = Path(pdf.filename or "").suffix.lower()
-    allowed_types = {".pdf", ".docx", ".md", ".txt"}
+    allowed_types = {".pdf", ".docx", ".md", ".txt", ".html", ".htm"}
     if extension not in allowed_types:
-        raise HTTPException(status_code=415, detail="Supported source types are PDF, DOCX, Markdown, and text")
+        raise HTTPException(status_code=415, detail="Supported source types are PDF, DOCX, Markdown, TXT, and HTML")
     raw = pdf.file.read()
     if not raw or len(raw) > get_settings().max_document_bytes:
         raise HTTPException(status_code=413, detail="Source is empty or exceeds the configured size limit")
@@ -213,10 +216,18 @@ def upload_library_item(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    from app.models.sources import SourceHierarchy
+    if hierarchy_template_version < 1:
+        raise HTTPException(status_code=422, detail="Invalid hierarchy template version")
+    template = session.get(SourceHierarchy, (hierarchy_template_id, hierarchy_template_version))
+    if template is None or template.archived:
+        raise HTTPException(status_code=422, detail="Select an active hierarchy template")
     source_hash = hashlib.sha256(raw).hexdigest()
     item = ShreckWorldLibraryItem(
         shreckworld_id=None if isinstance(shreckworld_id, OntologyScope) else shreckworld_id,
         ontology_id=shreckworld_id.ontology_id if isinstance(shreckworld_id, OntologyScope) else None, title=metadata.title, authors=metadata.authors, description=metadata.description,
+        source_type=source_type, hierarchy_template_id=hierarchy_template_id,
+        hierarchy_template_version=hierarchy_template_version,
         authority_tier=authority_tier, authority_priority=authority_priority,
         pdf_path="pending", storage_path="pending", original_filename=pdf.filename,
         mime_type=pdf.content_type or mimetypes.guess_type(pdf.filename or "")[0] or "application/octet-stream",

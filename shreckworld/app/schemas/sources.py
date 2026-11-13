@@ -74,6 +74,7 @@ class SectionMetadata(Contract):
     # Opaque, source-owned asset IDs. Never expose server filesystem paths.
     image_asset_id: Identifier | None = None
     markdown_asset_id: Identifier | None = None
+    legacy_image_url: str | None = Field(default=None, max_length=2048)
 
 
 class SourceSection(Contract):

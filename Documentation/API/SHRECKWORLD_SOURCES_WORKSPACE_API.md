@@ -23,7 +23,7 @@ immutable and independently retrievable.
 - `GET /source-hierarchies/{id}/versions/{version}/image`: authenticated, version-pinned image read.
 - `PUT /source-hierarchies/{id}`: append a new version, requires
   `expected_version` of the current version (409 on conflict).
-- `POST /sources`: create an authored Source with required `title`,
+- `POST /sources`: create an authored Source and atomically instantiate a starter outline from its pinned template levels, with required `title`,
   `source_type` (narrative or explanatory), `hierarchy_template_id`,
   `hierarchy_template_version`. Reuses the existing library-item ID space.
 - `PUT /sources/{source_id}/settings`: type/title/template revision with

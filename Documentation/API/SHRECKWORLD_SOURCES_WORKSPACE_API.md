@@ -19,6 +19,8 @@ immutable and independently retrievable.
 - `GET /source-hierarchies`: latest version per hierarchy, including archived.
 - `GET /source-hierarchies/{id}/versions/{version}`: version-pinned template.
 - `POST /source-hierarchies`: create from `HierarchyInput`.
+- `POST /source-hierarchies/{id}/image?expected_version=N`: upload a PNG, JPEG or WebP image (maximum 5 MB), appending a version.
+- `GET /source-hierarchies/{id}/versions/{version}/image`: authenticated, version-pinned image read.
 - `PUT /source-hierarchies/{id}`: append a new version, requires
   `expected_version` of the current version (409 on conflict).
 - `POST /sources`: create an authored Source with required `title`,
@@ -66,8 +68,7 @@ Section removal is editorial. The old complete tree revision remains in
 - The new organization API persists authored text but does **not yet** index it
   into full-text or semantic retrieval. Narrative source indexing is a separate
   integration step; until then it is not queryable by Elder/ShreckWorld.
-- Template images are represented in the database, but authenticated upload/serve
-  endpoints have not yet been added.
+- Hierarchy template images are stored in protected media with version-pinned authenticated reads and an administrator-only upload endpoint. Image uploads append a template version.
 - This slice does **not** migrate existing Story/Adventure graph nodes, revise
   scene provenance, or modify the Architect.
 - Older source routes and SDK consumers remain supported.

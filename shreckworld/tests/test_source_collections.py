@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.base import Base
 from app.models import SourceHierarchy, ShreckWorldLibraryItem
 from app.repositories.source_scope import OntologyScope
-from app.schemas.source_collections import CollectionCreate, CollectionEntry, CollectionUpdate
+from app.schemas.source_collections import CollectionCreate, CollectionEntry, CollectionUpdate, CollectionTemplateUpdate
 from app.services import source_collections
 
 
@@ -170,3 +170,37 @@ def test_sources_migration_seeds_sessions_and_world_lore_templates():
             assert lore.section_types == ["Topic", "Entry", "Section"]
     finally:
         engine.dispose()
+
+
+def test_explicit_template_version_upgrade_preserves_cards_and_rejects_dropped_levels(db):
+    collection = sample(db)
+    scope = OntologyScope(7, "World")
+    entries = [
+        entry("adventure"), entry("arc", "adventure", 1),
+        entry("session", "arc", 2),
+    ]
+    source_collections.save_collection(db, scope, collection.id, CollectionUpdate(
+        expected_revision=1, name=collection.name, nodes=entries,
+    ))
+    db.add_all([
+        SourceHierarchy(
+            id="adventure", version=2, name="Campaign Adventures",
+            section_types=["Adventure", "Plot Arc", "Session"], archived=False,
+        ),
+        SourceHierarchy(
+            id="adventure", version=3, name="Shortened",
+            section_types=["Adventure", "Chapter"], archived=False,
+        ),
+    ])
+    db.commit()
+    upgraded = source_collections.upgrade_collection_template(
+        db, scope, collection.id, CollectionTemplateUpdate(expected_revision=2, template_version=2),
+    )
+    assert upgraded.revision == 3 and upgraded.section_types == ["Adventure", "Plot Arc", "Session"]
+    assert [node.id for node in upgraded.nodes] == ["adventure", "arc", "session"]
+    with pytest.raises(HTTPException) as refused:
+        source_collections.upgrade_collection_template(
+            db, scope, collection.id,
+            CollectionTemplateUpdate(expected_revision=3, template_version=3),
+        )
+    assert refused.value.status_code == 422

@@ -38,7 +38,8 @@ COPY app ./app
 COPY scripts ./scripts
 COPY default ./default
 
-RUN pip install --no-cache-dir -e . \
+RUN pip install --no-cache-dir --index-url https://pypi.org/simple \
+      --timeout 120 --retries 10 -e . \
     && chown -R appuser:appuser /app /home/appuser
 
 USER appuser

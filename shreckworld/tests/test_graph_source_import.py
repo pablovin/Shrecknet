@@ -86,6 +86,12 @@ def test_graph_import_is_idempotent_and_adds_new_stories(tmp_path, monkeypatch):
         assert "First story" in Path(md.storage_path).read_text()
         image = db.get(SourceAsset, story.metadata.image_asset_id)
         assert Path(image.storage_path).is_file()
+        assert assets.read_asset(db, item.id, image.id).id == image.id
+        from fastapi import HTTPException
+        import pytest
+        with pytest.raises(HTTPException) as wrong_source:
+            assets.read_asset(db, "some-other-source", image.id)
+        assert wrong_source.value.status_code == 404
         source_id = item.id
 
     second = importer.import_graph_sources(factory, settings)
@@ -137,6 +143,8 @@ def test_imported_node_markdown_follows_editor_without_overwriting_edits(tmp_pat
         asset = db.get(SourceAsset, story.metadata.markdown_asset_id)
         old_path = Path(asset.storage_path)
         story.content_reference.paragraphs[0].text = "My revised adventure"
+        # Simulates a legacy editor that does not round-trip new asset IDs.
+        story.metadata.markdown_asset_id = None
         workspace.save_organization(db, item, OrganizationInput(
             expected_revision=item.source_revision, nodes=changed))
         db.refresh(asset)

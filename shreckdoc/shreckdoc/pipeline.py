@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Literal
 from uuid import NAMESPACE_URL, uuid5
 
+from .structure_types import (
+    NormalizedPageAccounting, SourceSpan, StructuralEvidence, StructuralSource, TableStructure,
+)
+
 logger = logging.getLogger(__name__)
 PARSER_NAME = "docling"
 EMBEDDING_VERSION = "docling-e5-context-v2"
@@ -32,6 +36,7 @@ class NormalizedPage:
     displayed_page_label: str | None
     width: float | None = None
     height: float | None = None
+    accounting: NormalizedPageAccounting | None = None
 
 
 @dataclass(slots=True)
@@ -44,6 +49,8 @@ class NormalizedSection:
     block_ids: list[str] = field(default_factory=list)
     page_numbers: list[int] = field(default_factory=list)
     page_labels: list[str] = field(default_factory=list)
+    evidence_ids: list[str] = field(default_factory=list)
+    source_kind: StructuralSource | None = None
 
 
 @dataclass(slots=True)
@@ -58,6 +65,10 @@ class NormalizedBlock:
     reading_order: int = 0
     docling_reference: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    evidence_ids: list[str] = field(default_factory=list)
+    table_structure: TableStructure | None = None
+    source_spans: list[SourceSpan] = field(default_factory=list)
+    native_type: str | None = None
 
 
 @dataclass(slots=True)
@@ -96,6 +107,8 @@ class NormalizedDocument:
     pages: list[NormalizedPage]
     sections: list[NormalizedSection]
     blocks: list[NormalizedBlock]
+    evidence: list[StructuralEvidence] = field(default_factory=list)
+    page_accounting: list[NormalizedPageAccounting] = field(default_factory=list)
 
 
 def _stable_id(kind: str, ingestion_id: str, value: str) -> str:

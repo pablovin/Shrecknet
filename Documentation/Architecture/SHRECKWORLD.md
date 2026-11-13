@@ -78,6 +78,20 @@ for payloads, errors, roles, source revision checks, and compatibility.
 
 ## Structured indexing pipeline
 
+Book Map V3 remains the current persisted and API representation. The proposed
+V4 structural resolver is not active in parsing, indexing, retrieval, or reads.
+The initial typed V4 envelope is defined in `app/schemas/book_map.py`; shared,
+storage-independent extraction evidence records live in
+`shreckdoc/shreckdoc/structure_types.py`. These types preserve optional source,
+table, and page-accounting evidence while existing normalized record constructors
+retain their defaults. Defining a schema does not enable V4 persistence or routes.
+Synthetic evidence inputs for its implementation tests live in
+`shreckworld/tests/fixtures/bookmap_v4/`; they cover outline destinations,
+printed contents, heading candidates, and retained table/image/caption/unknown
+blocks. Their expected outcomes preserve evidence and uncertainty only; they do
+not assert final parentage or parser coverage. The V4 implementation plan and
+its migration sequence are maintained in the coordinating frontend repository.
+
 1. Verify the real sentence-transformer model and source SHA-256 before parsing.
 2. Parse PDFs with the configured Docling or PyMuPDF layout adapter; Compose
    defaults to the experimental PyMuPDF adapter. DOCX/Markdown use Docling;

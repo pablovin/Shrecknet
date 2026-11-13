@@ -234,6 +234,93 @@ def _node_sort(node: dict, prop_defs: dict) -> tuple:
     return (1, str(node.get("created_date") or ""), str(node["title"]).lower(), node["id"])
 
 
+
+def _extend_group(db: Session, item: ShreckWorldLibraryItem, page: dict, paths: list[list[str]],
+                  types: dict, prop_defs: dict, legacy_media_root: Path) -> tuple[int, int]:
+    """Append newly discovered nodes without touching previously imported edits."""
+    from app.schemas.sources import OrganizationInput
+    from app.services.source_workspace import get_organization, save_organization
+    ontology_id, instance_id = page["ontology_id"], page["instance_id"]
+    nodes = page["nodes"]
+    original = get_organization(db, item)
+    by_id = {section.id: section for section in original.nodes}
+    source_root = f"source-{item.id}"
+    if source_root not in by_id:
+        raise ValueError("Imported source root missing; manual recovery required")
+    new_sections = list(original.nodes)
+    assets: list[SourceAsset] = []
+    mappings: list[GraphSourceImport] = []
+    staged: list[Path] = []
+    skipped = 0
+    try:
+        for path in paths:
+            for position, identifier in enumerate(path):
+                section_id = source_root if position == 0 else _id("section", ontology_id, instance_id, identifier)
+                if db.get(GraphSourceImport, (ontology_id, instance_id, identifier)) is not None:
+                    skipped += 1
+                    continue
+                if section_id in by_id:
+                    # Section may already be present via another branch of the same tree.
+                    # Its mapping is not duplicated or overwritten.
+                    continue
+                parent_id = source_root if position == 1 else (
+                    _id("section", ontology_id, instance_id, path[position - 1])
+                    if position > 1 else None)
+                if parent_id is not None and parent_id not in by_id:
+                    raise ValueError("Imported graph ancestor missing from saved source")
+                graph = nodes[identifier]
+                type_def = types.get(graph["definition_id"])
+                paragraphs, digest = _source_text(graph)
+                props = _properties(graph, prop_defs)
+                description = str(props.get("description") or graph["text"] or "")[:10000]
+                sibling_orders = [section.order for section in new_sections if section.parent_id == parent_id]
+                next_order = max(sibling_orders, default=-1) + 1
+                section = SourceSection(
+                    id=section_id, parent_id=parent_id,
+                    section_type=type_def.name if type_def else "Story",
+                    title=graph["title"][:255], order=next_order,
+                    content_reference=AuthoredContent(paragraphs=paragraphs),
+                    metadata=SectionMetadata(description=description, summary=description),
+                )
+                if paragraphs:
+                    identifier_asset = asset_id(item.id, section_id, "markdown")
+                    file_path, checksum, created = stage_asset(ontology_id, item.id, identifier_asset,
+                                                               "markdown", markdown_bytes(section), "md")
+                    if created:
+                        staged.append(file_path)
+                    assets.append(SourceAsset(id=identifier_asset, source_id=item.id, section_id=section_id,
+                        kind="markdown", storage_path=str(file_path), mime_type="text/markdown", content_sha256=checksum))
+                    section.metadata.markdown_asset_id = identifier_asset
+                photo = _legacy_image(graph.get("image"), legacy_media_root)
+                if photo:
+                    data, extension, mime = photo
+                    identifier_asset = asset_id(item.id, section_id, "image")
+                    file_path, checksum, created = stage_asset(ontology_id, item.id, identifier_asset,
+                                                              "image", data, extension)
+                    if created:
+                        staged.append(file_path)
+                    assets.append(SourceAsset(id=identifier_asset, source_id=item.id, section_id=section_id,
+                        kind="image", storage_path=str(file_path), mime_type=mime, content_sha256=checksum))
+                    section.metadata.image_asset_id = identifier_asset
+                by_id[section_id] = section
+                new_sections.append(section)
+                mappings.append(GraphSourceImport(
+                    ontology_id=ontology_id, instance_id=instance_id, entity_instance_id=identifier,
+                    source_id=item.id, section_id=section_id, source_content_hash=digest))
+        if not mappings:
+            return 0, skipped
+        db.add_all([*assets, *mappings])
+        db.flush()
+        validated = OrganizationInput(expected_revision=item.source_revision, nodes=new_sections)
+        save_organization(db, item, validated)
+        return len(mappings), skipped
+    except Exception:
+        db.rollback()
+        for file_path in staged:
+            file_path.unlink(missing_ok=True)
+        raise
+
+
 def _create_group(db: Session, page: dict, paths: list[list[str]], types: dict,
                   prop_defs: dict, legacy_media_root: Path) -> tuple[int, int]:
     ontology_id, instance_id = page["ontology_id"], page["instance_id"]
@@ -246,8 +333,9 @@ def _create_group(db: Session, page: dict, paths: list[list[str]], types: dict,
                       if graph_nodes[n]["definition_id"] in types else "Story"
                       for n in paths[0])
     source_id = _id(ontology_id, instance_id, root_id, "/".join(signature))
-    if db.get(ShreckWorldLibraryItem, source_id):
-        return 0, len(ids)
+    existing = db.get(ShreckWorldLibraryItem, source_id)
+    if existing is not None:
+        return _extend_group(db, existing, page, paths, types, prop_defs, legacy_media_root)
     # Each group has one parent per entity, including the top-level entity.
     parents: dict[str, str | None] = {root_id: None}
     for path in paths:

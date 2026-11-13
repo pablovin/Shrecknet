@@ -114,3 +114,38 @@ def test_ambiguous_narrative_parent_is_not_guessed():
     import pytest
     with pytest.raises(ValueError, match="ambiguous"):
         importer._ancestry("s", nodes, [("a", "s", 7), ("b", "s", 7)], types, definitions)
+
+
+def test_imported_node_markdown_follows_editor_without_overwriting_edits(tmp_path, monkeypatch):
+    from app.schemas.sources import OrganizationInput, SourceSection
+    legacy = tmp_path / "legacy.db"
+    _legacy(legacy)
+    settings = SimpleNamespace(legacy_ontology_database_path=legacy,
+        legacy_media_root=tmp_path / "not-present", media_root=tmp_path / "media")
+    monkeypatch.setattr(assets, "get_settings", lambda: settings)
+    monkeypatch.setattr(workspace, "get_settings", lambda: settings)
+    engine = create_engine("sqlite+pysqlite:///" + str(tmp_path / "source.db"))
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine)
+    monkeypatch.setattr(importer, "_graph_pages", lambda _: [_page()])
+    assert importer.import_graph_sources(factory, settings)["imported"] == 1
+    with Session(engine) as db:
+        item = db.scalar(select(ShreckWorldLibraryItem))
+        org = workspace.get_organization(db, item)
+        changed = [SourceSection.model_validate(node.model_dump()) for node in org.nodes]
+        story = next(node for node in changed if node.title == "What Can Go Wrong?")
+        asset = db.get(SourceAsset, story.metadata.markdown_asset_id)
+        old_path = Path(asset.storage_path)
+        story.content_reference.paragraphs[0].text = "My revised adventure"
+        workspace.save_organization(db, item, OrganizationInput(
+            expected_revision=item.source_revision, nodes=changed))
+        db.refresh(asset)
+        assert Path(asset.storage_path).read_text(encoding="utf-8").strip() == "My revised adventure"
+        assert old_path.exists() and "First story" in old_path.read_text(encoding="utf-8")
+    assert importer.import_graph_sources(factory, settings)["imported"] == 0
+    with Session(engine) as db:
+        item = db.scalar(select(ShreckWorldLibraryItem))
+        story = next(node for node in workspace.get_organization(db, item).nodes
+                     if node.title == "What Can Go Wrong?")
+        assert story.content_reference.paragraphs[0].text == "My revised adventure"
+    engine.dispose()

@@ -215,7 +215,8 @@ def _reconcile(session_factory, settings) -> dict[str, int]:
                        scene.id AS scene_id,
                        source.entity_instance_id AS entity_id,
                        scene.source_provenance_json AS existing
-            """)
+            """).data()
+            # Exhaust the read cursor before starting any write transaction.
             batch = []
             seen: set[tuple[str, str]] = set()
             for row in rows:

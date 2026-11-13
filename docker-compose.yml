@@ -621,6 +621,11 @@ services:
         condition: service_completed_successfully
       shreckworld_redis:
         condition: service_healthy
+      # The importer reads Shrecknet's ontology definitions and the live graph.
+      shrecknet_api:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
       qdrant:
         condition: service_started
     healthcheck:

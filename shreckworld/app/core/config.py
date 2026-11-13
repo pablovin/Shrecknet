@@ -29,9 +29,11 @@ class Settings(BaseSettings):
     shrecknet_jwt_issuer: str = "shrecknet"
     shrecknet_jwt_audience: str = "shreckrpg"
     admin_token: str = ""
-    # Startup import; Neo4j and legacy SQLite/media are read-only inputs.
+    # Automatic startup import. Neo4j and legacy SQLite/media are read-only inputs.
+    # Runs after create_schema; explicitly set false to disable.
     graph_import_on_startup: bool = True
     legacy_ontology_database_path: Path = Path("/legacy-shrecknet-data/shrecknet.db")
+    legacy_jobs_database_path: Path = Path("/legacy-shrecknet-data/shrecknet_jobs.db")
     legacy_media_root: Path = Path("/legacy-shrecknet-media")
     graph_neo4j_uri: str = "bolt://neo4j:7687"
     graph_neo4j_user: str = "neo4j"

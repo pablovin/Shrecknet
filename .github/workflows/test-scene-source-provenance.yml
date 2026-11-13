@@ -1,0 +1,48 @@
+name: Scene Source provenance migration tests
+
+on:
+  push:
+    branches:
+      - feature/scene-source-paragraph-provenance
+  pull_request:
+    paths:
+      - "shrecknet/**"
+      - "shreckworld/**"
+      - ".github/workflows/test-scene-source-provenance.yml"
+  workflow_dispatch:
+
+jobs:
+  graph-provenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install service test dependencies
+        run: |
+          python -m pip install pytest "SQLAlchemy>=2.0,<2.1" "pydantic>=2.6,<3" \
+            "pydantic-settings>=2.2,<3" "fastapi>=0.110,<0.112" \
+            "httpx>=0.27,<0.29" "neo4j>=5.20,<6" "python-multipart>=0.0.9,<1" \
+            "python-jose[cryptography]>=3.3,<4" "python-dotenv>=1,<2" \
+            "PyYAML>=6" "celery[redis]>=5.3,<6" "redis>=6.1,<7"
+          python -m pip install -e ./shreckconfig --no-deps
+          python -m pip install -e ./shreckdoc --no-deps
+      - name: Compile modified Python files
+        run: |
+          python -m compileall -q \
+            shrecknet/app/schemas/ontology_instance.py \
+            shrecknet/app/schemas/architect.py \
+            shrecknet/app/services/ontology_instance_service.py \
+            shrecknet/app/services/scene_source_reference.py \
+            shrecknet/app/tasks/architect_generation.py \
+            shrecknet/app/celery_queue_reaper.py \
+            shreckworld/app/services/scene_source_provenance_import.py \
+            shreckworld/app/main.py
+      - name: Run Shrecknet contract and archival tests
+        working-directory: shrecknet
+        run: python -m pytest --noconftest tests/test_scene_source_provenance.py -q
+      - name: Run ShreckWorld backfill and importer tests
+        working-directory: shreckworld
+        run: python -m pytest tests/test_scene_source_provenance_import.py -q

@@ -140,8 +140,42 @@ MilestoneBoundaryType = Literal["begin", "end", "none"]
 
 
 class SceneDerivedFrom(BaseModel):
+    """Original graph source with optional durable document/paragraph provenance.
+
+    One-based paragraph IDs reflect the original Architect source extraction;
+    they are not necessarily positions in later edited Markdown.
+    """
     model_config = ConfigDict(extra="ignore")
     entity_instance_id: str
+    source_id: str | None = Field(default=None, max_length=64)
+    section_id: str | None = Field(default=None, max_length=128)
+    markdown_asset_id: str | None = Field(default=None, max_length=64)
+    source_revision: int | None = Field(default=None, ge=1)
+    start_paragraph: int | None = Field(default=None, ge=1)
+    end_paragraph: int | None = Field(default=None, ge=1)
+    source_paragraphs_absolute: list[int] = Field(default_factory=list, max_length=10000)
+    provenance_status: Literal["document_only", "architect", "historical_unverified"] | None = None
+
+    @field_validator("source_paragraphs_absolute")
+    @classmethod
+    def validate_source_paragraphs(cls, values: list[int]) -> list[int]:
+        if any(isinstance(value, bool) or value < 1 for value in values):
+            raise ValueError("Source paragraphs must be positive integers")
+        if values != sorted(set(values)):
+            raise ValueError("Source paragraph IDs must be unique and ordered")
+        return values
+
+    @model_validator(mode="after")
+    def validate_passage(self) -> "SceneDerivedFrom":
+        if (self.start_paragraph is None) != (self.end_paragraph is None):
+            raise ValueError("Both start and end paragraph are required")
+        if self.start_paragraph is not None and self.end_paragraph < self.start_paragraph:
+            raise ValueError("End paragraph must not precede start paragraph")
+        if self.source_paragraphs_absolute and self.start_paragraph is not None:
+            if (self.source_paragraphs_absolute[0] < self.start_paragraph or
+                    self.source_paragraphs_absolute[-1] > self.end_paragraph):
+                raise ValueError("Paragraph IDs must lie within the range")
+        return self
 
     @field_validator("entity_instance_id", mode="before")
     def validate_entity_instance_id(cls, value: str) -> str:

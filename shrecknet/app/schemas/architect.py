@@ -294,6 +294,14 @@ class FrontendSceneProposal(BaseModel):
     scene_description: str
     scene_text: str
     source_entity_instance_id: str | None = None
+    # Preserve source passage anchors through Architect review and generation.
+    source_id: str | None = None
+    section_id: str | None = None
+    markdown_asset_id: str | None = None
+    source_revision: int | None = Field(default=None, ge=1)
+    start_paragraph: int | None = Field(default=None, ge=1)
+    end_paragraph: int | None = Field(default=None, ge=1)
+    source_paragraphs_absolute: list[int] = Field(default_factory=list)
     related_to: list[FrontendRelatedEntityRef] = Field(default_factory=list)
     preceded_by: FrontendSceneOrderRef | None = None
     followed_by: FrontendSceneOrderRef | None = None

@@ -94,6 +94,8 @@ async def ensure_temporal_graph_constraints(session: AsyncSession) -> None:
         "CREATE CONSTRAINT atlas_creation_request_unique IF NOT EXISTS FOR (owner:OntologyInstance) REQUIRE owner.atlas_creation_request IS UNIQUE",
         "CREATE INDEX ontology_instance_world_idx IF NOT EXISTS FOR (owner:OntologyInstance) ON (owner.ontology_id)",
         "CREATE INDEX scene_ontology_idx IF NOT EXISTS FOR (scene:Scene) ON (scene.ontology_id)",
+        # Direct ShreckWorld Source pointers coexist with legacy DERIVED_FROM edges.
+        "CREATE INDEX scene_source_section_idx IF NOT EXISTS FOR (scene:Scene) ON (scene.source_id, scene.source_section_id)",
         """
         CREATE CONSTRAINT scene_id_unique IF NOT EXISTS
         FOR (scene:Scene)

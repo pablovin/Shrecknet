@@ -5,6 +5,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 ## ShreckWorld Sources
 
 - [Sources workspace API](API/SHRECKWORLD_SOURCES_WORKSPACE_API.md) — authored and explanatory sources, template revisions, editorial organization, image protection and compatibility boundaries.
+- [Scene Source provenance migration](API/SCENE_SOURCE_PROVENANCE_MIGRATION.md) — direct Source references, Architect paragraph evidence recovery, automatic startup backfill and rollback.
 
 ## Shared model configuration
 

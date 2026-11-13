@@ -227,7 +227,8 @@ frontend test/lint/build commands from `shreckos/` before enabling in production
 The **insert-only, read-only-from-graph** importer runs automatically on every
 ShreckWorld API startup after its own SQL schema is initialized. Its default is
 **enabled**. Set `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=false` only when an
-administrator intentionally needs to disable imports. The startup task runs in a daemon thread with bounded connection retries
+administrator intentionally needs to disable imports.
+The startup task runs in a daemon thread with bounded connection retries
 (up to 12 attempts at ten-second intervals); failures are logged without
 blocking normal service startup. Reboot to retry an unavailable
 Neo4j connection or a previously failed group. Concurrent importer processes

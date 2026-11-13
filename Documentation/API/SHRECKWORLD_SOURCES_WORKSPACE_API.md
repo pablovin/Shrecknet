@@ -151,7 +151,8 @@ have access to the ontology.
 
 The additive startup migration also seeds **Campaign Adventures**
 (`Adventure → Story Arc → Session`) and **World Lore**
-(`Topic → Entry → Section`) templates without changing prior custom
+(`Topic → Entry → Section`) templates, plus a **Markdown Document**
+(`Document`) template used by default when creating attached Markdown files without changing prior custom
 templates, their versions, or existing source documents.
 
 Each entry stores a stable ID, title, optional description, parent ID,

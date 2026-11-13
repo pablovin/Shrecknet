@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # These are narrative source *types*, not arbitrary links to world entities.
 NARRATIVE_TYPES = (
     (re.compile(r"adventure|campaign|saga|chronicle|book|novel", re.I), 0),
-    (re.compile(r"story.?arc|storyline|season|year|volume|part|act", re.I), 1),
+    (re.compile(r"story.?arc|\\barc\\b|storyline|season|year|volume|part|act", re.I), 1),
     (re.compile(r"session|story|timeline|chapter|episode|entry", re.I), 2),
 )
 MAX_TREE_NODES = 2000
@@ -280,7 +280,7 @@ def _extend_group(db: Session, item: ShreckWorldLibraryItem, page: dict, paths: 
                     section_type=type_def.name if type_def else "Story",
                     title=graph["title"][:255], order=next_order,
                     content_reference=AuthoredContent(paragraphs=paragraphs),
-                    metadata=SectionMetadata(description=description, summary=description),
+                    metadata=SectionMetadata(description=description, summary=description, legacy_image_url=str(graph.get('image') or '')[:2048] or None),
                 )
                 if paragraphs:
                     identifier_asset = asset_id(item.id, section_id, "markdown")
@@ -381,7 +381,7 @@ def _create_group(db: Session, page: dict, paths: list[list[str]], types: dict,
             hashes[identifier] = digest
             props = _properties(graph, prop_defs)
             description = str(props.get("description") or graph["text"] or "")[:10000]
-            metadata = SectionMetadata(description=description, summary=description[:10000])
+            metadata = SectionMetadata(description=description, summary=description[:10000], legacy_image_url=str(graph.get('image') or '')[:2048] or None)
             section = SourceSection(
                 id=sid, parent_id=parent_section_id, section_type=kind,
                 title=graph["title"][:255], order=order,

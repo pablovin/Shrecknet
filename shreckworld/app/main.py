@@ -53,6 +53,21 @@ def _import_graph_narrative_sources() -> None:
             sleep(10)
 
 
+def _run_graph_source_startup_migrations() -> None:
+    """Run narrative import first, then reconcile existing graph Scenes.
+
+    Reconciliation is safe even if an earlier source import failed: it only
+    looks up already committed graph-to-source mappings.
+    """
+    _import_graph_narrative_sources()
+    try:
+        from app.db.session import session_factory
+        from app.services.scene_source_provenance_import import import_scene_source_provenance
+        import_scene_source_provenance(session_factory, settings)
+    except Exception:
+        logging.getLogger(__name__).exception("Scene provenance startup reconciliation failed")
+
+
 def _queue_startup_book_map_backfill() -> None:
     try:
         from app.db.session import session_factory
@@ -72,7 +87,7 @@ def startup() -> None:
     create_schema()
     if settings.graph_import_on_startup:
         logging.getLogger(__name__).info("Starting automatic graph narrative Sources import")
-        Thread(target=_import_graph_narrative_sources, name="graph-source-import", daemon=True).start()
+        Thread(target=_run_graph_source_startup_migrations, name="graph-source-migrations", daemon=True).start()
     Thread(target=_queue_startup_book_map_backfill, name="book-map-backfill-check", daemon=True).start()
     try:
         get_embedder().ensure_ready()

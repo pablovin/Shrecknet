@@ -30,9 +30,9 @@ from app.services.source_workspace import _write_authored_revision, render_autho
 logger = logging.getLogger(__name__)
 # These are narrative source *types*, not arbitrary links to world entities.
 NARRATIVE_TYPES = (
-    (re.compile(r"adventure|campaign|saga|chronicle|book|novel", re.I), 0),
-    (re.compile(r"story.?arc|\\barc\\b|storyline|season|year|volume|part|act", re.I), 1),
-    (re.compile(r"session|story|timeline|chapter|episode|entry", re.I), 2),
+    (re.compile(r"\b(?:adventures?|campaigns?|sagas?|chronicles?|books?|novels?)\b", re.I), 0),
+    (re.compile(r"\b(?:story[\s_-]*arcs?|arcs?|storylines?|seasons?|years?|volumes?|parts?|acts?)\b", re.I), 1),
+    (re.compile(r"\b(?:stories|story|sessions?|timelines?|chapters?|episodes?|entries|entry)\b", re.I), 2),
 )
 MAX_TREE_NODES = 2000
 MAX_TREE_BYTES = 2_000_000

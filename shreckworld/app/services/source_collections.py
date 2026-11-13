@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models import ShreckWorldLibraryItem, SourceCollection, SourceHierarchy
 from app.repositories.source_scope import OntologyScope
-from app.schemas.source_collections import CollectionCreate, CollectionEntry, CollectionRead, CollectionUpdate
+from app.schemas.source_collections import CollectionCreate, CollectionEntry, CollectionRead, CollectionUpdate, CollectionTemplateUpdate
 
 
 def fail(status: int, detail: str):
@@ -143,6 +143,37 @@ def save_collection(
     if result.rowcount != 1:
         db.rollback()
         fail(409, "Hierarchy was updated elsewhere. Reload before saving")
+    db.commit()
+    db.refresh(record)
+    return read_collection(db, record)
+
+
+def upgrade_collection_template(
+    db: Session, scope: OntologyScope, collection_id: str,
+    payload: CollectionTemplateUpdate,
+) -> CollectionRead:
+    """Apply a newer pinned definition without moving or deleting entries."""
+    record = scoped_collection(db, scope, collection_id)
+    template = db.get(SourceHierarchy, (
+        record.hierarchy_template_id, payload.template_version,
+    ))
+    if template is None or template.archived:
+        fail(422, "Selected hierarchy version is unavailable")
+    max_level = max((int(node["level"]) for node in record.nodes or []), default=-1)
+    if max_level >= len(template.section_types):
+        fail(422, "This template has fewer levels than your existing entries")
+    if payload.expected_revision != record.revision:
+        fail(409, "Hierarchy changed; reload before updating the template")
+    if payload.template_version == record.hierarchy_template_version:
+        return read_collection(db, record)
+    result = db.execute(update(SourceCollection).where(
+        SourceCollection.id == record.id,
+        SourceCollection.ontology_id == scope.ontology_id,
+        SourceCollection.revision == payload.expected_revision,
+    ).values(hierarchy_template_version=template.version, revision=record.revision + 1))
+    if result.rowcount != 1:
+        db.rollback()
+        fail(409, "Hierarchy changed while updating its template")
     db.commit()
     db.refresh(record)
     return read_collection(db, record)

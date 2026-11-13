@@ -144,6 +144,11 @@ All paths above share the prefix `/ontologies/{ontology_id}`.
 Mutations require the existing Sources administrator role and the caller must
 have access to the ontology.
 
+The additive startup migration also seeds **Campaign Adventures**
+(`Adventure → Story Arc → Session`) and **World Lore**
+(`Topic → Entry → Section`) templates without changing prior custom
+templates, their versions, or existing source documents.
+
 Each entry stores a stable ID, title, optional description, parent ID,
 hierarchy level, sibling order, optional protected artwork key and
 `source_ids` attachments. The API validates strict hierarchy levels,

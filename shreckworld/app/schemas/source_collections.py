@@ -1,7 +1,7 @@
 """Validated API contracts for world-local hierarchy collections."""
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated
 from pydantic import Field, model_validator
 
 from app.schemas.sources import Contract, SourceType, Identifier, Title

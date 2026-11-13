@@ -113,6 +113,78 @@ browser rendering; the source serves them only as a protected text file.
 Image uploading within authored rich text is disabled until an owned source
 media API exists.
 
+## Sources V2: category hierarchies and entries
+
+The primary Sources management workflow is now category-first. World-local
+**SourceCollection** rows assign reusable `SourceHierarchy` template versions to
+either **Narrative** or **Explanatory**, without creating or rewriting documents.
+A template can have one collection per ontology/category; reassigning an archived
+collection restores its previous entries and pinned version.
+
+Required ontology-scoped routes:
+
+- `GET /source-collections?category=narrative|explanatory`: list only the chosen
+  category, including archived assignments. There is no mixed-category endpoint.
+- `POST /source-collections`: assign an active template to the category,
+  using `source_type`, `hierarchy_template_id` and
+  `hierarchy_template_version`.
+- `GET /source-collections/{collection_id}`: read a single collection.
+- `PUT /source-collections/{collection_id}`: atomically save name,
+  description, archive flag and all entries with `expected_revision`.
+- `DELETE /source-collections/{collection_id}?expected_revision=N`:
+  archive an assignment; **not** the template or linked documents.
+- `POST /source-collections/{id}/entries/{entry_id}/image?expected_revision=N`:
+  upload an authenticated PNG, JPEG or WebP (maximum 5 MB).
+- `DELETE /source-collections/{id}/entries/{entry_id}/image?expected_revision=N`:
+  detach the artwork while keeping older media for recovery.
+- `GET /source-collections/{id}/entries/{entry_id}/image`:
+  authenticated image retrieval.
+
+All paths above share the prefix `/ontologies/{ontology_id}`.
+Mutations require the existing Sources administrator role and the caller must
+have access to the ontology.
+
+Each entry stores a stable ID, title, optional description, parent ID,
+hierarchy level, sibling order, optional protected artwork key and
+`source_ids` attachments. The API validates strict hierarchy levels,
+no cycles, sibling-order uniqueness, artwork ownership and document
+references. Attachments must belong to **the same ontology and the same
+Narrative/Explanatory category**. Drag/reparent operations are saved
+as one revision. A stale edit returns HTTP 409 rather than overwriting
+another person's changes.
+
+**Collections do not own documents.** Removing an entry or an entire
+collection detaches references but leaves the original files, Book Maps,
+document indexes, jobs and history untouched. Existing documents are
+shown in their category as Unassigned until attached to entries. Earlier
+`SourceOrganization` content remains in its original per-document
+revision store; this change does not silently migrate it into
+SourceCollection or create a duplicate entry hierarchy.
+
+## Sources V2: document reading and rich Markdown editing
+
+- `GET /sources/{source_id}/document`: bounded read-only preview of
+  TXT, HTML, DOCX and Markdown originals; PDF returns an indicator so the
+  authorized original-byte streaming endpoint can be used for the browser
+  PDF viewer.
+- `PUT /sources/{source_id}/document`: revision-safe rich editing for
+  **uploaded Markdown**. This writes a new immutable Markdown file version
+  with a new source checksum and marks its existing index stale. Previously
+  indexed generations are retained and are not passed off as current.
+- Newly **authored Markdown** continues through its
+  `/sources/{source_id}/organization` editing contract. This prevents
+  competing editable authorities for the same file.
+- Imported TXT, DOCX, HTML and PDF stay read-only. DOCX previews are
+  bounded and display plain text, without running macros or loading
+  external assets.
+
+To deploy: create the new `source_collections` table via the existing
+`Base.metadata.create_all` startup path (the model is imported in
+`app.models`), then upgrade ShreckOS. Existing source tables are
+unmodified. A rollback can hide the new V2 screen and leave the additive
+collection table and documents intact. Back up the SQL database and media
+together before upgrades.
+
 ## Current boundaries
 
 - Authored Markdown is persisted as real files but is **not yet** indexed

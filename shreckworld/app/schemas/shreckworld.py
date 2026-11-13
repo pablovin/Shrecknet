@@ -119,6 +119,21 @@ class BookMapRead(BaseModel):
     quality: BookMapQuality
 
 
+class IndexingProvenance(BaseModel):
+    strategy: list[Literal["pdf_bookmarks", "printed_toc", "inferred_headings", "content_order"]]
+    book_map_version: int | None
+    parser_name: str | None
+    parser_version: str | None
+    parser_device: str | None
+    parser_mineru_tier: str | None
+    parser_table_structure_enabled: bool | None
+    parser_table_former_mode: Literal["fast", "accurate"] | None
+    embedding_backend: Literal["sentence_transformers", "onnx", "openvino", "hash"] | None
+    embedding_model: str | None
+    embedding_device: str | None
+    embedding_version: str | None
+
+
 class ShreckWorldLibraryItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -136,6 +151,7 @@ class ShreckWorldLibraryItemRead(BaseModel):
     source_sha256: str
     index_status: str
     index_error: str | None
+    indexing_provenance: IndexingProvenance | None = None
     embedding_status: str
     embedding_error: str | None
     embedded_at: datetime | None
@@ -157,8 +173,10 @@ class IndexingJobMetrics(BaseModel):
     phase: Literal["validating_model", "parsing", "chunking", "embedding", "storing", "completed", "failed"]
     progress_mode: Literal["determinate", "indeterminate"] = "determinate"
     parser_name: str | None = None
+    extraction_strategy: list[str] = Field(default_factory=list)
     parser_version: str | None = None
     parser_device: str | None = None
+    parser_mineru_tier: str | None = None
     parser_table_former_mode: Literal["fast", "accurate"] | None = None
     # Parser quality includes counts and parser metadata such as MinerU's
     # semantic version (for example, "4.1.7").

@@ -82,7 +82,15 @@ New indexing generations persist a validated Book Map V4 tree with parser
 evidence, structural intervals, one-owner source blocks, page coverage, table
 and image nodes, caption/continuation references, and chunk links. PDF outlines,
 visible printed contents, printed-page mappings, and global heading candidates
-are reconciled in `shreckdoc` with explicit uncertainty. Content ownership and
+are reconciled in `shreckdoc` with explicit uncertainty. When usable PDF bookmarks
+exist, their destinations and nesting alone define chapter and section nodes.
+Parser headings and printed entries can corroborate those nodes but cannot add
+structural descendants. Unmatched headings stay as owned text. Bookmark intervals
+end at the next bookmark of the same or higher level. A printed Contents region
+is a top-level V4 component, reusing an outline Contents entry when present.
+Outline-free sources continue to use printed entries and heading inference.
+Existing generations retain their stored map and embedding context until explicitly
+reindexed; restoring a retained V4 artifact does not rerun this resolver. Content ownership and
 resolved chunk context are produced before embedding. Table cells serialize as
 header/value text when reliable; unreadable tables retain their extracted text
 fallback. Images and placeholders remain navigable without image-pixel vectors.

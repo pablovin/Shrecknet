@@ -11,6 +11,8 @@ context-reduced chunks, plus retained image/table nodes and text-bearing source
 blocks. SQL and Qdrant child records carry recipe/map versions, resolved paths,
 source block references, content type, and context-reduction status.
 
+The active source item response includes optional `indexing_provenance`. After a generation is successfully activated, this object records its `strategy` inputs (`pdf_bookmarks`, `printed_toc`, `inferred_headings`, or `content_order`), `book_map_version`, parser name/version/device, MinerU tier and table settings, embedding backend/model/device, and embedding recipe (`embedding_version`). It describes evidence supplied to the resolver, not a claim that every candidate was accepted. The value is updated atomically with successful activation; queued or failed retries preserve the prior active generation’s provenance. Existing items return `null` until a successful reindex. The same `extraction_strategy` array is included in job metrics while indexing.
+
 The API startup still backfills missing or old V3 maps. For existing V4
 artifacts, run the dry-run restore command documented in the
 [reader API](SHRECKWORLD_READER_API.md#book-map); `--write` persists a validated

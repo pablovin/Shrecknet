@@ -54,12 +54,17 @@ def attach_content(document: NormalizedDocument, resolution: StructuralResolutio
     evidence_to_block = {evidence.evidence_id: evidence.original_reference
                          for evidence in resolution.evidence if evidence.source_kind == "heading"}
     structural_owner: dict[str, str] = {}
+    contents = next((node for node in resolution.nodes if node.node_type == "contents"), None)
+    if contents:
+        for evidence in resolution.evidence:
+            if evidence.source_kind == "toc_entry" and evidence.original_reference in blocks:
+                structural_owner[evidence.original_reference] = contents.node_id
     for node in resolution.nodes[1:]:
         for evidence_id in node.evidence_ids:
             block_id = evidence_to_block.get(evidence_id)
             if block_id in blocks:
                 structural_owner[block_id] = node.node_id
-    established = [node for node in resolution.nodes[1:] if node.resolution_status == "resolved"]
+    established = [node for node in resolution.nodes[1:] if node.resolution_status in {"resolved", "uncertain"}]
     owners: dict[str, str] = {}
     content_types: dict[str, str] = {}
     for block in sorted(document.blocks, key=lambda value: (min(value.page_numbers or [1]), value.reading_order,

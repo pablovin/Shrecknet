@@ -136,10 +136,19 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         resolution = resolve_structure(document_id=job.id, document=normalized,
             bookmarks=pdf_evidence.outline if pdf_evidence else (), toc_candidates=toc_rows,
             heading_result=heading_result)
+        strategy = []
+        if pdf_evidence and pdf_evidence.outline:
+            strategy.append("pdf_bookmarks")
+        if toc_rows:
+            strategy.append("printed_toc")
+        if heading_result.candidates:
+            strategy.append("inferred_headings")
+        metrics.extraction_strategy = strategy or ["content_order"]
         resolved_document = project_resolved_document(normalized, resolution)
         metrics.resolver_seconds = round(monotonic() - resolver_started, 3)
         metrics.resolver_conflicts = len(resolution.conflicts)
         metrics.parser_name, metrics.parser_version = parsed.parser_name, parsed.parser_version
+        metrics.parser_mineru_tier = settings.mineru_tier if parsed.parser_name == "mineru" else None
         metrics.parse_quality = parsed.quality
         metrics.parser_cache_hit = parsed.cache_hit
         metrics.parser_seconds = parsed.phase_seconds
@@ -269,6 +278,16 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         metrics.phase, metrics.progress_mode = "completed", "determinate"
         now = datetime.now(timezone.utc)
         item.embedding_status, item.embedded_at, item.index_status = "ready", now, "ready"
+        item.indexing_provenance = {
+            "strategy": metrics.extraction_strategy,
+            "book_map_version": metrics.book_map_version,
+            "parser_name": metrics.parser_name, "parser_version": metrics.parser_version,
+            "parser_device": metrics.parser_device, "parser_mineru_tier": metrics.parser_mineru_tier,
+            "parser_table_structure_enabled": metrics.parser_table_structure_enabled,
+            "parser_table_former_mode": metrics.parser_table_former_mode,
+            "embedding_backend": metrics.embedding_backend, "embedding_model": metrics.embedding_model,
+            "embedding_device": metrics.embedding_device, "embedding_version": embedding_version,
+        }
         job.status, job.progress, job.completed_at, job.updated_at = "completed", 100, now, now
         job.detail = f"Embedded {len(children)} semantic children with {len(parents)} parents"
         job.metrics_json = metrics.model_dump_json()

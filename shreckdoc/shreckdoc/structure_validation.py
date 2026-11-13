@@ -117,7 +117,7 @@ def validate_book_map(tree: BookMapLike) -> list[str]:
     if duplicate_blocks:
         errors.append(f"source blocks must have one owner: {', '.join(duplicate_blocks)}")
 
-    structural_types = {"document", "part", "chapter", "section", "appendix"}
+    structural_types = {"document", "part", "chapter", "section", "appendix", "contents"}
     evidence_ids = [evidence.id for evidence in tree.evidence]
     if len(evidence_ids) != len(set(evidence_ids)):
         errors.append("evidence IDs must be unique")

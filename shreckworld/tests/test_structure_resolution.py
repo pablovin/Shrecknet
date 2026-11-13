@@ -31,7 +31,7 @@ def _by_title(result):
     return {node.title: node for node in result.nodes}
 
 
-def test_chapter_bookmarks_enclose_heading_subsections_and_page_104_stays_in_chapter_two():
+def test_chapter_bookmarks_exclude_parser_subsections_and_page_104_stays_in_chapter_two():
     document = _document()
     headings = HeadingInferenceResult([
         _heading("b0", "Chapter One", 10, 0), _heading("b1", "Opening", 10, 1, 2),
@@ -42,8 +42,8 @@ def test_chapter_bookmarks_enclose_heading_subsections_and_page_104_stays_in_cha
     result = resolve_structure(document_id="doc", document=document, bookmarks=bookmarks, heading_result=headings)
     by_title = _by_title(result)
     assert by_title["Chapter One"].parent_id == result.nodes[0].node_id
-    assert by_title["Opening"].parent_id == by_title["Chapter One"].node_id
-    assert by_title["Interior heading"].parent_id == by_title["Chapter Two"].node_id
+    assert "Opening" not in by_title and "Interior heading" not in by_title
+    assert len(result.nodes) == 3
     assert by_title["Chapter One"].end_exclusive.physical_page == 100
 
 
@@ -118,3 +118,70 @@ def test_internal_bookmark_toc_and_heading_evidence_matrix_preserves_fallbacks()
     assert all(node.source_kind != "bookmark" for node in no_bookmarks.nodes[1:])
     assert any(node.source_kind == "toc" for node in no_bookmarks.nodes[1:])
     assert all(node.source_kind == "heading" for node in headings_only.nodes[1:])
+
+
+def test_bookmark_intervals_reassign_unmatched_headings_and_tables():
+    from shreckdoc.structure_content import attach_content, project_resolved_document
+    document = _document()
+    document.blocks[2].block_type = "table"
+    headings = HeadingInferenceResult([_heading("b1", "Opening", 10, 1, 2),
+                                       _heading("b4", "Interior heading", 104, 4, 2)], [], True)
+    result = resolve_structure(document_id="doc", document=document,
+        bookmarks=[_bookmark("one", "Chapter One", 10, 1, 0),
+                   _bookmark("two", "Chapter Two", 100, 1, 1)], heading_result=headings)
+    first, second = result.nodes[1:]
+    owners = attach_content(document, result).block_owner_ids
+    assert owners["b1"] == first.node_id
+    assert owners["b2"] == first.node_id
+    assert owners["b4"] == second.node_id
+    projected = project_resolved_document(document, result)
+    assert {block.block_id: block.section_id for block in projected.blocks} == owners
+    assert next(block for block in projected.blocks if block.block_id == "b4").block_type == "paragraph"
+
+
+def test_printed_contents_is_one_top_level_component():
+    document = _document()
+    toc = [TocCandidate("Chapter One", "1", 1, 1, "b0", 0,
+        evidence_id="toc-one", mapped_physical_page=10, mapping_status="mapped")]
+    result = resolve_structure(document_id="doc", document=document,
+        bookmarks=[_bookmark("one", "Chapter One", 10, 1, 0)], toc_candidates=toc)
+    contents = [node for node in result.nodes if node.node_type == "contents"]
+    assert len(contents) == 1
+    assert contents[0].parent_id == result.nodes[0].node_id
+    chapters = [node for node in result.nodes if node.node_type == "chapter"]
+    assert len(chapters) == 1
+    assert contents[0].end_exclusive == chapters[0].position
+    reused = resolve_structure(document_id="doc", document=document,
+        bookmarks=[_bookmark("contents", "Contents", 1, 1, 0),
+                   _bookmark("one", "Chapter One", 10, 1, 1)], toc_candidates=toc)
+    assert len([node for node in reused.nodes if node.node_type == "contents"]) == 1
+
+
+def test_v4_contents_and_bookmark_tree_publish_without_duplicate_chapters():
+    from app.services.book_map_v4 import build_book_map_v4
+    document = _document()
+    toc = [TocCandidate("Chapter One", "1", 10, 0, "b0", 0,
+        evidence_id="toc-first", mapped_physical_page=10, mapping_status="mapped")]
+    resolution = resolve_structure(document_id="doc", document=document,
+        bookmarks=[_bookmark("contents", "Contents", 10, 1, 0, y=0),
+                   _bookmark("one", "Chapter One", 10, 1, 1, y=10),
+                   _bookmark("two", "Chapter Two", 100, 1, 2, y=10)], toc_candidates=toc)
+    book_map = build_book_map_v4(document_id="doc", source_sha256="0" * 64,
+                                 document=document, resolution=resolution)
+    assert len([node for node in book_map.nodes if node.node_type == "contents"]) == 1
+    assert len([node for node in book_map.nodes if node.node_type == "chapter"]) == 2
+
+
+def test_unparsed_page_uses_enclosing_bookmark_parent():
+    from app.services.book_map_v4 import build_book_map_v4
+    document = _document()
+    document.pages.append(NormalizedPage("p60", 60, "60"))
+    resolution = resolve_structure(document_id="doc", document=document,
+        bookmarks=[_bookmark("one", "Chapter One", 10, 1, 0),
+                   _bookmark("two", "Chapter Two", 100, 1, 1)])
+    book_map = build_book_map_v4(document_id="doc", source_sha256="0" * 64,
+                                 document=document, resolution=resolution)
+    region = next(node for node in book_map.nodes if node.node_type == "unparsed_region"
+                  and node.position.physical_page == 60)
+    chapter = next(node for node in book_map.nodes if node.id == region.parent_id)
+    assert chapter.title == "Chapter One"

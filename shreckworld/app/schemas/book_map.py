@@ -6,13 +6,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-StructuralNodeType = Literal["document", "part", "chapter", "section", "appendix"]
+StructuralNodeType = Literal["document", "part", "chapter", "section", "appendix", "contents"]
 ContentNodeType = Literal[
     "paragraph", "list", "list_item", "table", "image", "caption",
     "equation", "unknown", "unparsed_region",
 ]
 BookMapNodeType = Literal[
-    "document", "part", "chapter", "section", "appendix", "paragraph",
+    "document", "part", "chapter", "section", "appendix", "contents", "paragraph",
     "list", "list_item", "table", "image", "caption", "equation",
     "unknown", "unparsed_region",
 ]

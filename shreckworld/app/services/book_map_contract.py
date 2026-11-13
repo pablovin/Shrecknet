@@ -42,7 +42,7 @@ def project_v4_to_v3(tree: BookMapV4) -> dict[str, object]:
     node_sections: list[dict[str, object]] = []
     all_block_ids = {block_id for node in tree.nodes for block_id in node.source_block_ids}
     aggregates: dict[str, tuple[list[str], list[str], list[str]]] = {}
-    structural_types = {"document", "part", "chapter", "section", "appendix"}
+    structural_types = {"document", "part", "chapter", "section", "appendix", "contents"}
     for node_id in reversed(descendants(tree, tree.root_id, include_self=True)):
         node = by_id[node_id]
         blocks = list(node.source_block_ids)
@@ -79,7 +79,7 @@ def project_v4_to_v3(tree: BookMapV4) -> dict[str, object]:
         end_locator = next((locator for locator in reversed(node.page_locators) if locator.physical_page == end), None)
         node_sections.append({
             "id": node.id,
-            "title": node.title or ("Untitled section" if node.node_type in {"part", "chapter", "section", "appendix"} else node.node_type.title()),
+            "title": node.title or ("Untitled section" if node.node_type in {"part", "chapter", "section", "appendix", "contents"} else node.node_type.title()),
             "node_type": "chapter" if node.node_type in {"part", "chapter", "appendix"} else node.node_type,
             "confidence": legacy_confidence,
             "mapping_status": legacy_status,

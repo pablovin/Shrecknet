@@ -16,7 +16,7 @@ from .structure_types import SourcePosition, StructuralEvidence, EvidenceDiagnos
 from .structure_validation import stable_node_id
 
 
-RESOLVER_VERSION = "book-map-v4-resolver-1"
+RESOLVER_VERSION = "book-map-v4-resolver-2"
 BOOKMARK_PRIORITY = 3
 TOC_PRIORITY = 2
 HEADING_PRIORITY = 1
@@ -107,6 +107,18 @@ def _to_inputs(*, document: NormalizedDocument, bookmarks: Iterable[object],
             box = next((value for value in chosen.bounding_boxes if value), {})
             return SourcePosition(page, chosen.reading_order,
                                   box.get("left"), y if y is not None else box.get("top")), True
+        if y is not None:
+            on_page = [block for block in document.blocks if page in block.page_numbers
+                       and any(box.get("top") is not None for box in block.bounding_boxes)]
+            if on_page:
+                after = [block for block in on_page if float(next(
+                    box["top"] for box in block.bounding_boxes if box.get("top") is not None)) >= y]
+                if after:
+                    nearest = min(after, key=lambda block: (
+                        float(next(box["top"] for box in block.bounding_boxes if box.get("top") is not None)),
+                        block.reading_order))
+                    return SourcePosition(page, nearest.reading_order, None, y), False
+                return SourcePosition(page, max(block.reading_order for block in on_page) + 1, None, y), False
         return SourcePosition(page, fallback_order, None, y), False
 
     def add(candidate: _Input, observed: list[str]) -> None:
@@ -216,11 +228,31 @@ def resolve_structure(*, document_id: str, document: NormalizedDocument,
                       heading_result: HeadingInferenceResult | None = None,
                       ignore_bookmarks: bool = False, ignore_toc: bool = False) -> StructuralResolution:
     """Reconcile evidence tiers, establish intervals, and assign structural parents."""
+    toc_candidates = list(toc_candidates)
     inputs, evidence, diagnostics = _to_inputs(
         document=document, bookmarks=bookmarks, toc_candidates=toc_candidates,
         heading_result=heading_result, ignore_bookmarks=ignore_bookmarks, ignore_toc=ignore_toc,
     )
-    merged, evidence_groups, conflicts = _merge(inputs)
+    bookmark_inputs = [row for row in inputs if row.source_kind == "bookmark" and "non_local_destination" not in row.diagnostics]
+    # A shallow but usable outline controls every structural level. Lower tier
+    # evidence can corroborate its nodes, but never creates another section.
+    bookmark_mode = bool(bookmark_inputs)
+    bookmark_inputs.sort(key=lambda row: (_position_key(row.position), row.evidence_id))
+    if bookmark_mode:
+        groups = {row.evidence_id: [row.evidence_id] for row in bookmark_inputs}
+        for row in inputs:
+            if row.source_kind == "bookmark":
+                continue
+            match = next((bookmark for bookmark in bookmark_inputs if _same_location(bookmark, row)), None)
+            if match:
+                groups[match.evidence_id].append(row.evidence_id)
+        merged, evidence_groups, conflicts = bookmark_inputs, groups, []
+        diagnostics.append("bookmark_authoritative")
+    else:
+        merged, evidence_groups, conflicts = _merge(inputs)
+        if bookmark_inputs:
+            diagnostics.append("invalid_outline_order_fallback")
+            merged, evidence_groups, conflicts = _merge([row for row in inputs if row.source_kind != "bookmark"])
     root_id = stable_node_id(document_id, "document", "root")
     pages = max([*(page.physical_page_number for page in document.pages),
                  *(candidate.position.physical_page for candidate in merged)], default=0)
@@ -241,9 +273,9 @@ def resolve_structure(*, document_id: str, document: NormalizedDocument,
                 conflicts.append(f"equal_support_title_conflict:{left.position.physical_page}:{left.position.reading_order}")
     for candidate in ordered:
         title = candidate.title.strip()
-        node_type = _node_type(title, candidate.level)
+        node_type = "contents" if candidate.source_kind == "bookmark" and title.casefold() in {"contents", "table of contents"} else _node_type(title, candidate.level)
         level = max(1, candidate.level)
-        if node_type in {"chapter", "part", "appendix"}:
+        if node_type in {"chapter", "part", "appendix", "contents"}:
             level = 1
             stack = [root]
         while len(stack) > 1 and stack[-1].level >= level:
@@ -268,6 +300,19 @@ def resolve_structure(*, document_id: str, document: NormalizedDocument,
         output.append(node)
         stack.append(node)
 
+    # Printed contents are a document component even when the outline omits it.
+    toc_rows = list(toc_candidates) if not ignore_toc else []
+    if toc_rows and not any(node.node_type == "contents" for node in output):
+        first_page = min(row.physical_page for row in toc_rows)
+        first_order = min(row.reading_order for row in toc_rows if row.physical_page == first_page)
+        toc_node = StructuralCandidate(
+            stable_node_id(document_id, "contents", f"page:{first_page}"), "Contents", "contents", 1,
+            SourcePosition(first_page, first_order), "inferred", [], 0.8, "resolved",
+            root.node_id, duplicate_key=f"contents:{first_page}",
+        )
+        output.append(toc_node)
+        root.child_ids.append(toc_node.node_id)
+    output = [root, *sorted(output[1:], key=lambda node: (_position_key(node.position), node.node_id))]
     output_by_id = {node.node_id: node for node in output}
     for parent in output:
         parent.child_ids.sort(key=lambda node_id: _position_key(output_by_id[node_id].position))
@@ -276,7 +321,7 @@ def resolve_structure(*, document_id: str, document: NormalizedDocument,
         boundary = next((following.position for following in structural[index + 1:]
                          if following.level <= node.level), SourcePosition(max(1, pages + 1), 0))
         node.end_exclusive = boundary
-    sufficient = bool(structural) and not diagnostics and not conflicts
+    sufficient = bool(structural) and not conflicts and not any(value.startswith("invalid_outline_order") for value in diagnostics)
     if not structural:
         diagnostics.append("no_structural_candidates_root_only")
     return StructuralResolution(document_id, output, evidence, diagnostics, conflicts, sufficient)

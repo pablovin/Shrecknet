@@ -17,7 +17,7 @@ from app.schemas.book_map import (
 )
 
 
-RESOLVER_VERSION = "book-map-v4-resolver-1"
+RESOLVER_VERSION = "book-map-v4-resolver-2"
 CHUNKING_VERSION = "book-map-v4-context-1"
 
 
@@ -186,18 +186,32 @@ def build_book_map_v4(*, document_id: str, source_sha256: str, document: Normali
 
     for page_no in ownership.unparsed_pages:
         page = pages[page_no]
+        page_start = (page_no, 0)
+        enclosing = [item for item in resolution.nodes[1:]
+                     if (item.position.physical_page, item.position.reading_order) <= page_start
+                     and (item.end_exclusive is None or page_start <
+                          (item.end_exclusive.physical_page, item.end_exclusive.reading_order))]
+        parent = max(enclosing, key=lambda item: item.level, default=root)
         node_id = stable_node_id(document_id, "unparsed_region", f"page-{page_no}")
         nodes[node_id] = BookMapNode(
             id=node_id, document_id=document_id, node_type="unparsed_region", title="Unparsed page",
-            position={"physical_page": page_no, "reading_order": 0}, level=1, parent_id=root.node_id,
-            child_ids=[], heading_path=[], structural_node_id=root.node_id,
+            position={"physical_page": page_no, "reading_order": 0}, level=parent.level + 1,
+            parent_id=parent.node_id, child_ids=[], heading_path=heading_path(parent.node_id),
+            structural_node_id=parent.node_id,
             page_locators=[BookMapPageLocator(physical_page=page_no, printed_label=page.displayed_page_label,
                                               reading_order=0)],
             pages=BookMapPageRange(start=page_no, end=page_no), source_block_ids=[],
             evidence_ids=[page_evidence[page_no]], resolution_status="unresolved",
             validation_warnings=["page_extraction_coverage_unknown"],
         )
-        nodes[root.node_id].child_ids.append(node_id)
+        nodes[parent.node_id].child_ids.append(node_id)
+        ancestor_id = parent.node_id
+        while ancestor_id:
+            ancestor = nodes[ancestor_id]
+            if ancestor.pages:
+                ancestor.pages.start = min(ancestor.pages.start, page_no)
+                ancestor.pages.end = max(ancestor.pages.end, page_no)
+            ancestor_id = ancestor.parent_id
 
     for block in document.blocks:
         node = content_node_by_block.get(block.block_id)

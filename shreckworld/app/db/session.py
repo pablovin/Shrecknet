@@ -70,7 +70,7 @@ def create_schema() -> None:
                 "original_filename": "VARCHAR(512)", "mime_type": "VARCHAR(128)",
                 "storage_path": "VARCHAR(512)", "file_size": "INTEGER",
                 "cover_path": "VARCHAR(512)", "index_status": "VARCHAR(32) DEFAULT 'unindexed'",
-                "index_error": "TEXT",
+                "index_error": "TEXT", "indexing_provenance": "JSON",
             }
             for name, definition in additions.items():
                 if name not in columns:

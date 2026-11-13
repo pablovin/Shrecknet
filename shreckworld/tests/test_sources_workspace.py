@@ -155,3 +155,19 @@ def test_html_upload_keeps_narrative_type_and_template(db: Session, tmp_path: Pa
     assert result.hierarchy_template_version == 1
     assert result.authored is False
     assert Path(result.storage_path).read_bytes().startswith(b"<h1>Chapter</h1>")
+
+
+def test_untrusted_html_source_download_is_attachment(tmp_path: Path):
+    from fastapi import Request
+    from app.api.private_files import private_file_response
+
+    original = tmp_path / "source.html"
+    original.write_text("<script>alert('unsafe')</script>", encoding="utf-8")
+    request = Request({"type": "http", "method": "HEAD", "headers": []})
+    response = private_file_response(
+        original, request=request, media_type="text/html",
+        filename="source.html", revision="f" * 64,
+    )
+    assert response.headers["content-disposition"].startswith("attachment;")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "sandbox" in response.headers["content-security-policy"]

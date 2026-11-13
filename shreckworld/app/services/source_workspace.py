@@ -7,7 +7,8 @@ from app.core.config import get_settings
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -88,8 +89,12 @@ def save_hierarchy(db: Session, payload: HierarchyInput, hierarchy_id: str | Non
         description=payload.description, section_types=payload.section_types,
         archived=payload.archived, image_path=image_path,
     )
-    db.add(record)
-    db.commit()
+    try:
+        db.add(record)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        _fail(409, "Hierarchy template was updated concurrently; reload and retry")
     return hierarchy_read(record)
 
 
@@ -309,6 +314,10 @@ def save_hierarchy_image(
         )
         db.add(record)
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        target.unlink(missing_ok=True)
+        _fail(409, "Hierarchy template changed while uploading; reload and retry")
     except Exception:
         db.rollback()
         target.unlink(missing_ok=True)

@@ -293,6 +293,22 @@ def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: Organi
     if payload.expected_revision != item.source_revision:
         _fail(409, "Source changed; reload and reconcile your edits")
     from app.services.source_assets import validate_asset_references, update_markdown_assets
+    # Older editors may omit the new asset metadata when saving a section.
+    # Preserve existing references so those writes cannot silently detach
+    # imported Markdown and image assets.
+    previous = {node.id: node for node in get_organization(db, item).nodes}
+    for node in payload.nodes:
+        old = previous.get(node.id)
+        if old is None:
+            continue
+        if node.metadata.markdown_asset_id is None:
+            node.metadata.markdown_asset_id = old.metadata.markdown_asset_id
+        if node.metadata.image_asset_id is None:
+            node.metadata.image_asset_id = old.metadata.image_asset_id
+        if node.metadata.legacy_image_url is None:
+            node.metadata.legacy_image_url = old.metadata.legacy_image_url
+        if not node.metadata.description and old.metadata.description:
+            node.metadata.description = old.metadata.description
     validate_asset_references(db, item.id, payload.nodes)
     root_ids = [node.id for node in payload.nodes if node.parent_id is None]
     if root_ids != [f"source-{item.id}"]:

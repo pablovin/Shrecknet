@@ -2777,6 +2777,12 @@ class OntologyInstanceService:
             derived_from={
                 **_read_scene_provenance(props.get("source_provenance_json")),
                 "entity_instance_id": derived_from_entity_id,
+                "source_id": props.get("source_id")
+                    or _read_scene_provenance(props.get("source_provenance_json")).get("source_id"),
+                "section_id": props.get("source_section_id")
+                    or _read_scene_provenance(props.get("source_provenance_json")).get("section_id"),
+                "markdown_asset_id": props.get("source_markdown_asset_id")
+                    or _read_scene_provenance(props.get("source_provenance_json")).get("markdown_asset_id"),
             },
             relates_to=scene_relates,
             created_at=_parse_dt(props.get("created_at")),
@@ -3226,6 +3232,9 @@ class OntologyInstanceService:
                     observation_group_id: $observation_group_id,
                     independence_status: $independence_status,
                     source_provenance_json: $source_provenance_json,
+                    source_id: $source_id,
+                    source_section_id: $source_section_id,
+                    source_markdown_asset_id: $source_markdown_asset_id,
                     created_by_type: $created_by_type,
                     created_by_author: $created_by_author,
                     created_at: $created_at,
@@ -3243,6 +3252,9 @@ class OntologyInstanceService:
                     payload.derived_from.model_dump(mode="json", exclude_none=True),
                     ensure_ascii=False,
                 ),
+                source_id=payload.derived_from.source_id,
+                source_section_id=payload.derived_from.section_id,
+                source_markdown_asset_id=payload.derived_from.markdown_asset_id,
                 created_by_type=payload.created_by_type,
                 created_by_author=payload.created_by_author,
                 created_at=now_str,
@@ -3434,6 +3446,9 @@ class OntologyInstanceService:
                 payload.derived_from.model_dump(mode="json", exclude_none=True),
                 ensure_ascii=False,
             )
+            updates["source_id"] = payload.derived_from.source_id
+            updates["source_section_id"] = payload.derived_from.section_id
+            updates["source_markdown_asset_id"] = payload.derived_from.markdown_asset_id
         if payload.relates_to is not None:
             await self._validate_scene_relates_to_entities(
                 instance_id=instance_id,

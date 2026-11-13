@@ -22,6 +22,8 @@ def test_runtime_projection_contains_parser_and_embedding_settings_and_replaces_
     publish_runtime_config(path, ShreckWorldRuntimeConfig(embedding_backend="openvino", pdf_parser="pymupdf"))
     assert read_runtime_config(path).embedding_backend == "openvino"
     assert read_runtime_config(path).pdf_parser == "pymupdf"
+    publish_runtime_config(path, ShreckWorldRuntimeConfig(pdf_parser="mineru"))
+    assert read_runtime_config(path).pdf_parser == "mineru"
     assert len(list(path.parent.iterdir())) == 1
 
 

@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     parser_table_batch_size: int = Field(default=4, ge=1, le=64)
     parser_table_structure_enabled: bool = True
     parser_table_former_mode: TableFormerMode = "fast"
+    mineru_api_url: str = "http://mineru:8000"
+    mineru_api_key: str = ""
+    mineru_tier: str = "standard"
+    mineru_version: str = "4.1.7"
+    mineru_timeout_seconds: int = Field(default=1800, ge=60, le=7200)
+    mineru_poll_interval_seconds: float = Field(default=2.0, ge=0.25, le=30)
     reranker_model_id: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     reranker_enabled: bool = True
     qdrant_url: str = "http://qdrant:6333"

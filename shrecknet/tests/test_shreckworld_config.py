@@ -32,7 +32,7 @@ def test_schema_exposes_editable_restart_required_shreckworld_tab():
     meta = schema["field_meta"]["shreckworld_embedding_backend"]
     assert meta["options"] == ["onnx", "torch", "openvino"]
     assert meta["frontend_editable"] is True and meta["change_impact"] == "service_restart"
-    assert schema["field_meta"]["shreckworld_pdf_parser"]["options"] == ["docling", "pymupdf"]
+    assert schema["field_meta"]["shreckworld_pdf_parser"]["options"] == ["docling", "pymupdf", "mineru"]
     assert schema["field_meta"]["shreckworld_parser_device"]["options"] == ["auto", "cpu", "cuda"]
     assert schema["field_meta"]["shreckworld_parser_table_former_mode"]["options"] == ["fast", "accurate"]
     assert not set(expected_fields) & set(schema["ungrouped_fields"])
@@ -76,6 +76,14 @@ async def test_parser_and_embedding_settings_persist_as_one_runtime_projection(i
         "parser_table_former_mode": "accurate",
     }
     assert config.reload_settings().shreckworld_parser_table_former_mode == "accurate"
+
+
+@pytest.mark.asyncio
+async def test_mineru_parser_selection_persists_and_publishes(isolated_config):
+    response = await configurations.put_config({"shreckworld_pdf_parser": "mineru"})
+    assert response["shreckworld_pdf_parser"] == "mineru"
+    assert json.loads(isolated_config.read_text())["pdf_parser"] == "mineru"
+    assert config.reload_settings().shreckworld_pdf_parser == "mineru"
 
 
 @pytest.mark.parametrize("value", ["hash", "cuda", "", None, 42])

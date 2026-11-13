@@ -43,6 +43,7 @@ x-shreckworld-env: &shreckworld-env
   SHRECKWORLD_EMBEDDING_BATCH_SIZE: ${SHRECKWORLD_EMBEDDING_BATCH_SIZE:-16}
   SHRECKWORLD_EMBEDDING_THREADS: ${SHRECKWORLD_EMBEDDING_THREADS:-4}
   SHRECKWORLD_PDF_PARSER: ${SHRECKWORLD_PDF_PARSER:-}
+  SHRECKWORLD_MINERU_VERSION: ${MINERU_VERSION:-4.1.7}
   SHRECKWORLD_PARSER_THREADS: ${SHRECKWORLD_PARSER_THREADS:-4}
   SHRECKWORLD_PARSER_LAYOUT_BATCH_SIZE: ${SHRECKWORLD_PARSER_LAYOUT_BATCH_SIZE:-4}
   SHRECKWORLD_PARSER_TABLE_BATCH_SIZE: ${SHRECKWORLD_PARSER_TABLE_BATCH_SIZE:-4}
@@ -548,6 +549,40 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
     # Deliberately no host port: ShreckWorld is the only retrieval owner.
+
+  mineru:
+    profiles: ["mineru"]
+    build:
+      context: ./shreckworld
+      dockerfile: mineru.Dockerfile
+      args:
+        MINERU_VERSION: ${MINERU_VERSION:-4.1.7}
+        MINERU_MODEL_SOURCE: ${MINERU_MODEL_SOURCE:-huggingface}
+    image: shreckworld-mineru:installation
+    restart: unless-stopped
+    init: true
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    entrypoint: ["mineru-kit"]
+    command: ["api-server", "--host", "0.0.0.0", "--port", "8000", "--tier", "standard"]
+    environment:
+      MINERU_MODEL_SOURCE: local
+      MINERU_TELEMETRY_DISABLED: "1"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/v1/health >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
 
   shreckworld_model_prefetch:
     build:

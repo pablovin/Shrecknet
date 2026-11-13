@@ -93,10 +93,11 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         world = session.get(ShreckWorld, item.shreckworld_id) if item.shreckworld_id else None
         parser = settings.pdf_parser if path.suffix.lower() == ".pdf" else ("plain text" if path.suffix.lower() == ".txt" else "docling")
         metrics.parser_name = parser.replace(" ", "_")
-        metrics.parser_device = settings.parser_device if parser != "pymupdf" else None
-        metrics.parser_table_former_mode = settings.parser_table_former_mode if parser != "pymupdf" else None
-        metrics.parser_table_structure_enabled = settings.parser_table_structure_enabled if parser != "pymupdf" else None
-        phase("parsing", 5, f"Parsing structure with {parser}; OCR disabled", indeterminate=True)
+        metrics.parser_device = settings.parser_device if parser == "docling" else None
+        metrics.parser_table_former_mode = settings.parser_table_former_mode if parser == "docling" else None
+        metrics.parser_table_structure_enabled = (settings.parser_table_structure_enabled if parser == "docling" or not settings.parser_table_structure_enabled else None)
+        parse_detail = f"Parsing structure with MinerU ({settings.mineru_tier})" if parser == "mineru" else f"Parsing structure with {parser}; OCR disabled"
+        phase("parsing", 5, parse_detail, indeterminate=True)
 
         def parsing_heartbeat(total: int | None) -> None:
             metrics.total_pages = total
@@ -107,7 +108,8 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
             metrics.total_pages = total
             metrics.progress_mode = "determinate"
             job.progress = max(job.progress, 5 + int(metrics.processed_pages / total * 29))
-            job.detail = f"Processed {metrics.processed_pages}/{total} PDF pages; completing structured parsing; OCR disabled"
+            ocr_note = "; OCR disabled" if settings.pdf_parser != "mineru" else "; MinerU OCR may be used"
+            job.detail = f"Processed {metrics.processed_pages}/{total} PDF pages; completing structured parsing{ocr_note}"
             checkpoint(force=True)
 
         parsed = parse_source(path, ingestion_id=job.id, output_dir=output_dir, heartbeat=parsing_heartbeat,
@@ -124,7 +126,8 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         metrics.extracted_characters = sum(len(block.display_text) for block in normalized.blocks)
         metrics.sections, metrics.blocks = len(normalized.sections), len(normalized.blocks)
         if metrics.empty_pages:
-            metrics.warnings.append(f"{metrics.empty_pages} pages yielded no retrievable text; OCR is not performed.")
+            note = "OCR was attempted by MinerU where required." if parsed.parser_name == "mineru" else "OCR is not performed."
+            metrics.warnings.append(f"{metrics.empty_pages} pages yielded no retrievable text; {note}")
         scope_id, book_title, system_name = str(item.ontology_id) if item.ontology_id is not None else item.shreckworld_id, item.title, world.name if world and item.ontology_id is None else ""
         ingestion_id, source_item_id = job.id, item.id
         phase("chunking", 35, "Building structural parents and tokenizer-bounded E5 children", indeterminate=True)
@@ -141,7 +144,8 @@ def embed_library_item(session: Session, *, library_item_id: str, job_id: str) -
         parents = {chunk.chunk_id for chunk in chunks if chunk.chunk_role == "parent"}
         block_ids = {block.block_id for block in normalized.blocks}
         if not children:
-            raise ValueError("The document has no valid retrievable text; OCR is not performed")
+            detail = "MinerU returned no valid retrievable text" if parsed.parser_name == "mineru" else "The document has no valid retrievable text; OCR is not performed"
+            raise ValueError(detail)
         if len({chunk.chunk_id for chunk in chunks}) != len(chunks) or any(
             child.parent_chunk_id not in parents or not child.source_block_ids or
             not set(child.source_block_ids).issubset(block_ids) or not child.physical_page_numbers or

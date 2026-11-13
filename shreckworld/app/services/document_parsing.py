@@ -18,6 +18,7 @@ from shreckdoc.pipeline import (
 
 from app.core.config import get_settings
 from app.services.parser_cache import ParserPayload, cache_identity, read_cache, write_cache
+from app.services.mineru_parsing import parse_pdf as parse_mineru_pdf
 from app.services.pymupdf_parsing import parse_pdf
 
 T = TypeVar("T")
@@ -107,6 +108,29 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
         diagnostics = []
         parser_name, parser_version = "plain_text", "1"
         _atomic_json(output_dir / "source_document.json", {"pages": canonical["pages"], "items": items})
+    elif path.suffix.lower() == ".pdf" and settings.pdf_parser == "mineru":
+        parser_name, parser_version = "mineru", "remote"
+        if settings.parser_cache_enabled:
+            started = monotonic()
+            key = with_heartbeat(lambda: cache_identity(path, settings, parser_version, parser_name=parser_name),
+                                 lambda: heartbeat(native_count))
+            cache_path = path.parent / "parser-cache" / f"{key}.json"
+            cached = with_heartbeat(lambda: read_cache(cache_path, key), lambda: heartbeat(native_count))
+            timings["cache_lookup"] = monotonic() - started
+        if cached is not None:
+            canonical, items, diagnostics = cached.canonical, cached.items, cached.diagnostics
+            parser_version = str(cached.quality.get("mineru_version") or "unknown")
+        else:
+            started = monotonic()
+            canonical, items, parser_version = with_heartbeat(
+                lambda: parse_mineru_pdf(path, output_dir=output_dir, heartbeat=parser_heartbeat),
+                lambda: heartbeat(native_count),
+            )
+            diagnostics = []
+            timings["conversion"] = monotonic() - started
+        with_heartbeat(lambda: _atomic_json(output_dir / "mineru_document.json",
+                                           {"pages": canonical["pages"], "items": items}, indent=None),
+                       lambda: heartbeat(native_count))
     elif path.suffix.lower() == ".pdf" and settings.pdf_parser == "pymupdf":
         parser_name, parser_version = "pymupdf", version("PyMuPDF")
         if settings.parser_cache_enabled:
@@ -186,11 +210,15 @@ def parse_source(path: Path, *, ingestion_id: str, output_dir: Path,
         for block in document.blocks:
             if block.docling_reference in chunk_metadata:
                 block.metadata["pymupdf_chunk"] = chunk_metadata[block.docling_reference]
+    elif parser_name == "mineru":
+        quality["mineru_pages"] = quality.pop("docling_pages")
     if cached is not None:
         quality = cached.quality
     else:
         quality.update(parser_log_records=capture.records, table_cell_drop_reports=capture.drop_reports,
                        reported_dropped_table_cells=capture.dropped_cells, reported_table_cells=capture.reported_cells)
+        if parser_name == "mineru":
+            quality["mineru_version"] = parser_version
     with_heartbeat(lambda: _atomic_json(output_dir / "normalized_document.json", asdict(document), indent=None),
                    lambda: heartbeat(native_count))
     timings["normalization"] = monotonic() - started

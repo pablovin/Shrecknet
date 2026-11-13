@@ -223,3 +223,14 @@ def test_tuning_settings_reject_invalid_values(setting):
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         Settings(**{setting: 0})
+
+
+def test_mineru_cache_identity_tracks_service_version_tier_and_endpoint(tmp_path):
+    source = tmp_path / "book.pdf"
+    source.write_bytes(b"same source")
+    base = Settings(pdf_parser="mineru", mineru_api_url="http://mineru:8000", mineru_version="4.1.7", mineru_tier="standard")
+    key = cache_identity(source, base, "remote", parser_name="mineru")
+    assert cache_identity(source, base, "remote", parser_name="mineru") == key
+    assert cache_identity(source, Settings(**{**base.model_dump(), "mineru_version": "4.2.0"}), "remote", parser_name="mineru") != key
+    assert cache_identity(source, Settings(**{**base.model_dump(), "mineru_tier": "advanced"}), "remote", parser_name="mineru") != key
+    assert cache_identity(source, Settings(**{**base.model_dump(), "mineru_api_url": "http://mineru-new:8000"}), "remote", parser_name="mineru") != key

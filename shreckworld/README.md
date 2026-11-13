@@ -14,10 +14,15 @@ Deploy the service before the UI and preview/migrate existing items using the
 [reader contract](../Documentation/API/SHRECKWORLD_READER_API.md#legacy-item-migration).
 
 Sources support PDF, DOCX, Markdown, and text. Compose enables experimental
-PyMuPDF layout-aware PDF chunking; standalone defaults to Docling.
-`SHRECKWORLD_PDF_PARSER=docling` restores Docling for comparison. Contextual,
-tokenizer-bounded E5 children retain separate display text and semantic parents.
-OCR is disabled and extraction quality varies by document.
+PyMuPDF layout-aware PDF chunking; standalone defaults to Docling. The
+administrator can also select MinerU, an optional NVIDIA GPU inference service
+that provides detected title levels for the existing deterministic Book Map
+builder. Start it with `docker compose --profile mineru up -d --build mineru`
+before selecting MinerU and restarting ShreckWorld. Docling remains available
+for comparison. Contextual, tokenizer-bounded E5 children retain separate
+display text and semantic parents. OCR is disabled for Docling/PyMuPDF; MinerU
+may OCR image-only pages. Extraction quality varies by document, and no parser
+is guaranteed to produce a better map.
 Hash embeddings are no longer a fallback. Existing hash indexes require
 reindexing before semantic retrieval; original source reading remains available.
 

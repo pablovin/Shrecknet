@@ -39,19 +39,22 @@ roles `403`. Job status is separate from the last successful active generation.
 The worker uses shared normalization and structural parent/child algorithms from
 `shreckdoc`, without Librarian's Neo4j persistence. PDF parsing is selectable:
 Compose defaults to experimental PyMuPDF `to_chunks()`; standalone defaults to
-Docling. DOCX/Markdown use Docling, and plain text uses paragraph blocks.
-Parsers attempt to preserve headings, tables, lists, reading order, and available
+Docling. PDF parsing can also use the optional MinerU inference service. DOCX/
+Markdown continue to use Docling, and plain text uses paragraph blocks. Parsers
+attempt to preserve headings, tables, lists, reading order, and available
 provenance; extraction is heuristic and cannot guarantee complete recognition.
 Docling PDF table structure uses the configured TableFormer mode (`fast` by default),
-heading inference is enabled where supported, and OCR is disabled. DOCX/Markdown/
-text have logical page 1; no PDF coordinates are invented for them.
+heading inference is enabled where supported, and OCR is disabled on the
+Docling/PyMuPDF paths. MinerU uses its local inference service and may OCR
+image-only pages according to the selected tier. DOCX/Markdown/text have logical
+page 1; no PDF coordinates are invented for them.
 
 Parents retain complete display evidence; children are embedded with contextual
 `passage:` text and the real E5 tokenizer. Every extracted text block is indexed,
 including page headers/footers, prose, tables, and captions; headings provide
 structural context through the resolved heading path. Tables preserve their own
 retrieval units and image pixels are excluded. OCR and image identification are
-not performed. Structural boundaries, table headers, and tokenizer windows
+not performed by Docling/PyMuPDF. Structural boundaries, table headers, and tokenizer windows
 prevent implicit model truncation. Every inference batch checks count, finite
 values, dimension, and normalization. Source SHA-256 and PDF page counts are
 verified. No LLM gateway/provider or web call performs indexing.
@@ -133,7 +136,7 @@ with illustrative counts/timings (not a benchmark):
 
 `metrics.phase` follows `validating_model` → `parsing` → `chunking` → `embedding`
 → `storing` → `completed`, or `failed` from any stage. `progress_mode` is
-`indeterminate` while opaque model/chunk construction runs and before Docling's
+`indeterminate` while opaque model/chunk construction runs and before a parser's
 first page event, then `determinate` during page processing, batch encoding,
 storage, and completion. With Docling versions exposing
 `convert(progress_callback=...)`, `processed_pages` counts unique successfully
@@ -143,21 +146,22 @@ failed pages do not count as successfully processed. `total_pages` is known from
 the native PDF where available. Polling frontends can render the existing
 `metrics.processed_pages / metrics.total_pages` fields without an API/model change.
 
-Page events are marshalled from the parser thread to the owning job thread and
+Docling page events are marshalled from the parser thread to the owning job thread and
 committed at the next `parser_heartbeat_seconds` interval (default five seconds),
 with a final flush when conversion returns or fails. Parsing progress moves from
 5% through at most 34%; chunk construction starts at 35%. Finishing all pages
 does not finish parsing: document assembly, canonical export, normalization, and
 cache publication may remain. Older Docling versions without the public callback
 retain indeterminate parsing and report page counts after normalization. PyMuPDF
-does not report per-page progress: parsing remains indeterminate until it finishes. A
-heartbeat continues during canonical exports. Child counts become known after
-chunk construction. OCR remains disabled. Docling uses CPU PDF rendering,
+and MinerU do not report per-page progress through this adapter: parsing remains
+indeterminate until conversion finishes. A heartbeat continues during remote
+task polling and canonical exports. Child counts become known after chunk
+construction. Docling uses CPU PDF rendering,
 layout detection, and fast table reconstruction when enabled.
 
 `text_pages` counts pages with retrievable text, excluding headers/footers and
 heading-only pages; `empty_pages` is the remaining page count. `parse_quality`
-reports observed native/parser page counts (`docling_pages` or `pymupdf_pages`), pages without structured blocks,
+reports observed native/parser page counts (`docling_pages`, `pymupdf_pages`, or `mineru_pages`), pages without structured blocks,
 detected/empty tables and lists, pictures, and explicit diagnostic count, without
 guessing unrecognized structures. `sections`, `blocks`, and `parent_chunks` count
 normalized/stored structures. `processed_chunks`/`total_chunks` count embedded
@@ -185,8 +189,8 @@ or a guarantee of worker liveness.
 
 ## Readiness and configuration
 
-`GET /ready` returns `status=ready`, `parser=docling`,
-`pdf_parser` (`docling` or `pymupdf`), configured `parser_device`, table-structure
+`GET /ready` returns `status=ready`, the selected `parser`,
+`pdf_parser` (`docling`, `pymupdf`, or `mineru`), configured `parser_device`, table-structure
 toggle and TableFormer mode, `parser_artifacts_present=true`, and `embedding` containing `ready`, `backend`,
 `model`, actual `fingerprint`, resolved snapshot `revision`, `dimension`, and
 `device`. A local model directory uses its directory name as revision label and
@@ -195,8 +199,10 @@ finite unit vectors and a relevant-query/passage probe, not merely a successful
 import. The default E5 snapshot is pinned; API and worker must share the same
 actual weight/tokenizer fingerprint. Runtime inference errors invalidate cached
 readiness until a new probe passes. A missing encoder/artifact directory yields
-`503`. PyMuPDF selection also requires the installed `to_chunks` API.
-Docling artifacts remain required for DOCX/Markdown and rollback. `GET /health`
+`503`. PyMuPDF selection also requires the installed `to_chunks` API. MinerU
+selection additionally checks the configured service's `/v1/tiers`; an
+unavailable service returns `503` and prevents the worker from starting. Docling
+artifacts remain required for DOCX/Markdown and rollback. `GET /health`
 remains liveness only; Compose uses `/ready` for health.
 
 | `SHRECKWORLD_` setting | Default / operation |
@@ -213,9 +219,15 @@ remains liveness only; Compose uses `/ready` for health.
 | `EMBEDDING_THREADS` | `4`, range 1–32 |
 | `DOCLING_ARTIFACTS_PATH` | `./models/docling`; Compose `/hf-cache/docling` |
 | `PDF_PARSER` | `docling`; configurable in Shrecknet admin. A non-empty environment value overrides it. `pymupdf` requires Python 3.11+ and PyMuPDF 2.1 |
+| `MINERU_API_URL` | `http://mineru:8000`; internal MinerU V1 API base URL, used only when `PDF_PARSER=mineru` |
+| `MINERU_API_KEY` | Empty; optional Bearer key for a separately protected MinerU service |
+| `MINERU_TIER` | `standard`; MinerU PDF inference tier |
+| `MINERU_VERSION` | `4.1.7`; expected service version included in parser-cache identity |
+| `MINERU_TIMEOUT_SECONDS` | `1800`, range 60–7200; deadline for remote MinerU parsing and result download |
+| `MINERU_POLL_INTERVAL_SECONDS` | `2`, range 0.25–30; interval between task status requests |
 | `PARSER_DEVICE` | `auto`; independently configured from `EMBEDDING_DEVICE`. `auto` selects CUDA when available in the container and CPU otherwise. Shrecknet admin also offers explicit `cpu` and `cuda`; explicit CUDA requires a GPU-enabled image |
 | `PARSER_HEARTBEAT_SECONDS` | `5`, range 0.1–60 |
-| `PARSER_TABLE_STRUCTURE_ENABLED` | `true` enables Docling table reconstruction; `false` skips reconstruction while retaining layout analysis and keeping OCR disabled. Configurable in Shrecknet admin |
+| `PARSER_TABLE_STRUCTURE_ENABLED` | `true` enables Docling table reconstruction; `false` skips reconstruction while retaining layout analysis. Configurable in Shrecknet admin; does not configure MinerU's table processing |
 | `PARSER_TABLE_FORMER_MODE` | `fast` by default; `accurate` requests the more expensive TableFormer mode. Configurable in Shrecknet admin |
 | `RERANKER_MODEL_ID` | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `RERANKER_ENABLED` | `true`; failed optional reranking retains RRF order and trace warning |
@@ -226,6 +238,16 @@ cache read-only and disable runtime downloads. Both images require Docling and
 Sentence Transformers; the old `[semantic]` extra remains accepted but is no
 longer needed. The worker wrapper preflights E5 and parser artifacts before
 starting a single-task threaded Celery worker, avoiding PyTorch prefork issues.
+The separate `mineru` service is opt-in through Compose profile `mineru`; it is
+an NVIDIA GPU service and is not started by the default stack. Build/start it
+with `docker compose --profile mineru up -d --build mineru` before selecting
+MinerU in administration. Its pinned MinerU 4.1.7 image downloads the Standard
+model bundle during the first build; configure `MINERU_MODEL_SOURCE=modelScope`
+when the host should use ModelScope instead of Hugging Face. No MinerU port is
+published on the host; ShreckWorld calls it over the private Compose network.
+When MinerU is selected, its API must be healthy before ShreckWorld API/worker
+are restarted. ShreckWorld readiness checks MinerU's tier endpoint and reports
+`503` while it is unavailable.
 The GPU Compose overlay builds CUDA-enabled PyTorch and exposes the GPU; the
 selected devices come from the Shrecknet runtime settings. The repository's
 `scripts/compose_up.py` probes Docker GPU access and selects the GPU overlay or
@@ -254,10 +276,25 @@ queries, citations and source regions as well as `parser_name`, `parser_version`
 `parser_seconds`, `phase_seconds`, chunk counts, warnings and `parser_cache_hit`
 in the job responses or `[SHRECKWORLD_INDEXING_SUMMARY]` logs. Use cache misses
 for comparable cold parsing times. The parser cache is isolated by parser and
-version. Both paths use the same encoder and hard tokenizer/provenance validation;
+version. All paths use the same encoder and hard tokenizer/provenance validation;
 PyMuPDF layout chunks serve as child units and may be split further. Figure IDs
 and bounding boxes are retained, but image-only content is not OCRed or embedded
-as images. Tables, layout, and hierarchy can differ or be missed.
+as images on Docling/PyMuPDF. MinerU can OCR image-only pages and retains
+detected heading levels, but its output is still heuristic. Tables, layout, and
+hierarchy can differ or be missed; no parser is guaranteed to be more accurate.
+
+For MinerU, start the GPU service first, select `mineru` in the same admin group,
+restart ShreckWorld API/worker, and verify `/ready` reports `pdf_parser=mineru`
+with a populated `mineru` status. Index the same PDF as a separate source item
+for each parser so each active generation remains available for side-by-side
+Book Map JSON comparison. MinerU's `doc_title`/`paragraph_title` levels become
+the normalized section hierarchy used by the existing deterministic Book Map
+builder; this does not add an LLM-generated or semantically validated outline.
+Compare title/parent/page-anchor precision against a manually reviewed set of
+books before deciding which parser is better for the collection. Use the same
+embedding settings and compare cold runs (`parser_cache_hit=false`), map JSON,
+page coverage, warnings, timing, and retrieval citations. Cache identity includes
+MinerU service URL, configured service version, and tier.
 
 Reindexing the *same* item replaces its active generation only on success; it
 does not retain two simultaneously searchable versions. Separate items allow
@@ -304,13 +341,14 @@ hardware; verify its supported CPU/OS requirements on each host. Neither backend
 guarantees a speedup for a particular document or machine.
 
 The Shrecknet administrator configuration frontend renders the `ShreckWorld
-Indexing` group from `GET /config/schema`. It provides dropdowns for PDF parser,
+Indexing` group from `GET /config/schema`. It provides dropdowns for PDF parser
+(Docling, PyMuPDF, MinerU),
 parser device, TableFormer mode, embedding backend and device, plus a switch for
 table extraction. Save selections through the existing administrator-only
 `PUT /config/` route:
 
 ```json
-{"shreckworld_pdf_parser":"docling","shreckworld_parser_device":"cuda","shreckworld_parser_table_structure_enabled":true,"shreckworld_parser_table_former_mode":"accurate","shreckworld_embedding_backend":"onnx","shreckworld_embedding_device":"cpu"}
+{"shreckworld_pdf_parser":"mineru","shreckworld_parser_device":"cuda","shreckworld_parser_table_structure_enabled":true,"shreckworld_parser_table_former_mode":"accurate","shreckworld_embedding_backend":"onnx","shreckworld_embedding_device":"cpu"}
 ```
 
 Defaults are Docling, CPU parser, table reconstruction enabled, fast TableFormer,

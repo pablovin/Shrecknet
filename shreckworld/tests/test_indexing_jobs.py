@@ -169,6 +169,26 @@ def test_readiness_reports_selected_pdf_parser_and_missing_api(api, runtime, mon
     assert "PyMuPDF 2.1" in error.value.detail
 
 
+def test_readiness_requires_configured_mineru_service(api, runtime, monkeypatch, tmp_path):
+    from fastapi import HTTPException
+    import app.main as main
+
+    monkeypatch.setattr(main.settings, "docling_artifacts_path", tmp_path)
+    monkeypatch.setattr(main.settings, "pdf_parser", "mineru")
+    monkeypatch.setattr(main, "get_embedder", lambda: runtime)
+    monkeypatch.setattr("app.services.mineru_parsing.check_ready", lambda: {"available": True, "configured_tier": "standard"})
+    ready = main.readiness()
+    assert ready["pdf_parser"] == "mineru"
+    assert ready["mineru"]["available"] is True
+
+    def unavailable():
+        raise RuntimeError("MinerU unavailable")
+    monkeypatch.setattr("app.services.mineru_parsing.check_ready", unavailable)
+    with pytest.raises(HTTPException) as error:
+        main.readiness()
+    assert error.value.status_code == 503
+
+
 @pytest.mark.parametrize("failure", ["model", "empty", "parsing", "embedding", "storage", "activation", "coverage", "source_changed"])
 def test_failed_reindex_preserves_active_generation(api, runtime, monkeypatch, failure):
     client, headers, _ = api

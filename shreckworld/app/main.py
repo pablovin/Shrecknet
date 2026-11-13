@@ -69,11 +69,19 @@ def readiness() -> dict:
             validate_parser()
         except (ImportError, RuntimeError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"status": "ready", "embedding": embedding, "parser": "docling",
+    mineru = None
+    if settings.pdf_parser == "mineru":
+        try:
+            from app.services.mineru_parsing import check_ready
+            mineru = check_ready()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Configured MinerU parser is unavailable") from exc
+    return {"status": "ready", "embedding": embedding, "parser": settings.pdf_parser,
             "pdf_parser": settings.pdf_parser, "parser_device": settings.parser_device,
             "parser_table_structure_enabled": settings.parser_table_structure_enabled,
             "parser_table_former_mode": settings.parser_table_former_mode,
-            "parser_artifacts_present": True}
+            "parser_artifacts_present": True,
+            "mineru": mineru}
 
 
 app.include_router(router)

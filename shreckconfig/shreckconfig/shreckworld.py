@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 EmbeddingBackend = Literal["onnx", "torch", "openvino"]
 EmbeddingDevice = Literal["cpu", "cuda"]
-PdfParser = Literal["docling", "pymupdf"]
+PdfParser = Literal["docling", "pymupdf", "mineru"]
 ParserDevice = Literal["cpu", "cuda"]
 ParserDeviceSetting = Literal["auto", "cpu", "cuda"]
 TableFormerMode = Literal["fast", "accurate"]

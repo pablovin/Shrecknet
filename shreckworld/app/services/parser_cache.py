@@ -22,7 +22,7 @@ class ParserPayload(BaseModel):
     canonical: dict[str, Any]
     items: list[dict[str, Any]]
     diagnostics: list[str]
-    quality: dict[str, int | None]
+    quality: dict[str, Any]
     markdown: str = ""
 
 
@@ -49,6 +49,15 @@ def cache_identity(path: Path, settings: Any, parser_version: str, *, parser_nam
             "source_sha256": _sha256(path), "suffix": path.suffix.lower(),
             "parser": parser_name, "parser_version": parser_version,
             "ocr": False, "table_mode": "isolate", "merge_small_chunks": False,
+        }
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    if parser_name == "mineru":
+        identity = {
+            "format_version": CACHE_VERSION, "adapter_version": 1,
+            "source_sha256": _sha256(path), "suffix": path.suffix.lower(),
+            "parser": parser_name, "parser_version": parser_version,
+            "api_url": settings.mineru_api_url.rstrip("/"), "tier": settings.mineru_tier,
+            "configured_version": settings.mineru_version,
         }
         return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     artifacts = settings.docling_artifacts_path.resolve()

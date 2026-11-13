@@ -262,18 +262,18 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
         "help": "ONNX and OpenVINO require CPU. CUDA requires the Torch backend and a GPU-enabled ShreckWorld deployment.",
     },
     "shreckworld_pdf_parser": {
-        "type": "enum", "label": "PDF parser", "options": ["docling", "pymupdf"],
+        "type": "enum", "label": "PDF parser", "options": ["docling", "pymupdf", "mineru"],
         "requires_restart": True,
-        "help": "Docling extracts document structure and tables; PyMuPDF is the faster layout-aware alternative. Existing books must be re-indexed after changing this setting.",
+        "help": "Docling and PyMuPDF parse locally. MinerU uses the optional GPU inference service and adds its detected heading hierarchy. Existing books must be re-indexed after changing this setting.",
     },
     "shreckworld_parser_device": {
         "type": "enum", "label": "Parser device", "options": ["auto", "cpu", "cuda"],
         "requires_restart": True,
-        "help": "Auto uses CUDA when available and otherwise CPU. Explicit CUDA requires the GPU Compose overlay and a CUDA-enabled ShreckWorld image. Parser and embedding devices are independent.",
+        "help": "Controls Docling only: Auto uses CUDA when available and otherwise CPU. Explicit CUDA requires the GPU Compose overlay and a CUDA-enabled ShreckWorld image. MinerU uses the separate inference service's device. Parser and embedding devices are independent.",
     },
     "shreckworld_parser_table_structure_enabled": {
         "type": "boolean", "label": "Extract table structure", "requires_restart": True,
-        "help": "Enable Docling table reconstruction. This does not turn on OCR or image identification. Re-index existing books to apply.",
+        "help": "Enable Docling table reconstruction; MinerU controls its own extraction. This does not turn on OCR or image identification for Docling. Re-index existing books to apply.",
     },
     "shreckworld_parser_table_former_mode": {
         "type": "enum", "label": "Table extraction mode", "options": ["fast", "accurate"],

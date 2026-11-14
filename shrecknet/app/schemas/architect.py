@@ -18,6 +18,8 @@ class ArchitectAnalysisRequest(BaseModel):
     ontology_instance_id: str = Field(
         ..., min_length=1, description="Target instance id"
     )
+    source_id: str | None = Field(default=None, max_length=64, description="Selected narrative Source document")
+    section_id: str | None = Field(default=None, max_length=128, description="Selected source Markdown section")
     ontology_id: int | None = Field(
         default=None,
         description="Optional ontology id override when the instance id is not unique",

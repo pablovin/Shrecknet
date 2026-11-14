@@ -16,6 +16,27 @@ from app.services.scene_source_link_migration import (
     _source_references,
     _write_target_batch,
 )
+from scripts.migrate_graph_scene_sources import _print_summary_table
+
+
+def test_summary_table_groups_sources_and_link_counts_by_world(capsys):
+    _print_summary_table({
+        "ontologies": [{"ontology_id": 7, "name": "World Seven"}, {"ontology_id": 8, "name": "World Eight"}],
+        "sources_added": [{"ontology_id": 7, "sources": [{"title": "Story A"}]}],
+        "scenes_summary_by_ontology": [
+            {"ontology_id": 7, "linked": 3, "not_linked": 1},
+            {"ontology_id": 8, "linked": 0, "not_linked": 2},
+        ],
+        "milestones_summary_by_ontology": [
+            {"ontology_id": 7, "linked": 4, "not_linked": 0},
+            {"ontology_id": 8, "linked": 1, "not_linked": 1},
+        ],
+    })
+
+    output = capsys.readouterr().out
+    assert "| World | Sources added | Scenes linked | Scenes not linked | Milestones linked | Milestones not linked |" in output
+    assert "| World Seven | Story A | 3 | 1 | 4 | 0 |" in output
+    assert "| World Eight | — | 0 | 2 | 1 | 1 |" in output
 
 
 def test_collection_entry_source_must_resolve_uniquely():

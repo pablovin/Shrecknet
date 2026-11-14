@@ -77,6 +77,11 @@ The final JSON report includes:
 - Per-kind totals grouped globally and by ontology, plus the entity-to-Source
   importer summary.
 
+After the JSON audit, the command prints a compact Markdown table with one row
+per world: Sources added (titles), Scenes linked/not linked, and Milestones
+linked/not linked. The linked counts include records already linked before this
+run.
+
 The ShreckWorld API startup still runs the entity-to-Source importer according
 to `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP`. It no longer runs the
 Scene/Milestone-reference migration. This migration performs no Neo4j writes

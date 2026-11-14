@@ -61,6 +61,50 @@ def _added_sources(
             for ontology in sorted(ontology_keys, key=lambda value: (value == "unassigned", value))]
 
 
+def _print_summary_table(report: dict) -> None:
+    """Print compact per-world totals after the detailed JSON audit report."""
+    ontology_names = {
+        row.get("ontology_id"): row.get("name") or f"Ontology {row.get('ontology_id')}"
+        for row in report.get("ontologies", [])
+    }
+    added_sources = {
+        row.get("ontology_id"): row.get("sources") or []
+        for row in report.get("sources_added", [])
+    }
+    summaries = {}
+    for kind in ("scenes", "milestones"):
+        summaries[kind] = {
+            row.get("ontology_id"): row
+            for row in report.get(f"{kind}_summary_by_ontology", [])
+        }
+
+    ontology_ids = set(ontology_names) | set(added_sources)
+    ontology_ids.update(summaries["scenes"])
+    ontology_ids.update(summaries["milestones"])
+    rows = []
+    for ontology_id in sorted(ontology_ids, key=lambda value: (value is None, value or 0)):
+        world = ontology_names.get(ontology_id, "Unassigned" if ontology_id is None else f"Ontology {ontology_id}")
+        source_labels = [
+            str(source.get("title") or source.get("source_id") or "Untitled Source")
+            for source in added_sources.get(ontology_id, [])
+        ]
+        source_cell = ", ".join(label.replace("|", "\\|").replace("\n", " ") for label in source_labels) or "—"
+        scene = summaries["scenes"].get(ontology_id, {})
+        milestone = summaries["milestones"].get(ontology_id, {})
+        rows.append((
+            str(world).replace("|", "\\|").replace("\n", " "), source_cell,
+            str(scene.get("linked", 0)), str(scene.get("not_linked", 0)),
+            str(milestone.get("linked", 0)), str(milestone.get("not_linked", 0)),
+        ))
+
+    headers = ("World", "Sources added", "Scenes linked", "Scenes not linked", "Milestones linked", "Milestones not linked")
+    print("\nSummary by world:")
+    print("| " + " | ".join(headers) + " |")
+    print("| " + " | ".join("---" for _ in headers) + " |")
+    for row in rows:
+        print("| " + " | ".join(row) + " |")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -99,6 +143,7 @@ def main() -> int:
                     "and rerun after resolving them. No Scene/Milestone references were written."
                 )
             print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+            _print_summary_table(report)
             return 1 if report.get("apply_blocked") else 0
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)

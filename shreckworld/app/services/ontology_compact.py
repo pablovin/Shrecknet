@@ -249,7 +249,7 @@ def _comparable(a: dict, b: dict) -> bool:
     return True
 
 
-def ambiguous_groups(candidates: list[dict]) -> list[list[int]]:
+def ambiguous_groups(candidates: list[dict], known: list[dict] | None = None) -> list[list[int]]:
     """Select only plausible semantic collisions, capped at 24 items per model call."""
     edges: dict[int, set[int]] = {}
     for i, left in enumerate(candidates):
@@ -282,16 +282,37 @@ def ambiguous_groups(candidates: list[dict]) -> list[list[int]]:
         # For large connected components use stable, bounded pair groups.
         for offset in range(0, len(ordered), 24):
             components.append(ordered[offset:offset + 24])
+    # Also compare with already approved ontology definitions, without
+    # repeating descriptions or provenance. Only near matches are model inputs.
+    grouped = {idx for group in components for idx in group}
+    for idx, candidate in enumerate(candidates):
+        if idx in grouped:
+            continue
+        if any(_comparable(candidate, entry) and
+               0.75 <= SequenceMatcher(None, _canonical(candidate["name"]),
+                                       _canonical(entry["name"])).ratio() < 1
+               for entry in (known or [])):
+            components.append([idx])
     return components
 
 
-def reconciliation_input(candidates: list[dict], indices: list[int]) -> str:
+def reconciliation_input(candidates: list[dict], indices: list[int],
+                         known: list[dict] | None = None) -> str:
+    context = [
+        {"k": entry["kind"], "n": entry["name"], "o": entry.get("entity", ""),
+         "s": entry.get("source", ""), "t": entry.get("target", "")}
+        for entry in (known or [])
+        if any(_comparable(candidates[idx], entry) and
+               SequenceMatcher(None, _canonical(candidates[idx]["name"]),
+                               _canonical(entry["name"])).ratio() >= .75
+               for idx in indices)
+    ][:20]
     return compact_json({"c": [
         {"i": idx, "k": candidates[idx]["kind"], "n": candidates[idx]["name"],
          "o": candidates[idx].get("entity", ""),
          "s": candidates[idx].get("source", ""),
          "t": candidates[idx].get("target", "")}
-        for idx in indices]})
+        for idx in indices], "known": context})
 
 
 def apply_reconciliation(candidates: list[dict], indices: list[int], operations: dict) -> set[int]:

@@ -5,6 +5,7 @@ on:
     paths:
       - "shreckworld/app/models/ontology_studio.py"
       - "shreckworld/app/services/ontology_studio.py"
+      - "shreckworld/app/services/ontology_run_reporting.py"
       - "shreckworld/app/services/ontology_discovery_batches.py"
       - "shreckworld/app/api/routers/ontology_studio.py"
       - "shreckworld/app/tasks/architect_learn_ontology.py"
@@ -37,6 +38,7 @@ jobs:
         run: |
           python -m compileall -q shreckworld/app/models/ontology_studio.py \
             shreckworld/app/services/ontology_studio.py \
+            shreckworld/app/services/ontology_run_reporting.py \
             shreckworld/app/services/ontology_discovery_batches.py \
             shreckworld/app/api/routers/ontology_studio.py \
             shreckworld/app/tasks/architect_learn_ontology.py \

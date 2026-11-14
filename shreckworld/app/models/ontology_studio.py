@@ -126,7 +126,7 @@ class OntologyLearnWindow(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    __table_args__ = (UniqueConstraint("run_id", "fingerprint", name="uq_ontology_window_per_run"),)
+    __table_args__ = (UniqueConstraint("run_id", "source_id", "chapter_id", "window_index", name="uq_ontology_window_per_run"),)
 
 class OntologyLearnChapter(Base):
     """Chapter windows that reached the Architect model for a pinned document."""

@@ -74,6 +74,8 @@ class ArchitectService:
                 "requested_by": actor_id,
                 "max_chunks": payload.max_chunks,
                 "chunk_size": payload.chunk_size,
+                "source_id": payload.source_id,
+                "section_id": payload.section_id,
             },
         )
 

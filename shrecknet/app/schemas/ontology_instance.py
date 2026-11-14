@@ -146,7 +146,7 @@ class SceneDerivedFrom(BaseModel):
     they are not necessarily positions in later edited Markdown.
     """
     model_config = ConfigDict(extra="ignore")
-    entity_instance_id: str
+    entity_instance_id: str | None = None
     source_id: str | None = Field(default=None, max_length=64)
     section_id: str | None = Field(default=None, max_length=128)
     markdown_asset_id: str | None = Field(default=None, max_length=64)
@@ -154,7 +154,7 @@ class SceneDerivedFrom(BaseModel):
     start_paragraph: int | None = Field(default=None, ge=1)
     end_paragraph: int | None = Field(default=None, ge=1)
     source_paragraphs_absolute: list[int] = Field(default_factory=list, max_length=10000)
-    provenance_status: Literal["document_only", "architect", "historical_unverified"] | None = None
+    provenance_status: Literal["document_only", "architect", "historical_unverified", "scene_inherited"] | None = None
 
     @field_validator("source_paragraphs_absolute")
     @classmethod
@@ -164,6 +164,12 @@ class SceneDerivedFrom(BaseModel):
         if values != sorted(set(values)):
             raise ValueError("Source paragraph IDs must be unique and ordered")
         return values
+
+    @model_validator(mode="after")
+    def validate_origin(self) -> "SceneDerivedFrom":
+        if not self.entity_instance_id and not (self.source_id and self.section_id):
+            raise ValueError("Source-only Scenes require both the Source and section")
+        return self
 
     @model_validator(mode="after")
     def validate_passage(self) -> "SceneDerivedFrom":
@@ -180,7 +186,7 @@ class SceneDerivedFrom(BaseModel):
     @field_validator("entity_instance_id", mode="before")
     def validate_entity_instance_id(cls, value: str) -> str:
         if value is None:
-            raise ValueError("entity_instance_id cannot be empty")
+            return None
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("entity_instance_id cannot be empty")
@@ -189,12 +195,30 @@ class SceneDerivedFrom(BaseModel):
 
 class MilestoneDerivedFrom(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    entity_instance_id: str
+    entity_instance_id: str | None = None
+    source_id: str | None = Field(default=None, max_length=64)
+    section_id: str | None = Field(default=None, max_length=128)
+    markdown_asset_id: str | None = Field(default=None, max_length=64)
+    source_revision: int | None = Field(default=None, ge=1)
+    start_paragraph: int | None = Field(default=None, ge=1)
+    end_paragraph: int | None = Field(default=None, ge=1)
+    source_paragraphs_absolute: list[int] = Field(default_factory=list)
+    provenance_status: Literal["document_only", "architect", "historical_unverified", "scene_inherited"] | None = None
+
+    @model_validator(mode="after")
+    def validate_origin(self) -> "MilestoneDerivedFrom":
+        if not self.entity_instance_id and not (self.source_id and self.section_id):
+            raise ValueError("Source-only Milestones require both the Source and section")
+        if (self.start_paragraph is None) != (self.end_paragraph is None):
+            raise ValueError("Incomplete Milestone paragraph range")
+        if self.start_paragraph is not None and not (1 <= self.start_paragraph <= self.end_paragraph):
+            raise ValueError("Invalid Milestone paragraph range")
+        return self
 
     @field_validator("entity_instance_id", mode="before")
     def validate_entity_instance_id(cls, value: str) -> str:
         if value is None:
-            raise ValueError("entity_instance_id cannot be empty")
+            return None
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("entity_instance_id cannot be empty")
@@ -202,10 +226,8 @@ class MilestoneDerivedFrom(BaseModel):
 
 
 class MilestoneSourceReference(MilestoneDerivedFrom):
-    """Read-side reference to both the legacy entity and migrated Source."""
-    source_id: str | None = Field(default=None, max_length=64)
-    section_id: str | None = Field(default=None, max_length=128)
-    markdown_asset_id: str | None = Field(default=None, max_length=64)
+    """Read-side compatibility type for legacy entity and migrated Source."""
+    pass
 
 
 class MilestoneEntityRelation(BaseModel):
@@ -351,8 +373,8 @@ class MilestoneRead(MilestoneBase):
     ontology_id: int
     created_at: datetime
     updated_at: datetime
-    derived_from: MilestoneSourceReference
 
+    derived_from: MilestoneSourceReference
 
 class SceneBase(BaseModel):
     model_config = ConfigDict(extra="ignore")

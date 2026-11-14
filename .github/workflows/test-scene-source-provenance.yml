@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/scene-source-paragraph-provenance
+      - feature/sources-first-architect-scenes-milestones
   pull_request:
     paths:
       - "shrecknet/**"
@@ -22,7 +23,7 @@ jobs:
           python-version: "3.11"
       - name: Install service test dependencies
         run: |
-          python -m pip install pytest "SQLAlchemy>=2.0,<2.1" "pydantic>=2.6,<3" \
+          python -m pip install pytest pytest-asyncio "SQLAlchemy>=2.0,<2.1" "pydantic>=2.6,<3" \
             "pydantic-settings>=2.2,<3" "fastapi>=0.110,<0.112" \
             "httpx>=0.27,<0.29" "neo4j>=5.20,<6" "python-multipart>=0.0.9,<1" \
             "python-jose[cryptography]>=3.3,<4" "python-dotenv>=1,<2" \
@@ -37,12 +38,20 @@ jobs:
             shrecknet/app/services/ontology_instance_service.py \
             shrecknet/app/services/scene_source_reference.py \
             shrecknet/app/tasks/architect_generation.py \
+            shrecknet/app/tasks/architect_analysis.py \
+            shrecknet/app/services/architect_source_documents.py \
+            shrecknet/app/services/architect_passages.py \
+            shrecknet/app/services/character_embodiment_service.py \
+            shrecknet/app/services/character_agent_service.py \
+            shrecknet/app/integrations/retrieval/neo4j_retriever.py \
+            shrecknet/app/graphrag/semantic_v2/service.py \
+            shrecknet/app/graphrag/semantic_v2/renderers.py \
             shrecknet/app/celery_queue_reaper.py \
             shreckworld/app/services/scene_source_provenance_import.py \
             shreckworld/app/main.py
       - name: Run Shrecknet contract and archival tests
         working-directory: shrecknet
-        run: python -m pytest --noconftest tests/test_scene_source_provenance.py -q
+        run: python -m pytest --noconftest tests/test_scene_source_provenance.py tests/test_sources_first_architect.py tests/test_scene_milestone_validation.py -q
       - name: Run ShreckWorld backfill and importer tests
         working-directory: shreckworld
-        run: python -m pytest tests/test_scene_source_provenance_import.py -q
+        run: python -m pytest tests/test_scene_source_provenance_import.py tests/test_scene_source_link_migration.py -q

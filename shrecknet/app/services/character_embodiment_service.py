@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import date, datetime, time, timezone
 from typing import Any
@@ -202,7 +203,7 @@ class CharacterEmbodimentService:
         entity_evidence = [item for item in all_evidence if item.kind != "scene"]
         rows = await self.graph.run(
             """
-            MATCH (scene:Scene)-[:DERIVED_FROM]->(source:EntityInstance)
+            MATCH (scene:Scene)
             WHERE (EXISTS {
               MATCH (scene)-[:RELATES_TO]->
                     (:EntityInstance {entity_instance_id:$entity_id})
@@ -210,10 +211,12 @@ class CharacterEmbodimentService:
               MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->
                     (:EntityInstance {entity_instance_id:$entity_id})
             })
+            OPTIONAL MATCH (scene)-[:DERIVED_FROM]->(source:EntityInstance)
             OPTIONAL MATCH (scene)-[entity_rel:RELATES_TO]->
                            (:EntityInstance {entity_instance_id:$entity_id})
-            RETURN source.entity_instance_id AS source_id,
-                   coalesce(source.alias, source.entity_instance_id) AS source_name,
+            RETURN coalesce(scene.source_id + ':' + scene.source_section_id,
+                            scene.source_id, source.entity_instance_id) AS source_id,
+                   coalesce(scene.source_id, source.alias, source.entity_instance_id) AS source_name,
                    source.created_at AS source_created_at,
                    scene.id AS scene_id, scene.name AS scene_name,
                    scene.description AS scene_description,
@@ -242,6 +245,16 @@ class CharacterEmbodimentService:
                 created_at=str(row["scene_created_at"]) if row["scene_created_at"] else None,
                 entity_relation=_json_safe(dict(row["entity_relation"] or {})),
             ))
+        from app.services.architect_source_documents import list_architect_sources
+        try:
+            labels = {
+                source.source_id: source.title
+                for source in await asyncio.to_thread(list_architect_sources, ontology_id)
+            }
+        except (FileNotFoundError, OSError):
+            labels = {}
+        for key, group in grouped.items():
+            group["source_name"] = labels.get(key.split(":", 1)[0], group["source_name"])
         groups = [CharacterSourceGroup.model_validate(item) for item in grouped.values()]
         groups.sort(key=lambda group: (
             group.source_created_at
@@ -451,8 +464,9 @@ class CharacterEmbodimentService:
                    toString(scene.created_at) AS created_at,
                    scene.observation_group_id AS observation_group_id,
                    scene.independence_status AS independence_status,
-                   source.entity_instance_id AS source_id,
-                   coalesce(source.alias, source.entity_instance_id) AS source_alias
+                   coalesce(scene.source_id + ':' + scene.source_section_id,
+                            scene.source_id, source.entity_instance_id) AS source_id,
+                   coalesce(scene.source_id, source.alias, source.entity_instance_id) AS source_alias
             ORDER BY coalesce(toString(scene.created_at), ''), scene.id
             """,
             entity_id=entity_instance_id, ontology_id=ontology_id,
@@ -479,6 +493,17 @@ class CharacterEmbodimentService:
                 }
                 groups[gid] = group
             group["scenes"].append(s)
+
+        from app.services.architect_source_documents import list_architect_sources
+        try:
+            source_titles = {
+                source.source_id: source.title
+                for source in await asyncio.to_thread(list_architect_sources, ontology_id)
+            }
+        except (FileNotFoundError, OSError):
+            source_titles = {}
+        for gid, group in groups.items():
+            group["source_alias"] = source_titles.get(gid.split(":", 1)[0], group["source_alias"])
 
         source_groups = sorted(
             groups.values(),

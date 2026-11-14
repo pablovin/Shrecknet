@@ -221,6 +221,13 @@ Each object in Scenes payload contains:
 - scene_text: complete paragraph-marked source excerpt and authoritative evidence
 - entities: the only entity aliases allowed in related_to
 
+Each [P#] marker in scene_text denotes one paragraph of the ORIGINAL Source.
+For every milestone, choose source_paragraph_ids: the exact one-based IDs of
+the paragraphs that explicitly support that milestone, sorted and unique.
+Use ONLY [P#] numbers actually present in the scene_text. Never invent a number.
+If no paragraph can be identified confidently, use [] and the backend will
+label the provenance as inherited from the containing Scene.
+
 
 
 Return STRICT RFC8259 JSON.
@@ -233,7 +240,8 @@ Return STRICT RFC8259 JSON.
         {{
           "title": "short descriptive title",
           "description": "max 6 concise sentences",
-          "boundary_type": "begin|end|none",          
+          "boundary_type": "begin|end|none",
+          "source_paragraph_ids": [12, 13],          
           "adjacent_to": ["optional nearby milestone title"],
           "related_to": [
             {{

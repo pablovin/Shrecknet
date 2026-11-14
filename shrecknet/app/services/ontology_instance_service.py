@@ -2649,10 +2649,11 @@ class OntologyInstanceService:
                 milestone.model_copy(update={"id": milestone_id})
             )
 
-            await self._validate_milestone_derived_from(
-                instance_id=instance_id,
-                entity_instance_id=milestone.derived_from.entity_instance_id,
-            )
+            if milestone.derived_from.entity_instance_id:
+                await self._validate_milestone_derived_from(
+                    instance_id=instance_id,
+                    entity_instance_id=milestone.derived_from.entity_instance_id,
+                )
 
         self._build_local_order_pairs(milestone_ids, normalized_milestones)
         return normalized_milestones
@@ -2680,10 +2681,11 @@ class OntologyInstanceService:
             boundary_type=props.get("boundary_type") or "none",
             local_order=local_order or {},
             derived_from={
-                "entity_instance_id": derived_from_entity_id or "",
-                "source_id": _normalize_optional_str(props.get("source_id")),
-                "section_id": _normalize_optional_str(props.get("source_section_id")),
-                "markdown_asset_id": _normalize_optional_str(props.get("source_markdown_asset_id")),
+                **_read_scene_provenance(props.get("source_provenance_json")),
+                "entity_instance_id": derived_from_entity_id,
+                "source_id": props.get("source_id"),
+                "section_id": props.get("source_section_id"),
+                "markdown_asset_id": props.get("source_markdown_asset_id"),
             },
             relates_to=relates_to,
             created_at=_parse_dt(props.get("created_at")),
@@ -2718,10 +2720,8 @@ class OntologyInstanceService:
             derived_from_entity_id = _normalize_optional_str(
                 str(derived_row.get("entity_instance_id") or "")
             )
-        if not derived_from_entity_id:
-            raise ValueError(
-                f"Scene '{scene_id}' must have a DERIVED_FROM entity_instance_id"
-            )
+        if not derived_from_entity_id and not props.get("source_id"):
+            raise ValueError(f"Scene '{scene_id}' lacks graph and document provenance")
 
         local_order_result = await self.graph_session.run(
             """
@@ -3021,7 +3021,7 @@ class OntologyInstanceService:
             local_order={"followed_by_scene_id": scene_relations.get("next_id"), "preceded_by_scene_id": scene_relations.get("previous_id")},
             derived_from={
                 **_read_scene_provenance(scene_node.get("source_provenance_json")),
-                "entity_instance_id": scene_relations.get("derived_from") or "",
+                "entity_instance_id": scene_relations.get("derived_from"),
                 "source_id": scene_node.get("source_id")
                     or _read_scene_provenance(scene_node.get("source_provenance_json")).get("source_id"),
                 "section_id": scene_node.get("source_section_id")
@@ -3197,10 +3197,31 @@ class OntologyInstanceService:
         if scene_id in await self._scene_ids_for_instance(instance_id):
             raise ValueError(f"Scene id '{scene_id}' already exists")
 
-        await self._validate_scene_derived_from(
-            instance_id=instance_id,
-            entity_instance_id=payload.derived_from.entity_instance_id,
-        )
+        if payload.derived_from.entity_instance_id:
+            await self._validate_scene_derived_from(
+                instance_id=instance_id,
+                entity_instance_id=payload.derived_from.entity_instance_id,
+            )
+        if payload.derived_from.source_id:
+            from app.services.architect_source_documents import (
+                load_architect_source, source_belongs_to_ontology,
+            )
+            if payload.derived_from.entity_instance_id:
+                if not await asyncio.to_thread(
+                    source_belongs_to_ontology, ontology_id, payload.derived_from.source_id,
+                ):
+                    raise ValueError("Scene Source does not belong to this ontology")
+            else:
+                document, _ = await asyncio.to_thread(
+                    load_architect_source, ontology_id,
+                    payload.derived_from.source_id, payload.derived_from.section_id,
+                )
+                if (payload.derived_from.source_revision is not None
+                        and payload.derived_from.source_revision != document.source_revision):
+                    raise ValueError("Scene Source revision changed during creation")
+                if (payload.derived_from.markdown_asset_id is not None
+                        and payload.derived_from.markdown_asset_id != document.markdown_asset_id):
+                    raise ValueError("Scene Source Markdown asset changed")
         await self._validate_scene_relates_to_entities(
             instance_id=instance_id,
             entity_instance_ids=[item.entity_instance_id for item in payload.relates_to],
@@ -3209,6 +3230,13 @@ class OntologyInstanceService:
             instance_id=instance_id,
             milestones=payload.milestones,
         )
+        for milestone in normalized_milestones:
+            source = milestone.derived_from
+            if source.source_id and (
+                source.source_id != payload.derived_from.source_id
+                or source.section_id != payload.derived_from.section_id
+            ):
+                raise ValueError("Nested Milestones must reference the containing Scene Source")
 
         now_str = _format_dt(datetime.utcnow())
         tx = await self.graph_session.begin_transaction()
@@ -3275,15 +3303,17 @@ class OntologyInstanceService:
                 updated_at=now_str,
             )
 
-            await tx.run(
-                """
-                MATCH (scene:Scene {id: $scene_id})
-                MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
-                MERGE (scene)-[:DERIVED_FROM]->(entity)
-                """,
-                scene_id=scene_id,
-                entity_instance_id=payload.derived_from.entity_instance_id,
-            )
+            # Legacy graph provenance is optional for Sources-first Scenes.
+            if payload.derived_from.entity_instance_id:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (scene)-[:DERIVED_FROM]->(entity)
+                    """,
+                    scene_id=scene_id,
+                    entity_instance_id=payload.derived_from.entity_instance_id,
+                )
 
             for relates in payload.relates_to:
                 await tx.run(
@@ -3343,6 +3373,10 @@ class OntologyInstanceService:
                         temporal_type: $temporal_type,
                         boundary_type: $boundary_type,
                         relates_to_json: $relates_to_json,
+                        source_id: $source_id,
+                        source_section_id: $source_section_id,
+                        source_markdown_asset_id: $source_markdown_asset_id,
+                        source_provenance_json: $source_provenance_json,
                         created_at: $created_at,
                         updated_at: $updated_at
                     })
@@ -3361,18 +3395,23 @@ class OntologyInstanceService:
                         [item.model_dump() for item in milestone.relates_to],
                         ensure_ascii=False,
                     ),
+                    source_id=milestone.derived_from.source_id,
+                    source_section_id=milestone.derived_from.section_id,
+                    source_markdown_asset_id=milestone.derived_from.markdown_asset_id,
+                    source_provenance_json=json.dumps(milestone.derived_from.model_dump(mode="json", exclude_none=True)),
                     created_at=now_str,
                     updated_at=now_str,
                 )
-                await tx.run(
-                    """
-                    MATCH (milestone:Milestone {id: $milestone_id})
-                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
-                    MERGE (milestone)-[:DERIVED_FROM]->(entity)
-                    """,
-                    milestone_id=milestone_id,
-                    entity_instance_id=milestone.derived_from.entity_instance_id,
-                )
+                if milestone.derived_from.entity_instance_id:
+                    await tx.run(
+                        """
+                        MATCH (milestone:Milestone {id: $milestone_id})
+                        MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                        MERGE (milestone)-[:DERIVED_FROM]->(entity)
+                        """,
+                        milestone_id=milestone_id,
+                        entity_instance_id=milestone.derived_from.entity_instance_id,
+                    )
                 for relates in milestone.relates_to:
                     await tx.run(
                         """
@@ -3433,7 +3472,7 @@ class OntologyInstanceService:
     async def update_scene(
         self, instance_id: str, scene_id: str, payload: SceneUpdate
     ) -> SceneRead:
-        await self.get_scene(instance_id, scene_id)
+        current_scene = await self.get_scene(instance_id, scene_id)
         updates: dict[str, Any] = {}
         if payload.name is not None:
             updates["name"] = payload.name
@@ -3450,10 +3489,29 @@ class OntologyInstanceService:
             updates['independence_status'] = payload.independence_status
 
         if payload.derived_from is not None:
-            await self._validate_scene_derived_from(
-                instance_id=instance_id,
-                entity_instance_id=payload.derived_from.entity_instance_id,
-            )
+            if payload.derived_from.entity_instance_id:
+                await self._validate_scene_derived_from(
+                    instance_id=instance_id,
+                    entity_instance_id=payload.derived_from.entity_instance_id,
+                )
+            if payload.derived_from.source_id:
+                from app.services.architect_source_documents import (
+                    load_architect_source, source_belongs_to_ontology,
+                )
+                ontology_id = await self._get_instance_ontology_id(instance_id)
+                if payload.derived_from.entity_instance_id:
+                    if not await asyncio.to_thread(
+                        source_belongs_to_ontology, ontology_id, payload.derived_from.source_id,
+                    ):
+                        raise ValueError("Scene Source does not belong to this ontology")
+                else:
+                    document, _ = await asyncio.to_thread(
+                        load_architect_source, ontology_id,
+                        payload.derived_from.source_id, payload.derived_from.section_id,
+                    )
+                    if (payload.derived_from.source_revision is not None
+                            and document.source_revision != payload.derived_from.source_revision):
+                        raise ValueError("Scene Source revision changed")
             # Source identity/range is updated together with DERIVED_FROM.
             # An entity-only update deliberately drops stale passage metadata.
             updates["source_provenance_json"] = json.dumps(
@@ -3524,21 +3582,20 @@ class OntologyInstanceService:
                     instance_id=instance_id,
                 )
 
-            if payload.derived_from is not None:
+            # A Source-only update never erases the old graph provenance edge.
+            if payload.derived_from is not None and payload.derived_from.entity_instance_id:
                 await tx.run(
                     """
                     MATCH (scene:Scene {id: $scene_id})-[rel:DERIVED_FROM]->()
                     DELETE rel
-                    """,
-                    scene_id=scene_id,
+                    """, scene_id=scene_id,
                 )
                 await tx.run(
                     """
                     MATCH (scene:Scene {id: $scene_id})
                     MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
                     MERGE (scene)-[:DERIVED_FROM]->(entity)
-                    """,
-                    scene_id=scene_id,
+                    """, scene_id=scene_id,
                     entity_instance_id=payload.derived_from.entity_instance_id,
                 )
 
@@ -3578,8 +3635,12 @@ class OntologyInstanceService:
                 scene_id=scene_id,
             )
             derived_count_record = await refreshed.single()
-            if not derived_count_record or int(derived_count_record["derived_count"] or 0) != 1:
-                raise ValueError("Scene must have exactly one DERIVED_FROM entity")
+            derived_count = int(derived_count_record["derived_count"] or 0) if derived_count_record else 0
+            if derived_count > 1 or (derived_count == 0 and not (
+                (payload.derived_from and payload.derived_from.source_id) or
+                current_scene.derived_from.source_id
+            )):
+                raise ValueError("Scene must have one legacy entity or a ShreckWorld Source")
         except Exception:
             await tx.rollback()
             await tx.close()
@@ -3674,10 +3735,8 @@ class OntologyInstanceService:
             derived_from_entity_id = _normalize_optional_str(
                 row.get("derived_from_entity_id")
             )
-            if not derived_from_entity_id:
-                raise ValueError(
-                    f"Milestone '{milestone_id}' must have a DERIVED_FROM entity_instance_id"
-                )
+            if not derived_from_entity_id and not dict(node).get("source_id"):
+                raise ValueError(f"Milestone '{milestone_id}' lacks graph and document provenance")
             relates = []
             for item in row.get("relates") or []:
                 if not isinstance(item, dict):
@@ -3733,10 +3792,16 @@ class OntologyInstanceService:
         existing_ids = await self._milestone_ids_for_scene(instance_id, scene_id)
         if milestone_id in existing_ids:
             raise ValueError(f"Milestone id '{milestone_id}' already exists")
-        await self._validate_milestone_derived_from(
-            instance_id=instance_id,
-            entity_instance_id=payload.derived_from.entity_instance_id,
-        )
+        if payload.derived_from.entity_instance_id:
+            await self._validate_milestone_derived_from(
+                instance_id=instance_id,
+                entity_instance_id=payload.derived_from.entity_instance_id,
+            )
+        if payload.derived_from.source_id:
+            if payload.derived_from.source_id != scene.derived_from.source_id:
+                raise ValueError("Milestone Source must equal parent Scene Source")
+            if payload.derived_from.section_id != scene.derived_from.section_id:
+                raise ValueError("Milestone section must equal parent Scene section")
 
         now_str = _format_dt(datetime.utcnow())
         tx = await self.graph_session.begin_transaction()
@@ -3756,6 +3821,10 @@ class OntologyInstanceService:
                     temporal_type: $temporal_type,
                     boundary_type: $boundary_type,
                     relates_to_json: $relates_to_json,
+                    source_id: $source_id,
+                    source_section_id: $source_section_id,
+                    source_markdown_asset_id: $source_markdown_asset_id,
+                    source_provenance_json: $source_provenance_json,
                     created_at: $created_at,
                     updated_at: $updated_at
                 })
@@ -3774,18 +3843,23 @@ class OntologyInstanceService:
                     [item.model_dump() for item in payload.relates_to],
                     ensure_ascii=False,
                 ),
+                source_id=payload.derived_from.source_id,
+                source_section_id=payload.derived_from.section_id,
+                source_markdown_asset_id=payload.derived_from.markdown_asset_id,
+                source_provenance_json=json.dumps(payload.derived_from.model_dump(mode="json", exclude_none=True)),
                 created_at=now_str,
                 updated_at=now_str,
             )
-            await tx.run(
-                """
-                MATCH (milestone:Milestone {id: $milestone_id})
-                MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
-                MERGE (milestone)-[:DERIVED_FROM]->(entity)
-                """,
-                milestone_id=milestone_id,
-                entity_instance_id=payload.derived_from.entity_instance_id,
-            )
+            if payload.derived_from.entity_instance_id:
+                await tx.run(
+                    """
+                    MATCH (milestone:Milestone {id: $milestone_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (milestone)-[:DERIVED_FROM]->(entity)
+                    """,
+                    milestone_id=milestone_id,
+                    entity_instance_id=payload.derived_from.entity_instance_id,
+                )
             for relates in payload.relates_to:
                 await tx.run(
                     """
@@ -3868,9 +3942,21 @@ class OntologyInstanceService:
             )
 
         if payload.derived_from is not None:
-            await self._validate_milestone_derived_from(
-                instance_id=instance_id,
-                entity_instance_id=payload.derived_from.entity_instance_id,
+            if payload.derived_from.entity_instance_id:
+                await self._validate_milestone_derived_from(
+                    instance_id=instance_id,
+                    entity_instance_id=payload.derived_from.entity_instance_id,
+                )
+            if payload.derived_from.source_id:
+                parent = await self.get_scene(instance_id, scene_id)
+                if (payload.derived_from.source_id != parent.derived_from.source_id or
+                        payload.derived_from.section_id != parent.derived_from.section_id):
+                    raise ValueError("Milestone provenance must use its parent Scene Source")
+            updates["source_id"] = payload.derived_from.source_id
+            updates["source_section_id"] = payload.derived_from.section_id
+            updates["source_markdown_asset_id"] = payload.derived_from.markdown_asset_id
+            updates["source_provenance_json"] = json.dumps(
+                payload.derived_from.model_dump(mode="json", exclude_none=True),
             )
 
         tx = await self.graph_session.begin_transaction()
@@ -3936,18 +4022,19 @@ class OntologyInstanceService:
 
             derived_from_entity_id = (
                 payload.derived_from.entity_instance_id
-                if payload.derived_from is not None
+                if payload.derived_from is not None and payload.derived_from.entity_instance_id
                 else current.derived_from.entity_instance_id
             )
-            await tx.run(
-                """
-                MATCH (milestone:Milestone {id: $milestone_id})
-                MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
-                MERGE (milestone)-[:DERIVED_FROM]->(entity)
-                """,
-                milestone_id=milestone_id,
-                entity_instance_id=derived_from_entity_id,
-            )
+            if derived_from_entity_id:
+                await tx.run(
+                    """
+                    MATCH (milestone:Milestone {id: $milestone_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (milestone)-[:DERIVED_FROM]->(entity)
+                    """,
+                    milestone_id=milestone_id,
+                    entity_instance_id=derived_from_entity_id,
+                )
 
             relates_to = payload.relates_to if payload.relates_to is not None else current.relates_to
             for relates in relates_to:

@@ -137,7 +137,7 @@ async def test_validate_scene_milestones_payload_rejects_unknown_derived_from_en
         )
 
 
-def test_milestone_read_exposes_migrated_source_reference_but_create_does_not_accept_it():
+def test_milestone_read_exposes_migrated_source_and_create_accepts_validated_provenance():
     created = MilestoneCreate.model_validate({
         "name": "Clue",
         "description": "A clue appears.",
@@ -145,11 +145,18 @@ def test_milestone_read_exposes_migrated_source_reference_but_create_does_not_ac
         "created_by_author": "user-1",
         "derived_from": {
             "entity_instance_id": "entity-1",
-            "source_id": "untrusted-source",
-            "section_id": "untrusted-section",
+            "source_id": "source-1",
+            "section_id": "section-1",
+            "start_paragraph": 4,
+            "end_paragraph": 6,
+            "source_paragraphs_absolute": [4, 6],
+            "provenance_status": "architect",
         },
     })
-    assert created.derived_from.model_dump() == {"entity_instance_id": "entity-1"}
+    assert created.derived_from.source_id == "source-1"
+    assert created.derived_from.section_id == "section-1"
+    assert created.derived_from.start_paragraph == 4
+    assert created.derived_from.source_paragraphs_absolute == [4, 6]
 
     now = datetime.now(timezone.utc)
     read = MilestoneRead(

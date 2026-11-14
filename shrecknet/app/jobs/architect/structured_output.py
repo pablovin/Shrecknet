@@ -122,8 +122,13 @@ MILESTONE_EXTRACTION_RESPONSE_FORMAT = strict_json_schema(
                                     "boundary_type",
                                     "adjacent_to",
                                     "related_to",
+                                    "source_paragraph_ids",
                                 ],
                                 "properties": {
+                                    "source_paragraph_ids": {
+                                        "type": "array",
+                                        "items": {"type": "integer", "minimum": 1},
+                                    },
                                     "title": {"type": "string"},
                                     "description": {"type": "string"},
                                     "boundary_type": {

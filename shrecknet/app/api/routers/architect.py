@@ -542,6 +542,47 @@ async def retry_enrichment_for_run(
     }
 
 
+@router.get("/worlds/{ontology_id}/sources")
+async def list_world_architect_sources(
+    ontology_id: int,
+    actor: User = Depends(require_roles("world_builder")),
+    session: AsyncSession = Depends(get_db_session),
+    instances: OntologyInstanceService = Depends(get_ontology_instance_service),
+) -> list[dict[str, Any]]:
+    """Markdown-backed Narrative Sources, including document-only legacy Scene links."""
+    from app.services.creative_workshop_service import require_workshop_world
+    from app.services.architect_source_documents import list_architect_sources
+    await require_workshop_world(session, ontology_id)
+    try:
+        documents = list_architect_sources(ontology_id)
+    except (FileNotFoundError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="ShreckWorld Sources are unavailable") from exc
+    rows = [item.public() for item in documents]
+    if rows:
+        result = await instances.graph_session.run("""
+            MATCH (scene:Scene)
+            WHERE toInteger(scene.ontology_id) = $ontology_id
+              AND scene.source_id IS NOT NULL
+            RETURN scene.source_id AS source_id, scene.source_section_id AS section_id,
+                   count(scene) AS scene_count
+        """, ontology_id=ontology_id)
+        counts: dict[tuple[str, str | None], int] = {}
+        totals: dict[str, int] = {}
+        for record in await result.data():
+            source_id = str(record["source_id"])
+            section_id = record.get("section_id")
+            count = int(record["scene_count"])
+            counts[(source_id, str(section_id) if section_id is not None else None)] = count
+            totals[source_id] = totals.get(source_id, 0) + count
+        for row in rows:
+            section_count = counts.get((row["source_id"], row["section_id"]), 0)
+            source_count = totals.get(row["source_id"], 0)
+            row["scene_count"] = source_count
+            row["section_scene_count"] = section_count
+            row["has_scenes"] = source_count > 0
+    return rows
+
+
 @router.post(
     "/worlds/{ontology_id}/analyze",
     response_model=ArchitectAnalysisRunRead,

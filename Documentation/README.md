@@ -4,7 +4,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## ShreckWorld Sources
 
-- [Sources workspace API](API/SHRECKWORLD_SOURCES_WORKSPACE_API.md) — authored and explanatory sources, template revisions, editorial organization, image protection and compatibility boundaries.
+- [Sources workspace API](API/SHRECKWORLD_SOURCES_WORKSPACE_API.md) — authored and explanatory sources, template revisions, editorial organization, graph source mappings and compatibility boundaries.
 - [Scene Source provenance migration](API/SCENE_SOURCE_PROVENANCE_MIGRATION.md) — direct Source references, Architect paragraph evidence recovery, automatic startup backfill and rollback.
 
 ## Shared model configuration
@@ -117,7 +117,7 @@ Detailed API documentation for specific features
 - [Architect API Examples](./API/ARCHITECT_API_EXAMPLES.md)
 - [Favorite Ontology Instances API](./API/FAVORITE_ONTOLOGY_INSTANCES_API.md)
 - [Foundry Integration API](./API/FOUNDRY_INTEGRATION_API.md)
-- [Scene graph and Atlas discovery API](./API/SCENE_GRAPH_API.md) — source cards, scene search, canonical provenance, compact world Elders, and admin Folio creation/recovery
+- [Scene graph and Atlas discovery API](./API/SCENE_GRAPH_API.md) — source cards, per-entity scene counts, scene search, canonical provenance, compact world Elders, and admin Folio creation/recovery
 
 ### [AI Agents](./AIAgents/)
 Documentation for AI agent systems

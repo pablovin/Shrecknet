@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models import ShreckWorldLibraryItem, SourceCollection, SourceHierarchy
+from app.models import GraphSourceImport, ShreckWorldLibraryItem, SourceCollection, SourceHierarchy
 from app.repositories.source_scope import OntologyScope
 from app.schemas.source_collections import CollectionCreate, CollectionEntry, CollectionRead, CollectionUpdate, CollectionTemplateUpdate
 
@@ -39,6 +39,16 @@ def template_for(db: Session, collection: SourceCollection) -> SourceHierarchy:
 
 def read_collection(db: Session, collection: SourceCollection) -> CollectionRead:
     template = template_for(db, collection)
+    stored_nodes = [CollectionEntry.model_validate(node) for node in collection.nodes or []]
+    source_ids = {source_id for node in stored_nodes for source_id in node.source_ids}
+    imported_entities: dict[str, set[str]] = {}
+    if source_ids:
+        mappings = db.scalars(select(GraphSourceImport).where(
+            GraphSourceImport.ontology_id == collection.ontology_id,
+            GraphSourceImport.source_id.in_(source_ids),
+        )).all()
+        for mapping in mappings:
+            imported_entities.setdefault(mapping.source_id, set()).add(mapping.entity_instance_id)
     return CollectionRead(
         id=collection.id, ontology_id=collection.ontology_id,
         source_type=collection.source_type,
@@ -48,7 +58,13 @@ def read_collection(db: Session, collection: SourceCollection) -> CollectionRead
         template_has_image=bool(template.image_path),
         name=collection.name, description=collection.description or "",
         archived=collection.archived, revision=collection.revision,
-        nodes=[CollectionEntry.model_validate(node) for node in collection.nodes or []],
+        nodes=[CollectionEntry(
+            **node.model_dump(exclude={"graph_source_entity_ids"}),
+            graph_source_entity_ids=sorted({
+                entity_id for source_id in node.source_ids
+                for entity_id in imported_entities.get(source_id, set())
+            }),
+        ) for node in stored_nodes],
     )
 
 
@@ -145,7 +161,7 @@ def save_collection(
         SourceCollection.revision == payload.expected_revision,
     ).values(
         name=payload.name, description=payload.description,
-        archived=payload.archived, nodes=[node.model_dump(mode="json") for node in payload.nodes],
+        archived=payload.archived, nodes=[node.model_dump(mode="json", exclude={"graph_source_entity_ids"}) for node in payload.nodes],
         revision=record.revision + 1,
     ))
     if result.rowcount != 1:
@@ -236,7 +252,7 @@ def upload_entry_image(
         result = db.execute(update(SourceCollection).where(
             SourceCollection.id == record.id, SourceCollection.ontology_id == scope.ontology_id,
             SourceCollection.revision == expected_revision,
-        ).values(nodes=[item.model_dump(mode="json") for item in revised], revision=expected_revision + 1))
+        ).values(nodes=[item.model_dump(mode="json", exclude={"graph_source_entity_ids"}) for item in revised], revision=expected_revision + 1))
         if result.rowcount != 1:
             db.rollback()
             fail(409, "Hierarchy changed during artwork upload")
@@ -265,7 +281,7 @@ def remove_entry_image(
     result = db.execute(update(SourceCollection).where(
         SourceCollection.id == record.id, SourceCollection.ontology_id == scope.ontology_id,
         SourceCollection.revision == expected_revision,
-    ).values(nodes=[node.model_dump(mode="json") for node in revised],
+    ).values(nodes=[node.model_dump(mode="json", exclude={"graph_source_entity_ids"}) for node in revised],
              revision=expected_revision + 1))
     if result.rowcount != 1:
         db.rollback()

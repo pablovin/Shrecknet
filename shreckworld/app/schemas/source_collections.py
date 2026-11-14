@@ -25,6 +25,8 @@ class CollectionEntry(Contract):
     description: str = Field(default="", max_length=10000)
     image_key: Annotated[str, Field(pattern=r"^[a-f0-9]{32}\.(?:png|jpg|webp)$")] | None = None
     source_ids: list[Identifier] = Field(default_factory=list, max_length=30)
+    # Read-only projection resolved from GraphSourceImport; ignored when saving.
+    graph_source_entity_ids: list[Identifier] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def unique_sources(self):

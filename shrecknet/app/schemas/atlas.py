@@ -21,6 +21,29 @@ class AtlasSourcePage(BaseModel):
     has_more: bool
 
 
+class AtlasSourceEntityIds(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    entity_instance_ids: list[str] = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def unique_entity_ids(self):
+        if len(self.entity_instance_ids) != len(set(self.entity_instance_ids)):
+            raise ValueError("entity_instance_ids must be unique")
+        if any(not entity_id or len(entity_id) > 250 for entity_id in self.entity_instance_ids):
+            raise ValueError("entity_instance_ids must contain valid identifiers")
+        return self
+
+
+class AtlasSourceEntitySceneCount(BaseModel):
+    entity_instance_id: str
+    scene_count: int = Field(ge=0)
+
+
+class AtlasSourceEntitySceneCounts(BaseModel):
+    ontology_id: int
+    results: list[AtlasSourceEntitySceneCount]
+
+
 class AtlasSourceAnchor(BaseModel):
     entity_instance_id: str
 

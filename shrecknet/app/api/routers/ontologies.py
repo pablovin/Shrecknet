@@ -54,7 +54,7 @@ from app.services.audit_service import AuditService
 from app.services.background_job_service import BackgroundJobService
 from uuid import UUID
 
-from app.schemas.atlas import AtlasFolioCreate, AtlasWorldWeb, AtlasFolioDetailRead, AtlasFolioPatch, AtlasSourcePage, AtlasScenePage, AtlasAuthor, AtlasRelationshipPage
+from app.schemas.atlas import AtlasFolioCreate, AtlasWorldWeb, AtlasFolioDetailRead, AtlasFolioPatch, AtlasSourcePage, AtlasScenePage, AtlasAuthor, AtlasRelationshipPage, AtlasSourceEntityIds, AtlasSourceEntitySceneCounts
 from app.services.atlas_folio_service import AtlasFolioService
 from app.services.ontology_instance_service import FolioCreateConflict
 from app.schemas.agent import AgentSummary
@@ -195,6 +195,18 @@ async def get_scene_sources(
 ) -> AtlasSourcePage:
     """Distinct provenance-source pages, including artwork, in one bounded projection."""
     return await reader.sources(ontology_id=ontology_id, skip=skip, limit=limit)
+
+
+@router.post("/{ontology_id}/scene-source-counts", response_model=AtlasSourceEntitySceneCounts)
+async def get_scene_source_counts(
+    ontology_id: Annotated[int, Path(ge=1)],
+    payload: AtlasSourceEntityIds,
+    reader: AtlasDiscoveryService = Depends(_atlas_reader),
+) -> AtlasSourceEntitySceneCounts:
+    """Return exact per-entity DERIVED_FROM scene counts in one bounded graph read."""
+    return await reader.source_entity_scene_counts(
+        ontology_id=ontology_id, entity_instance_ids=payload.entity_instance_ids,
+    )
 
 
 @router.get("/{ontology_id}/scenes", response_model=AtlasScenePage)

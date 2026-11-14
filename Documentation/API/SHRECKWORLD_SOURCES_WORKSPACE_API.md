@@ -157,7 +157,13 @@ templates, their versions, or existing source documents.
 
 Each entry stores a stable ID, title, optional description, parent ID,
 hierarchy level, sibling order, optional protected artwork key and
-`source_ids` attachments. The API validates strict hierarchy levels,
+`source_ids` attachments. Narrative entry responses also include the
+read-only `graph_source_entity_ids` projection resolved from imported source
+items. This field is ignored on writes. ShreckOS can use those exact graph
+entity IDs with Core's authorized batch count endpoint and the
+`GET /ontologies/{ontology_id}/scenes` `source_entity_id` filter to show scenes
+derived from each source item. Items
+without graph-import mappings return an empty array. The API validates strict hierarchy levels,
 no cycles, sibling-order uniqueness, artwork ownership and document
 references. Attachments must belong to **the same ontology and the same
 Narrative/Explanatory category**. An Explanatory entry can have at most one
@@ -209,7 +215,8 @@ together before upgrades.
 - Hierarchy template images are stored in protected media with version-pinned authenticated reads and an administrator-only upload endpoint. Image uploads append a template version.
 - The original Sources workspace does not change Story/Adventure graph nodes, scene
   provenance, or the Architect. The automatic startup importer described below
-  **copies** scene-derived narrative material into Sources without altering the graph.
+  **copies** scene-derived narrative material into Sources without altering the graph;
+  its read-only mappings let clients query canonical scenes without title matching.
 - Older source routes and SDK consumers remain supported.
 
 ## Deployment and rollback

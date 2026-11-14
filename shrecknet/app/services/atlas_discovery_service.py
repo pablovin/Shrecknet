@@ -2,7 +2,7 @@
 from neo4j import AsyncSession
 
 from app.schemas.ontology_instance import SceneGraphSourcePageReference
-from app.schemas.atlas import AtlasWorldWeb, AtlasScenePage, AtlasSceneRow, AtlasSourceCard, AtlasSourcePage
+from app.schemas.atlas import AtlasWorldWeb, AtlasScenePage, AtlasSceneRow, AtlasSourceCard, AtlasSourcePage, AtlasSourceEntitySceneCounts
 
 
 # Match mixed historical string/integer world IDs without wrapping indexed properties.
@@ -72,6 +72,28 @@ class AtlasDiscoveryService:
         return AtlasSourcePage(
             results=[AtlasSourceCard.model_validate(row) for row in rows[:limit]],
             skip=skip, limit=limit, has_more=len(rows) > limit,
+        )
+
+    async def source_entity_scene_counts(
+        self, *, ontology_id: int, entity_instance_ids: list[str],
+    ) -> AtlasSourceEntitySceneCounts:
+        """Return exact DERIVED_FROM scene counts for a bounded set of world entities."""
+        result = await self.graph_session.run("""
+            MATCH (scene:Scene)-[:DERIVED_FROM]->(source:EntityInstance)
+            WHERE scene.ontology_id IN [$ontology_id, toString($ontology_id)]
+              AND source.ontology_id IN [$ontology_id, toString($ontology_id)]
+              AND source.entity_instance_id IN $entity_instance_ids
+            RETURN source.entity_instance_id AS entity_instance_id,
+                   count(DISTINCT scene) AS scene_count
+            """, ontology_id=ontology_id, entity_instance_ids=entity_instance_ids)
+        counts = {str(row["entity_instance_id"]): int(row["scene_count"])
+                  for row in await result.data()}
+        return AtlasSourceEntitySceneCounts(
+            ontology_id=ontology_id,
+            results=[
+                {"entity_instance_id": entity_id, "scene_count": counts.get(entity_id, 0)}
+                for entity_id in entity_instance_ids
+            ],
         )
 
     async def scenes(self, *, ontology_id: int, query: str | None = None,

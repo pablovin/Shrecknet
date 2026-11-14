@@ -88,6 +88,19 @@ whose scenes fall beyond the former first-100 browser-side cutoff. Increment
 concurrent activity can move a page between requests, so clients should deduplicate
 by source ID.
 
+### `POST /ontologies/{ontology_id}/scene-source-counts`
+
+Accepts `{ "entity_instance_ids": ["source-entity-1", "source-entity-2"] }`
+with 1–2,000 unique entity IDs (each at most 250 characters). Returns
+`{ "ontology_id": 7, "results": [{ "entity_instance_id": "source-entity-1",
+"scene_count": 3 }] }`, including zero counts for submitted IDs with no scenes.
+Counts match only canonical scene `DERIVED_FROM` links to the exact source
+entity, not related participants or other entities on the same page. The route
+uses the authenticated world-read policy and one bounded graph aggregation for
+the submitted IDs. It returns no scene details; use
+`GET /ontologies/{ontology_id}/scenes?source_entity_id=...` for bounded,
+paginated scene summaries.
+
 ### `GET /ontologies/{ontology_id}/scenes`
 
 Parameters: `query` (optional, up to 500 characters), `related_entity_id`,

@@ -8,7 +8,7 @@ from typing import Literal
 import os
 import tempfile
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 EmbeddingBackend = Literal["onnx", "torch", "openvino"]
 EmbeddingDevice = Literal["cpu", "cuda"]
@@ -19,6 +19,20 @@ TableFormerMode = Literal["fast", "accurate"]
 DEFAULT_EMBEDDING_BACKEND: EmbeddingBackend = "onnx"
 
 
+class ArchitectOntologyModelTarget(BaseModel):
+    """Non-secret model target shared with ShreckWorld workers."""
+    model_config = ConfigDict(extra="forbid")
+    provider: str = "openrouter"
+    name: str = "deepseek/deepseek-v4.1-flash"
+    reasoning: bool = False
+    reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    web_search_enabled: bool = False
+
+
+def _default_architect_target() -> ArchitectOntologyModelTarget:
+    return ArchitectOntologyModelTarget()
+
+
 class ShreckWorldRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     embedding_backend: EmbeddingBackend = DEFAULT_EMBEDDING_BACKEND
@@ -27,6 +41,9 @@ class ShreckWorldRuntimeConfig(BaseModel):
     parser_device: ParserDeviceSetting = "auto"
     parser_table_structure_enabled: bool = True
     parser_table_former_mode: TableFormerMode = "fast"
+    model_architect_ontology_discovery: ArchitectOntologyModelTarget = Field(default_factory=_default_architect_target)
+    model_architect_ontology_schema: ArchitectOntologyModelTarget = Field(default_factory=_default_architect_target)
+    model_architect_ontology_reconciliation: ArchitectOntologyModelTarget = Field(default_factory=_default_architect_target)
 
     @model_validator(mode="after")
     def validate_embedding_device(self) -> "ShreckWorldRuntimeConfig":

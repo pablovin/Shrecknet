@@ -94,6 +94,9 @@ LLM_TARGET_FIELDS = (
     "model_architect_entity_proposal",
     "model_architect_milestone_proposal",
     "model_architect_entity_generation",
+    "model_architect_ontology_discovery",
+    "model_architect_ontology_schema",
+    "model_architect_ontology_reconciliation",
     "model_agents_repair_json",
     "model_elder_planner",
     "model_elder_synthesis",
@@ -331,6 +334,15 @@ class Settings(BaseSettings):
         default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_architect_entity_generation: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
+    )
+    model_architect_ontology_discovery: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
+    )
+    model_architect_ontology_schema: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
+    )
+    model_architect_ontology_reconciliation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openrouter", name="deepseek/deepseek-v4.1-flash")
     )
     model_agents_repair_json: LLMModelTarget = Field(
@@ -856,6 +868,9 @@ def _publish_shreckworld_config(settings: Settings) -> None:
             parser_device=settings.shreckworld_parser_device,
             parser_table_structure_enabled=settings.shreckworld_parser_table_structure_enabled,
             parser_table_former_mode=settings.shreckworld_parser_table_former_mode,
+            model_architect_ontology_discovery=settings.model_architect_ontology_discovery.model_dump(),
+            model_architect_ontology_schema=settings.model_architect_ontology_schema.model_dump(),
+            model_architect_ontology_reconciliation=settings.model_architect_ontology_reconciliation.model_dump(),
         ),
     )
 

@@ -12,6 +12,12 @@ from collections import defaultdict
 import fcntl
 import json
 import logging
+from pathlib import Path
+import sys
+
+# Running a file under scripts/ makes that directory sys.path[0]; put this
+# package root first so an unrelated installed `app` package cannot shadow us.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select
 

@@ -67,9 +67,9 @@ The final JSON report includes:
 
 The ShreckWorld API startup still runs the entity-to-Source importer according
 to `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP`. It no longer runs the
-Scene/Milestone-reference migration. No Neo4j write occurs until the operator
-supplies `--apply` for this migration; normal Scene/Milestone creation paths are
-unchanged.
+Scene/Milestone-reference migration. This migration performs no Neo4j writes
+until the operator supplies `--apply`; normal Scene/Milestone creation paths
+are unchanged.
 
 ## Mapping and passage evidence
 

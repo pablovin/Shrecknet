@@ -636,15 +636,40 @@ class Neo4jGraphRetriever:
                     entry["chunks"].pop()
                     entry["display_text"] = "\n\n".join([header] + [part for part in parts if part])
         # Original narrative passages are hydrated separately from graph embeddings.
-        from app.services.architect_source_documents import load_architect_source
+        from app.services.architect_source_documents import (
+            load_architect_source, get_narrative_source_info,
+        )
         cache: dict[tuple[int, str, str], tuple[Any, str] | None] = {}
+        info_cache: dict[tuple[int, str], dict | None] = {}
         for entry in hydrated.values():
             props = entry.get("properties") or {}
             source_id, section_id = props.get("source_id"), props.get("source_section_id")
-            if entry.get("source_kind") not in {"Scene", "Milestone"} or not source_id or not section_id:
+            if entry.get("source_kind") not in {"Scene", "Milestone"} or not source_id:
                 continue
             try:
-                key = (int(props["ontology_id"]), str(source_id), str(section_id))
+                ontology_id = int(props["ontology_id"])
+                info_key = (ontology_id, str(source_id))
+                if info_key not in info_cache:
+                    info_cache[info_key] = await asyncio.to_thread(
+                        get_narrative_source_info, *info_key,
+                    )
+                info = info_cache[info_key]
+            except (FileNotFoundError, OSError, ValueError, KeyError):
+                continue
+            if info is None:
+                continue
+            # A document-level Source still gives honest, scoped provenance
+            # even when no Story section or paragraph could be identified.
+            entry["narrative_source"] = {
+                **info, "section_id": section_id,
+                "start_paragraph": None, "end_paragraph": None,
+                "passage_status": "document_only",
+                "excerpt_status": "metadata_only",
+            }
+            if not section_id:
+                continue
+            try:
+                key = (ontology_id, str(source_id), str(section_id))
                 if key not in cache:
                     cache[key] = await asyncio.to_thread(load_architect_source, *key)
                 item = cache[key]

@@ -7,7 +7,7 @@ from app.services.ontology_discovery_batches import build_discovery_batches, MAX
 
 
 def make_map():
-    return BookMapRead.model_validate({
+    data = {
         "document_id": "doc", "map_version": 3,
         "sections": [
             {"id": "c1", "title": "Combat", "node_type": "chapter", "level": 1,
@@ -24,7 +24,16 @@ def make_map():
             "section_count": 4, "block_count": 5, "mapped_block_count": 4,
             "coverage": 0.8, "unmapped_block_count": 1, "uncertain_section_ids": [],
         },
-    })
+    }
+    for section in data["sections"]:
+        section["confidence"] = 1.0
+        section["mapping_status"] = "verified"
+        section["pages"] = {"start": 1, "end": 1}
+        section["block_ids"] = section["source_block_ids"]
+        section["caption_block_ids"] = []
+        section["chunk_ids"] = []
+        section["content_types"] = ["paragraph"]
+    return BookMapRead.model_validate(data)
 
 
 def block(id, text, order):

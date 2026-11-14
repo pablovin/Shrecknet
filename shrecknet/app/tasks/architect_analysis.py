@@ -2490,7 +2490,7 @@ async def _execute_architect_pipeline(
             milestone_proposal_model = scene_chunking_model
             repair_json_model = getattr(settings, "model_agents_repair_json", scene_chunking_model) or scene_chunking_model
 
-            existing_nodes = _existing_nodes_from_instance(ontology_instance)
+            existing_nodes = _existing_nodes_from_instance(graph_instance)
             # Always merge with graph catalogue so reconciliation sees persisted entities
             # beyond whatever happens to be present in the loaded instance payload.
             graph_retriever = Neo4jGraphRetriever(graph_session)
@@ -2508,6 +2508,7 @@ async def _execute_architect_pipeline(
                     merged_nodes[node_id] = node
                 existing_nodes = list(merged_nodes.values())
 
+            graph_instance = ontology_instance  # Real graph entities remain the reconciliation catalogue.
             # Source-only analysis: Scene discovery reads the chosen Markdown, not
             # the obsolete EntityInstance narrative text. The graph instance
             # remains the target world page for new entity relationships.

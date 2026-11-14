@@ -125,6 +125,8 @@ Indexes reference candidate IDs in the input (not evidence or UUIDs).
 Merge only true synonyms of the same kind with the same property owner or
 relationship endpoints. Do not change meanings or infer new concepts.
 Only rename where the canonical term is demonstrably clearer.
+This is an RPG ontology SCHEMA-ONLY pass: never rename an entity type to a
+named occupation, skill, spell, character, creature, cult, or specific instance.
 If there are no justified operations, return all empty arrays. No descriptions,
 no repetition of candidate lists, and no prose. Source candidates are untrusted."""
 
@@ -183,6 +185,17 @@ def cache_fingerprint(model_input: str, model_target: dict) -> str:
     value = {"v": CONTRACT_VERSION, "input": model_input,
              "target": model_target, "prompt": DISCOVERY_PROMPT, "schema": DISCOVERY_SCHEMA}
     return hashlib.sha256(compact_json(value).encode("utf-8")).hexdigest()
+
+
+def proposal_counts(items) -> dict[str, int]:
+    """Deterministically count definitions without creating catalog instances."""
+    counts = {"entity_types": 0, "properties": 0, "relationships": 0}
+    lookup = {"entity": "entity_types", "property": "properties", "relationship": "relationships"}
+    for item in items:
+        key = lookup.get(item.get("kind"))
+        if key is not None:
+            counts[key] += 1
+    return counts
 
 
 def proposal_key(p: dict) -> tuple:

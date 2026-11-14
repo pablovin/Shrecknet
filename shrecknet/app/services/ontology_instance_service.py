@@ -3222,6 +3222,13 @@ class OntologyInstanceService:
             instance_id=instance_id,
             milestones=payload.milestones,
         )
+        for milestone in normalized_milestones:
+            source = milestone.derived_from
+            if source.source_id and (
+                source.source_id != payload.derived_from.source_id
+                or source.section_id != payload.derived_from.section_id
+            ):
+                raise ValueError("Nested Milestones must reference the containing Scene Source")
 
         now_str = _format_dt(datetime.utcnow())
         tx = await self.graph_session.begin_transaction()

@@ -9,6 +9,7 @@ import httpx
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shreckconfig.shreckworld import (
+    ArchitectOntologyModelTarget,
     DEFAULT_EMBEDDING_BACKEND, EmbeddingBackend, EmbeddingDevice, ParserDevice, ParserDeviceSetting, PdfParser,
     TableFormerMode, read_runtime_config, runtime_config_file,
 )
@@ -19,6 +20,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SHRECKWORLD_", extra="ignore", env_ignore_empty=True)
 
     app_name: str = "ShreckWorld"
+    model_architect_ontology_discovery: ArchitectOntologyModelTarget = Field(default_factory=ArchitectOntologyModelTarget)
+    model_architect_ontology_schema: ArchitectOntologyModelTarget = Field(default_factory=ArchitectOntologyModelTarget)
+    model_architect_ontology_reconciliation: ArchitectOntologyModelTarget = Field(default_factory=ArchitectOntologyModelTarget)
     database_url: str = "sqlite:///./databases/shreckworld.db"
     media_root: Path = Path("./media")
     media_base_url: str = "/media"
@@ -97,6 +101,8 @@ def get_settings(*, check_mineru: bool = False) -> Settings:
     runtime_fields = {
         "embedding_backend", "embedding_device", "pdf_parser",
         "parser_table_structure_enabled", "parser_table_former_mode",
+        "model_architect_ontology_discovery", "model_architect_ontology_schema",
+        "model_architect_ontology_reconciliation",
     }
     configured = {}
     if shared is not None:

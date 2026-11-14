@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.ontology_instance import SceneDerivedFrom, MilestoneDerivedFrom
+from app.services.architect_passages import milestone_source_passage
 from app.services.architect_source_documents import (
     list_architect_sources, load_architect_source, _media_file,
 )
@@ -99,3 +100,36 @@ def test_scene_and_milestone_can_use_source_without_graph_entity():
         SceneDerivedFrom(section_id="orphan-section")
     with pytest.raises(ValidationError):
         MilestoneDerivedFrom(source_id="source-1")
+
+
+def test_milestone_specific_paragraph_citation_is_preserved():
+    scene = {"start_paragraph": 10, "end_paragraph": 15,
+             "source_paragraphs_absolute": [10, 11, 12, 13, 14, 15]}
+    exact = {"source_paragraphs_absolute": [11, 13], "provenance_status": "architect"}
+    assert milestone_source_passage(exact, scene) == {
+        "start_paragraph": 11, "end_paragraph": 13,
+        "source_paragraphs_absolute": [11, 13],
+        "provenance_status": "architect",
+    }
+    # An unrelated paragraph marker cannot masquerade as passage evidence.
+    forged = {"source_paragraphs_absolute": [11, 99], "provenance_status": "architect"}
+    inherited = milestone_source_passage(forged, scene)
+    assert inherited["provenance_status"] == "scene_inherited"
+    assert inherited["start_paragraph"] == 10
+    assert inherited["end_paragraph"] == 15
+    assert milestone_source_passage({}, {})["provenance_status"] == "document_only"
+    assert milestone_source_passage(exact, {"start_paragraph": "invalid",
+            "end_paragraph": 20})["start_paragraph"] is None
+
+
+def test_partial_legacy_source_references_remain_readable():
+    legacy_scene = SceneDerivedFrom(
+        entity_instance_id="entity-1", source_id="source-1",
+        provenance_status="document_only",
+    )
+    legacy_milestone = MilestoneDerivedFrom(
+        entity_instance_id="entity-1", source_id="source-1",
+        provenance_status="document_only",
+    )
+    assert legacy_scene.section_id is None
+    assert legacy_milestone.section_id is None

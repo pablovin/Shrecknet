@@ -141,6 +141,21 @@ def load_architect_source(
     return selected, text
 
 
+def source_belongs_to_ontology(ontology_id: int, source_id: str) -> bool:
+    """Check a legacy graph-linked Source without assuming it has a Markdown file.
+
+    Legacy records can validly identify a Source but not its exact section.
+    This ownership check never treats that partial reference as a verified
+    paragraph-level citation.
+    """
+    with _connection() as db:
+        row = db.execute("""
+            SELECT 1 FROM shreckworld_library_items
+            WHERE ontology_id=? AND id=? AND source_type='narrative' LIMIT 1
+        """, (ontology_id, source_id)).fetchone()
+        return row is not None
+
+
 def imported_narrative_entity_ids(ontology_id: int) -> set[str]:
     """Narrative graph documents migrated to ShreckWorld (never graph authority)."""
     try:

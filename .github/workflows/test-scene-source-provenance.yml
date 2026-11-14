@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/scene-source-paragraph-provenance
+      - feature/sources-first-architect-scenes-milestones
   pull_request:
     paths:
       - "shrecknet/**"
@@ -37,12 +38,19 @@ jobs:
             shrecknet/app/services/ontology_instance_service.py \
             shrecknet/app/services/scene_source_reference.py \
             shrecknet/app/tasks/architect_generation.py \
+            shrecknet/app/tasks/architect_analysis.py \
+            shrecknet/app/services/architect_source_documents.py \
+            shrecknet/app/services/character_embodiment_service.py \
+            shrecknet/app/services/character_agent_service.py \
+            shrecknet/app/integrations/retrieval/neo4j_retriever.py \
+            shrecknet/app/graphrag/semantic_v2/service.py \
+            shrecknet/app/graphrag/semantic_v2/renderers.py \
             shrecknet/app/celery_queue_reaper.py \
             shreckworld/app/services/scene_source_provenance_import.py \
             shreckworld/app/main.py
       - name: Run Shrecknet contract and archival tests
         working-directory: shrecknet
-        run: python -m pytest --noconftest tests/test_scene_source_provenance.py -q
+        run: python -m pytest --noconftest tests/test_scene_source_provenance.py tests/test_sources_first_architect.py -q
       - name: Run ShreckWorld backfill and importer tests
         working-directory: shreckworld
         run: python -m pytest tests/test_scene_source_provenance_import.py -q

@@ -264,6 +264,18 @@ async def _execute_generation(
                 )
 
             instance = await service.get_instance(run.ontology_instance_id)
+            # Source-first runs pin the exact Markdown revision used in analysis.
+            # User edits to the review payload cannot substitute another Source.
+            source_snapshot = None
+            if (run.settings or {}).get("source_id"):
+                from app.services.architect_source_documents import load_architect_source
+                source_snapshot, _ = await asyncio.to_thread(
+                    load_architect_source, int(ontology_id),
+                    str(run.settings["source_id"]), run.settings.get("section_id"),
+                )
+                if (source_snapshot.content_sha256 != run.settings.get("source_content_sha256")
+                        or source_snapshot.source_revision != run.settings.get("source_revision")):
+                    raise ValueError("Architect Source changed since analysis; reanalyze the current Markdown")
             existing_entities_map = {
                 entity.entity_instance_id: {
                     "alias": entity.alias,
@@ -640,8 +652,8 @@ async def _execute_generation(
             instance_entity_ids = set(existing_entities_map.keys())
             existing_entity_ids = instance_entity_ids | set(created_entity_ids)
             default_source_entity_id = next(iter(sorted(instance_entity_ids)), None)
-            if default_source_entity_id is None:
-                raise ValueError("No entity available to anchor derived_from for scenes")
+            if default_source_entity_id is None and source_snapshot is None:
+                raise ValueError("No entity available for legacy graph-derived Scenes")
 
             if retry_enrichment_only:
                 for scene in approved_scenes:
@@ -669,8 +681,10 @@ async def _execute_generation(
                     len(approved_scenes),
                 )
                 for scene in approved_scenes:
-                    source_entity_id = scene.get("source_entity_instance_id") or default_source_entity_id
-                    if source_entity_id not in instance_entity_ids:
+                    source_entity_id = None if source_snapshot is not None else (
+                        scene.get("source_entity_instance_id") or default_source_entity_id
+                    )
+                    if source_snapshot is None and source_entity_id not in instance_entity_ids:
                         source_entity_id = default_source_entity_id
 
                     scene_ref = str(scene.get("scene_ref") or "")
@@ -697,12 +711,14 @@ async def _execute_generation(
                     impacted_entity_ids |= related_entity_ids
                     expected_scene_relation_links += len(related_entity_ids)
 
-                    # Resolve the authoritative ShreckWorld identity from the
-                    # imported graph mapping; do not trust user-editable proposals.
-                    from app.services.scene_source_reference import resolve_source_reference
-                    source_reference = resolve_source_reference(
-                        int(ontology_id), run.ontology_instance_id, source_entity_id
-                    )
+                    if source_snapshot is not None:
+                        source_reference = source_snapshot.public()
+                    else:
+                        # Legacy source migration remains available during cutover.
+                        from app.services.scene_source_reference import resolve_source_reference
+                        source_reference = resolve_source_reference(
+                            int(ontology_id), run.ontology_instance_id, source_entity_id,
+                        )
                     payload = SceneCreate(
                         id=scene_id,
                         name=str(scene.get("effective_name") or scene.get("scene_name") or "Scene"),
@@ -714,9 +730,8 @@ async def _execute_generation(
                             source_id=source_reference.get("source_id"),
                             section_id=source_reference.get("section_id"),
                             markdown_asset_id=source_reference.get("markdown_asset_id"),
-                            # Source text may have been edited after Architect
-                            # analyzed the legacy entity; no revision is claimed.
-                            source_revision=None,
+                            source_revision=(source_snapshot.source_revision
+                                             if source_snapshot is not None else None),
                             start_paragraph=scene.get("start_paragraph"),
                             end_paragraph=scene.get("end_paragraph"),
                             source_paragraphs_absolute=scene.get("source_paragraphs_absolute") or [],
@@ -798,12 +813,12 @@ async def _execute_generation(
 
                 for milestone in milestones:
                     milestone_id = str(milestone.get("milestone_ref") or uuid4())
-                    source_entity_id = _pick_scene_source_entity(
+                    source_entity_id = None if source_snapshot is not None else _pick_scene_source_entity(
                         scene_ref=scene_ref,
                         scene_proposals=approved_scenes,
                         fallback=default_source_entity_id,
                     )
-                    if source_entity_id not in instance_entity_ids:
+                    if source_snapshot is None and source_entity_id not in instance_entity_ids:
                         source_entity_id = default_source_entity_id
                     relates = []
                     milestone_relation_pairs: set[tuple[str, str]] = set()
@@ -849,7 +864,31 @@ async def _execute_generation(
                         created_by_author=author_id,
                         boundary_type=milestone.get("boundary_type") or "none",
                         local_order=MilestoneLocalOrder(preceded_by_milestone_id=prev_milestone_id),
-                        derived_from=MilestoneDerivedFrom(entity_instance_id=source_entity_id),
+                        derived_from=MilestoneDerivedFrom(
+                            entity_instance_id=source_entity_id,
+                            source_id=source_snapshot.source_id if source_snapshot else None,
+                            section_id=source_snapshot.section_id if source_snapshot else None,
+                            markdown_asset_id=source_snapshot.markdown_asset_id if source_snapshot else None,
+                            source_revision=source_snapshot.source_revision if source_snapshot else None,
+                            # The exact Milestone passage is not independently
+                            # established by extraction. Anchor it to the
+                            # containing Scene range, never invent a narrower one.
+                            start_paragraph=(
+                                next((sc.get("start_paragraph") for sc in approved_scenes
+                                      if sc.get("scene_ref") == scene_ref), None)
+                                if source_snapshot else None
+                            ),
+                            end_paragraph=(
+                                next((sc.get("end_paragraph") for sc in approved_scenes
+                                      if sc.get("scene_ref") == scene_ref), None)
+                                if source_snapshot else None
+                            ),
+                            source_paragraphs_absolute=(
+                                next((sc.get("source_paragraphs_absolute") for sc in approved_scenes
+                                      if sc.get("scene_ref") == scene_ref), []) or []
+                            ) if source_snapshot else [],
+                            provenance_status="scene_inherited" if source_snapshot else None,
+                        ),
                         relates_to=relates,
                     )
                     await service.create_milestone(

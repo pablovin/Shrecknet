@@ -141,6 +141,22 @@ def load_architect_source(
     return selected, text
 
 
+def get_narrative_source_info(ontology_id: int, source_id: str) -> dict | None:
+    """Scoped document metadata for legacy provenance without paragraph section."""
+    with _connection() as db:
+        row = db.execute("""
+            SELECT id, title, description, source_revision
+            FROM shreckworld_library_items
+            WHERE ontology_id=? AND id=? AND source_type='narrative'
+        """, (ontology_id, source_id)).fetchone()
+        return {
+            "source_id": str(row["id"]),
+            "title": str(row["title"]),
+            "description": str(row["description"] or ""),
+            "revision": int(row["source_revision"]),
+        } if row is not None else None
+
+
 def source_belongs_to_ontology(ontology_id: int, source_id: str) -> bool:
     """Check a legacy graph-linked Source without assuming it has a Markdown file.
 

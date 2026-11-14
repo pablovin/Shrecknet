@@ -549,7 +549,7 @@ async def list_world_architect_sources(
     session: AsyncSession = Depends(get_db_session),
     instances: OntologyInstanceService = Depends(get_ontology_instance_service),
 ) -> list[dict[str, Any]]:
-    """Markdown-backed Narrative Sources, with a Has Scenes flag per section."""
+    """Markdown-backed Narrative Sources, including document-only legacy Scene links."""
     from app.services.creative_workshop_service import require_workshop_world
     from app.services.architect_source_documents import list_architect_sources
     await require_workshop_world(session, ontology_id)
@@ -566,12 +566,20 @@ async def list_world_architect_sources(
             RETURN scene.source_id AS source_id, scene.source_section_id AS section_id,
                    count(scene) AS scene_count
         """, ontology_id=ontology_id)
-        counts = {(str(row["source_id"]), str(row["section_id"])): int(row["scene_count"])
-                  for row in await result.data()}
+        counts: dict[tuple[str, str | None], int] = {}
+        totals: dict[str, int] = {}
+        for record in await result.data():
+            source_id = str(record["source_id"])
+            section_id = record.get("section_id")
+            count = int(record["scene_count"])
+            counts[(source_id, str(section_id) if section_id is not None else None)] = count
+            totals[source_id] = totals.get(source_id, 0) + count
         for row in rows:
-            count = counts.get((row["source_id"], row["section_id"]), 0)
-            row["scene_count"] = count
-            row["has_scenes"] = count > 0
+            section_count = counts.get((row["source_id"], row["section_id"]), 0)
+            source_count = totals.get(row["source_id"], 0)
+            row["scene_count"] = source_count
+            row["section_scene_count"] = section_count
+            row["has_scenes"] = source_count > 0
     return rows
 
 

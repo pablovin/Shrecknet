@@ -24,7 +24,7 @@ from app.services.ontology_discovery_batches import build_discovery_batches
 from app.services.ontology_compact import (
     CONTRACT_VERSION, DISCOVERY_SCHEMA, DISCOVERY_PROMPT, RECONCILIATION_SCHEMA,
     RECONCILIATION_PROMPT, CompactContractError, model_window, cache_fingerprint,
-    parse_discovery, proposal_key, accumulate, ambiguous_groups,
+    parse_discovery, accumulate, ambiguous_groups, parse_model_response,
     reconciliation_input, apply_reconciliation,
 )
 from app.integrations.shreckllm import generate_shreckworld_structured_output
@@ -32,26 +32,9 @@ from app.services import ontology_studio
 from app.services.ontology_run_reporting import progress, record_llm_usage
 
 logger = logging.getLogger(__name__)
-TRUNCATED_REASONS = {"length", "max_tokens", "max_output_tokens"}
-
 
 def model(run: OntologyLearnRun, stage: str) -> ShreckWorldModelTarget:
     return ShreckWorldModelTarget.model_validate(run.model_targets[stage])
-
-
-def _json_result(response, *, stage: str) -> dict:
-    finish = str(response.finish_reason or "").lower()
-    if finish in TRUNCATED_REASONS:
-        raise CompactContractError(stage + "_output_truncated")
-    if finish in {"content_filter", "refusal", "error"}:
-        raise CompactContractError(stage + "_generation_refused")
-    try:
-        data = json.loads(response.text)
-    except (ValueError, TypeError) as exc:
-        raise CompactContractError(stage + "_invalid_json") from exc
-    if not isinstance(data, dict):
-        raise CompactContractError(stage + "_invalid_envelope")
-    return data
 
 
 def _chapter_sent(db, run: OntologyLearnRun, item, doc, batch) -> None:
@@ -149,7 +132,7 @@ def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
         row.output_tokens = max(0, response.output_tokens or 0)
         record_llm_usage(db, run, input_tokens=response.input_tokens,
                          output_tokens=response.output_tokens)
-        data = _json_result(response, stage="discovery")
+        data = parse_model_response(response, stage="discovery")
         base = {
             "source_id": item.id, "document_id": doc.id,
             "content_digest": doc.source_sha256, "chapter_id": batch["chapter_id"],
@@ -198,7 +181,7 @@ def _reconcile(db, run: OntologyLearnRun, found: dict) -> list[dict] | None:
             max_tokens=900, model_target=model(run, "reconciliation"))
         record_llm_usage(db, run, input_tokens=response.input_tokens,
                          output_tokens=response.output_tokens)
-        data = _json_result(response, stage="reconciliation")
+        data = parse_model_response(response, stage="reconciliation")
         discarded.update(apply_reconciliation(candidates, indices, data))
         if not progress(db, run, 75 + int(19 * (position + 1) / len(groups)), "reconciling", {
             "event": "reconciliation_group_completed", "group_index": position + 1,

@@ -10,6 +10,7 @@ on:
       - "shreckworld/app/tasks/architect_learn_ontology.py"
       - "shreckworld/tests/test_ontology_studio.py"
       - "shreckworld/tests/test_ontology_discovery_batches.py"
+      - "shreckworld/tests/test_ontology_job_monitor.py"
       - "shreckconfig/**"
       - ".github/workflows/test-ontology-studio.yml"
   workflow_dispatch:
@@ -43,4 +44,4 @@ jobs:
             shrecknet/app/api/routers/configurations.py
       - name: Focused ontology regression tests
         working-directory: shreckworld
-        run: python -m pytest tests/test_ontology_studio.py tests/test_ontology_discovery_batches.py -q
+        run: python -m pytest tests/test_ontology_studio.py tests/test_ontology_discovery_batches.py tests/test_ontology_job_monitor.py -q

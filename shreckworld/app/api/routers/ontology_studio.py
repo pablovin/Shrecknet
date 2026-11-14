@@ -15,7 +15,7 @@ from app.models.document import (
     ShreckWorldDocumentBookMap,
 )
 from app.models.shreckworld import ShreckWorldLibraryItem
-from app.models.ontology_studio import OntologyLearnRun, OntologyLearnSource, OntologyLearnChapter, OntologyRevision
+from app.models.ontology_studio import OntologyLearnRun, OntologyLearnSource, OntologyLearnChapter, OntologyLearnWindow, OntologyRevision
 from app.services import ontology_studio as service
 from app.services.ontology_discovery_batches import build_discovery_batches
 from app.services.book_map_contract import read_book_map
@@ -286,6 +286,29 @@ def get_run(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
     if run is None or run.ontology_id != ontology_id:
         raise HTTPException(404, "Run not found")
     return run_response(run)
+
+@router.get("/runs/{run_id}/windows")
+def list_run_windows(ontology_id: int, run_id: str,
+                     token: str = Depends(oauth2_scheme),
+                     _: ShrecknetPrincipal = Depends(require_world_manager),
+                     db: Session = Depends(get_db)):
+    auth(ontology_id, token)
+    run = db.get(OntologyLearnRun, run_id)
+    if run is None or run.ontology_id != ontology_id:
+        raise HTTPException(404, "Run not found")
+    rows = db.scalars(select(OntologyLearnWindow).where(
+        OntologyLearnWindow.run_id == run_id,
+        OntologyLearnWindow.ontology_id == ontology_id,
+    ).order_by(OntologyLearnWindow.source_id,
+               OntologyLearnWindow.chapter_id, OntologyLearnWindow.window_index))
+    return [{"id": row.id, "source_id": row.source_id,
+             "chapter_id": row.chapter_id, "chapter_title": row.chapter_title,
+             "window_index": row.window_index,
+             "contract_version": row.contract_version, "status": row.status,
+             "cached": row.cached, "proposals_count": len(row.proposals or []),
+             "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
+             "error_code": row.error_code, "finished_at": row.finished_at}
+            for row in rows]
 
 @router.post("/runs/{run_id}/cancel")
 def cancel(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),

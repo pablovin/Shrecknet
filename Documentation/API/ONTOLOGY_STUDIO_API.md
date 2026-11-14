@@ -1,6 +1,6 @@
 # Ontology Studio — Learn Ontology (backend API)
 
-Status: backend feature branch; ShreckOS frontend integration remains in the separate `ShrecknetFrontend` repository.
+Status: Ontology Studio backend is merged into Shrecknet main. ShreckOS Apps frontend resides in `pablovin/ShreckRPG/shreckos`.
 
 ## Ownership and isolation
 
@@ -14,11 +14,11 @@ API prefix: `/api/v1/ontology-studio/worlds/{ontology_id}`.
 
 ## Configure the Architect
 
-Shrecknet Setup → Architect model targets now exposes **three independent** choices:
+Shrecknet Setup exposes the Architect ontology targets. The active extraction pipeline uses **two model calls types**, not three consecutive readings:
 
-- `model_architect_ontology_discovery`: discover concepts in source sections
-- `model_architect_ontology_schema`: extract typed fields and relationships
-- `model_architect_ontology_reconciliation`: reconcile concepts and evidence with the current ontology
+- `model_architect_ontology_discovery`: **combined discovery + schema extraction** per Bookmap chapter/window (entity types, typed properties, relationships and evidence in one response).
+- `model_architect_ontology_reconciliation`: normalize and compare proposed definitions with the existing ontology.
+- `model_architect_ontology_schema`: retained as a compatibility setting for existing configurations; the active combined pipeline does not invoke it.
 
 Each choice uses the normal target contract: `provider`, `name`,
 `reasoning`, `reasoning_effort`, and `web_search_enabled`. Defaults use
@@ -66,7 +66,7 @@ IDs are UUIDs, not display names.
 The server verifies all selected Sources are **explanatory** and have a
 current active Bookmap. It pins document IDs and content digests before queueing.
 The task reads Bookmap V3/V4 and persisted blocks without re-indexing.
-Three independently configured model stages produce evidence-backed proposals.
+Combined entity/schema discovery and a separate reconciliation model produce evidence-backed proposals. Source blocks are visited once, grouped by Bookmap chapter, with subsection headings retained. Long chapters are divided into bounded, non-overlapping ~24,000-character windows. Text blocks beyond one window are fragmented without truncation.
 The task never writes approved entity definitions.
 
 Runs advance through `queued`, `running`, `awaiting_review`, and

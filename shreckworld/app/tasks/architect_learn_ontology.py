@@ -13,7 +13,7 @@ from app.models.document import (ShreckWorldDocument, ShreckWorldDocumentBookMap
 from app.models.shreckworld import ShreckWorldLibraryItem
 from app.schemas.shreckworld import ShreckWorldModelTarget
 from app.services.book_map_contract import read_book_map
-from app.schemas.book_map import BookMapV4
+from app.services.ontology_discovery_batches import build_discovery_batches
 from app.integrations.shreckllm import generate_shreckworld_structured_output
 from app.services import ontology_studio
 
@@ -41,7 +41,7 @@ PROMPT = """You are the Architect's ontology discovery engine. Learn schema defi
 from an RPG reference source. Discover entity TYPES, typed PROPERTIES belonging to
 entity types, and directed RELATIONSHIPS between entity types. Distinguish instances
 (e.g. a named weapon or specific skill) from types. Do not invent unsupported fields.
-Return each discovered concept with exact input evidence_block_ids. Always include
+Extract the complete chapter passage into one combined entity/field/relationship schema.\nReturn each discovered concept with exact input evidence_block_ids. Always include
 the types referenced by properties and relationships when supported. Allowed types:
 text, integer, number, boolean, date, datetime, json, image, url. If the source
 is ambiguous or lacks evidence, omit the proposal. Output strictly the schema."""
@@ -102,55 +102,25 @@ def run_ontology_discovery(run_id: str) -> None:
                     doc.library_item_id != item.id or doc.source_sha256 != source["content_digest"]):
                     raise ValueError("pinned_source_unavailable")
                 mapped = read_book_map(book.payload)
-                nodes = mapped.nodes if isinstance(mapped, BookMapV4) else mapped.sections
                 blocks = {b.id: b for b in db.scalars(select(ShreckWorldDocumentBlock).where(
                     ShreckWorldDocumentBlock.document_id == doc.id))}
-                seen = set()
-                batches = []
-                current, size = [], 0
-                for section in nodes:
-                    values = []
-                    for block_id in section.source_block_ids:
-                        if block_id in seen or block_id not in blocks:
-                            continue
-                        seen.add(block_id)
-                        block = blocks[block_id]
-                        values.append({"id": block_id, "text": block.display_text[:5000],
-                                       "type": block.block_type})
-                    if not values:
-                        continue
-                    group = {"heading_path": section.heading_path, "blocks": values}
-                    length = sum(len(x["text"]) for x in values)
-                    if current and size + length > 12000:
-                        batches.append(current)
-                        current, size = [], 0
-                    current.append(group)
-                    size += length
-                if current:
-                    batches.append(current)
+                # One combined entity+schema extraction per bounded chapter window.
+                # Chapters provide semantic context; subsections preserve provenance.
+                batches = build_discovery_batches(mapped, blocks)
                 for bi, batch in enumerate(batches):
                     if not progress(db, run, 5 + int(65 * (si + bi / max(1, len(batches))) / total),
                                     "discovering"):
                         return
-                    allowed = {b["id"] for group in batch for b in group["blocks"]}
+                    allowed = {b["id"] for group in batch["sections"] for b in group["blocks"]}
+                    block_sections = {b["id"]: group for group in batch["sections"] for b in group["blocks"]}
                     raw = generate_shreckworld_structured_output(
                         usage_tag="architect_ontology_discovery", system_prompt=PROMPT,
-                        user_content=json.dumps({"source_title": item.title, "sections": batch},
+                        user_content=json.dumps({"source_title": item.title, **batch},
                                                 ensure_ascii=False),
                         schema_name="architect_ontology_discovery", response_schema=SCHEMA,
                         max_tokens=6000, model_target=model(run, "discovery"))
                     result = json.loads(raw)
-                    # Independent schema-learning model extracts typed fields and edges.
-                    schema_raw = generate_shreckworld_structured_output(
-                        usage_tag="architect_ontology_schema",
-                        system_prompt=(PROMPT + "\\nPrioritize property types, relationships, "
-                                       "cardinality hints and inherited attributes. Do not invent facts."),
-                        user_content=json.dumps({"source_title": item.title, "sections": batch},
-                                                ensure_ascii=False),
-                        schema_name="architect_ontology_schema", response_schema=SCHEMA,
-                        max_tokens=6000, model_target=model(run, "schema"))
-                    schema_result = json.loads(schema_raw)
-                    for candidate in result["proposals"] + schema_result["proposals"]:
+                    for candidate in result["proposals"]:
                         evidence_ids = candidate["evidence_block_ids"]
                         if not candidate["name"].strip() or not set(evidence_ids) <= allowed:
                             raise ValueError("invalid_ontology_evidence")
@@ -160,8 +130,14 @@ def run_ontology_discovery(run_id: str) -> None:
                         if candidate["kind"] == "relationship" and (
                             not candidate["source"].strip() or not candidate["target"].strip()):
                             continue
+                        section_ids = list(dict.fromkeys(
+                            block_sections[block_id]["section_id"] for block_id in evidence_ids
+                        ))
                         evidence = {"source_id": item.id, "document_id": doc.id,
-                            "content_digest": doc.source_sha256, "block_ids": evidence_ids}
+                            "content_digest": doc.source_sha256, "block_ids": evidence_ids,
+                            "chapter_id": batch["chapter_id"],
+                            "chapter_title": batch["chapter_title"],
+                            "section_ids": section_ids}
                         proposal = normalize(candidate, evidence)
                         key = proposal_key(proposal)
                         if key in found:

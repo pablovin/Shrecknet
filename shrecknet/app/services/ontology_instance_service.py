@@ -3457,7 +3457,7 @@ class OntologyInstanceService:
     async def update_scene(
         self, instance_id: str, scene_id: str, payload: SceneUpdate
     ) -> SceneRead:
-        await self.get_scene(instance_id, scene_id)
+        current_scene = await self.get_scene(instance_id, scene_id)
         updates: dict[str, Any] = {}
         if payload.name is not None:
             updates["name"] = payload.name
@@ -3615,7 +3615,7 @@ class OntologyInstanceService:
             derived_count = int(derived_count_record["derived_count"] or 0) if derived_count_record else 0
             if derived_count > 1 or (derived_count == 0 and not (
                 (payload.derived_from and payload.derived_from.source_id) or
-                (await self.get_scene(instance_id, scene_id)).derived_from.source_id
+                current_scene.derived_from.source_id
             )):
                 raise ValueError("Scene must have one legacy entity or a ShreckWorld Source")
         except Exception:

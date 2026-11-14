@@ -79,6 +79,7 @@ class OntologyLearnRun(Base):
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     stage: Mapped[str] = mapped_column(String(40), default="queued", nullable=False)
     proposals: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    proposal_revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     diagnostics: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -810,6 +810,10 @@ async def _execute_generation(
                 milestones = [m for m in milestones if _is_approved(m.get("status", "approved"))]
                 milestones.sort(key=lambda m: int(m.get("milestone_order") or 0))
                 prev_milestone_id: str | None = None
+                source_scene = next(
+                    (candidate for candidate in approved_scenes if candidate.get("scene_ref") == scene_ref),
+                    {},
+                )
 
                 for milestone in milestones:
                     milestone_id = str(milestone.get("milestone_ref") or uuid4())
@@ -870,24 +874,8 @@ async def _execute_generation(
                             section_id=source_snapshot.section_id if source_snapshot else None,
                             markdown_asset_id=source_snapshot.markdown_asset_id if source_snapshot else None,
                             source_revision=source_snapshot.source_revision if source_snapshot else None,
-                            # The exact Milestone passage is not independently
-                            # established by extraction. Anchor it to the
-                            # containing Scene range, never invent a narrower one.
-                            start_paragraph=(
-                                next((sc.get("start_paragraph") for sc in approved_scenes
-                                      if sc.get("scene_ref") == scene_ref), None)
-                                if source_snapshot else None
-                            ),
-                            end_paragraph=(
-                                next((sc.get("end_paragraph") for sc in approved_scenes
-                                      if sc.get("scene_ref") == scene_ref), None)
-                                if source_snapshot else None
-                            ),
-                            source_paragraphs_absolute=(
-                                next((sc.get("source_paragraphs_absolute") for sc in approved_scenes
-                                      if sc.get("scene_ref") == scene_ref), []) or []
-                            ) if source_snapshot else [],
-                            provenance_status="scene_inherited" if source_snapshot else None,
+                            **(_milestone_source_passage(milestone, source_scene)
+                               if source_snapshot is not None else {}),
                         ),
                         relates_to=relates,
                     )
@@ -2264,6 +2252,38 @@ def _merge_summaries(existing_summary: str, candidate: str) -> str:
     if not existing_summary:
         return candidate
     return f"{existing_summary}\n\n{candidate}"
+
+
+def _milestone_source_passage(milestone: dict[str, Any], scene: dict[str, Any]) -> dict[str, Any]:
+    """Use exact Milestone paragraph IDs when supported by the containing Scene.
+
+    The LLM's paragraph citations are never treated as authoritative unless
+    they are a valid subset of the Scene's reviewed source passage. When the
+    citation is missing or invalid, inherit the Scene span explicitly.
+    """
+    begin, end = scene.get("start_paragraph"), scene.get("end_paragraph")
+    scene_ids = scene.get("source_paragraphs_absolute") or []
+    raw = milestone.get("source_paragraphs_absolute")
+    in_range = lambda x: isinstance(x, int) and not isinstance(x, bool) and (
+        begin is not None and end is not None and begin <= x <= end
+    )
+    if (milestone.get("provenance_status") == "architect"
+            and isinstance(raw, list) and raw
+            and all(in_range(i) for i in raw)
+            and raw == sorted(set(raw))
+            and (not scene_ids or set(raw).issubset(set(scene_ids)))):
+        return {
+            "start_paragraph": raw[0],
+            "end_paragraph": raw[-1],
+            "source_paragraphs_absolute": raw,
+            "provenance_status": "architect",
+        }
+    return {
+        "start_paragraph": begin if in_range(begin) and in_range(end) else None,
+        "end_paragraph": end if in_range(begin) and in_range(end) else None,
+        "source_paragraphs_absolute": scene_ids if in_range(begin) and in_range(end) else [],
+        "provenance_status": "scene_inherited" if in_range(begin) and in_range(end) else "document_only",
+    }
 
 
 def _pick_scene_source_entity(

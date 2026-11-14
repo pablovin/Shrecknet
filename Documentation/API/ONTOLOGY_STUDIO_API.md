@@ -67,15 +67,16 @@ IDs are UUIDs, not display names.
 `chapter_ids` is optional for compatibility. Omitted source entries mean all
 chapters with indexed text in that source's active Book Map. The ShreckOS
 chapter picker defaults to all chapters and can submit a subset. `/sources`
-returns each source's chapter `id`, `title`, and `sent` flag. A chapter becomes
-sent after its model request succeeds; state is scoped to the active document
-digest, so replacing or reindexing a source presents its chapters as unsent.
-The chapter ledger is stored in an additive ShreckWorld table.
+returns each source's chapter `id`, `title`, and `sent` flag. A chapter is shown as sent only after every window under the active
+`ontology-schema-v3` contract completed successfully in the same run, for the
+active document digest. Legacy V2 sends do not count as V3 extraction, and
+changing the document digest marks its chapters unsent. Window checkpoints are
+stored in the additive ShreckWorld table.
 
 The server verifies all selected Sources are **explanatory** and have a
 current active Bookmap. It pins document IDs and content digests before queueing.
 The task reads Bookmap V3/V4 and persisted blocks without re-indexing.
-Combined entity/schema discovery and a separate reconciliation model produce evidence-backed proposals. Source blocks are visited once, grouped by Bookmap chapter, with subsection headings retained. Long chapters are divided into bounded, non-overlapping ~24,000-character windows. Text blocks beyond one window are fragmented without truncation.
+Combined entity/schema discovery and a separate reconciliation model produce evidence-backed proposals. Source blocks are visited once, grouped by Bookmap chapter, with subsection headings retained. Long chapters are divided into bounded, non-overlapping ~3,000-token target windows. Text blocks beyond one window are fragmented without truncation.
 The task never writes approved entity definitions.
 
 ### V3 RPG schema-only extraction (no automatic retries)

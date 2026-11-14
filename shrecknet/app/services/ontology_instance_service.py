@@ -3474,10 +3474,21 @@ class OntologyInstanceService:
             updates['independence_status'] = payload.independence_status
 
         if payload.derived_from is not None:
-            await self._validate_scene_derived_from(
-                instance_id=instance_id,
-                entity_instance_id=payload.derived_from.entity_instance_id,
-            )
+            if payload.derived_from.entity_instance_id:
+                await self._validate_scene_derived_from(
+                    instance_id=instance_id,
+                    entity_instance_id=payload.derived_from.entity_instance_id,
+                )
+            if payload.derived_from.source_id:
+                from app.services.architect_source_documents import load_architect_source
+                document, _ = await asyncio.to_thread(
+                    load_architect_source,
+                    await self._get_instance_ontology_id(instance_id),
+                    payload.derived_from.source_id, payload.derived_from.section_id,
+                )
+                if (payload.derived_from.source_revision is not None and
+                        document.source_revision != payload.derived_from.source_revision):
+                    raise ValueError("Scene Source revision changed")
             # Source identity/range is updated together with DERIVED_FROM.
             # An entity-only update deliberately drops stale passage metadata.
             updates["source_provenance_json"] = json.dumps(
@@ -3548,21 +3559,20 @@ class OntologyInstanceService:
                     instance_id=instance_id,
                 )
 
-            if payload.derived_from is not None:
+            # A Source-only update never erases the old graph provenance edge.
+            if payload.derived_from is not None and payload.derived_from.entity_instance_id:
                 await tx.run(
                     """
                     MATCH (scene:Scene {id: $scene_id})-[rel:DERIVED_FROM]->()
                     DELETE rel
-                    """,
-                    scene_id=scene_id,
+                    """, scene_id=scene_id,
                 )
                 await tx.run(
                     """
                     MATCH (scene:Scene {id: $scene_id})
                     MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
                     MERGE (scene)-[:DERIVED_FROM]->(entity)
-                    """,
-                    scene_id=scene_id,
+                    """, scene_id=scene_id,
                     entity_instance_id=payload.derived_from.entity_instance_id,
                 )
 
@@ -3602,8 +3612,12 @@ class OntologyInstanceService:
                 scene_id=scene_id,
             )
             derived_count_record = await refreshed.single()
-            if not derived_count_record or int(derived_count_record["derived_count"] or 0) != 1:
-                raise ValueError("Scene must have exactly one DERIVED_FROM entity")
+            derived_count = int(derived_count_record["derived_count"] or 0) if derived_count_record else 0
+            if derived_count > 1 or (derived_count == 0 and not (
+                (payload.derived_from and payload.derived_from.source_id) or
+                (await self.get_scene(instance_id, scene_id)).derived_from.source_id
+            )):
+                raise ValueError("Scene must have one legacy entity or a ShreckWorld Source")
         except Exception:
             await tx.rollback()
             await tx.close()

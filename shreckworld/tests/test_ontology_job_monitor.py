@@ -64,7 +64,7 @@ def test_progress_events_are_bounded_for_large_rulebooks():
     for i in range(260):
         assert progress(db, run, i % 100, "discovering", {"event": "window_completed", "completed_windows": i})
     assert len(run.diagnostics) == 250
-    assert api.run_response(run)["activity"]["completed_windows"] == 259
+    assert run_response(run)["activity"]["completed_windows"] == 259
 
 
 def test_queued_cancel_is_terminal_and_running_cancel_is_cooperative():

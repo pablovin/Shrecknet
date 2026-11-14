@@ -21,6 +21,7 @@ from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_effective_architect_concurrency
 from app.jobs.architect.entity_generator import EntityGenerator
+from app.services.architect_passages import milestone_source_passage
 from app.services.creative_workshop_service import workshop_content_author_type
 from app.models.ontology import AuthorType as OntologyAuthorType
 from app.models.architect import ArchitectProposalStatus, ArchitectProposalType, ArchitectRunStatus
@@ -874,7 +875,7 @@ async def _execute_generation(
                             section_id=source_snapshot.section_id if source_snapshot else None,
                             markdown_asset_id=source_snapshot.markdown_asset_id if source_snapshot else None,
                             source_revision=source_snapshot.source_revision if source_snapshot else None,
-                            **(_milestone_source_passage(milestone, source_scene)
+                            **(milestone_source_passage(milestone, source_scene)
                                if source_snapshot is not None else {}),
                         ),
                         relates_to=relates,
@@ -2252,38 +2253,6 @@ def _merge_summaries(existing_summary: str, candidate: str) -> str:
     if not existing_summary:
         return candidate
     return f"{existing_summary}\n\n{candidate}"
-
-
-def _milestone_source_passage(milestone: dict[str, Any], scene: dict[str, Any]) -> dict[str, Any]:
-    """Use exact Milestone paragraph IDs when supported by the containing Scene.
-
-    The LLM's paragraph citations are never treated as authoritative unless
-    they are a valid subset of the Scene's reviewed source passage. When the
-    citation is missing or invalid, inherit the Scene span explicitly.
-    """
-    begin, end = scene.get("start_paragraph"), scene.get("end_paragraph")
-    scene_ids = scene.get("source_paragraphs_absolute") or []
-    raw = milestone.get("source_paragraphs_absolute")
-    in_range = lambda x: isinstance(x, int) and not isinstance(x, bool) and (
-        begin is not None and end is not None and begin <= x <= end
-    )
-    if (milestone.get("provenance_status") == "architect"
-            and isinstance(raw, list) and raw
-            and all(in_range(i) for i in raw)
-            and raw == sorted(set(raw))
-            and (not scene_ids or set(raw).issubset(set(scene_ids)))):
-        return {
-            "start_paragraph": raw[0],
-            "end_paragraph": raw[-1],
-            "source_paragraphs_absolute": raw,
-            "provenance_status": "architect",
-        }
-    return {
-        "start_paragraph": begin if in_range(begin) and in_range(end) else None,
-        "end_paragraph": end if in_range(begin) and in_range(end) else None,
-        "source_paragraphs_absolute": scene_ids if in_range(begin) and in_range(end) else [],
-        "provenance_status": "scene_inherited" if in_range(begin) and in_range(end) else "document_only",
-    }
 
 
 def _pick_scene_source_entity(

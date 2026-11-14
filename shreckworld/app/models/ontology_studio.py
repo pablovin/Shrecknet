@@ -99,6 +99,35 @@ class OntologyLearnSource(Base):
     reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (UniqueConstraint("ontology_id", "source_id", name="uq_ontology_learn_source"),)
 
+
+class OntologyLearnWindow(Base):
+    """Validated per-window checkpoint; supports manual reruns with cached output.
+
+    A new run gets its own checkpoint rows even when reusing a previous
+    successful result. Failed/incomplete windows are never reused.
+    """
+    __tablename__ = "shreckworld_ontology_learn_windows"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("shreckworld_ontology_runs.id", ondelete="CASCADE"), index=True)
+    ontology_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    document_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    content_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    chapter_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    chapter_title: Mapped[str] = mapped_column(String(500), nullable=False)
+    window_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    contract_version: Mapped[str] = mapped_column(String(48), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
+    cached: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    proposals: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint("run_id", "fingerprint", name="uq_ontology_window_per_run"),)
+
 class OntologyLearnChapter(Base):
     """Chapter windows that reached the Architect model for a pinned document."""
     __tablename__ = "shreckworld_ontology_learned_chapters"

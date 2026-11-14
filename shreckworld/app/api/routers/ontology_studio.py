@@ -17,6 +17,7 @@ from app.models.document import (
 from app.models.shreckworld import ShreckWorldLibraryItem
 from app.models.ontology_studio import OntologyLearnRun, OntologyLearnSource, OntologyLearnChapter, OntologyLearnWindow, OntologyRevision
 from app.services import ontology_studio as service
+from app.services.ontology_compact import proposal_counts
 from app.services.ontology_discovery_batches import build_discovery_batches
 from app.services.book_map_contract import read_book_map
 from app.services.ontology_run_reporting import cancel_run, run_response
@@ -306,6 +307,7 @@ def list_run_windows(ontology_id: int, run_id: str,
              "window_index": row.window_index,
              "contract_version": row.contract_version, "status": row.status,
              "cached": row.cached, "proposals_count": len(row.proposals or []),
+             "schema_counts": proposal_counts(row.proposals or []),
              "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
              "error_code": row.error_code, "finished_at": row.finished_at}
             for row in rows]

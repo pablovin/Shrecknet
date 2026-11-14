@@ -542,6 +542,39 @@ async def retry_enrichment_for_run(
     }
 
 
+@router.get("/worlds/{ontology_id}/sources")
+async def list_world_architect_sources(
+    ontology_id: int,
+    actor: User = Depends(require_roles("world_builder")),
+    session: AsyncSession = Depends(get_db_session),
+    instances: OntologyInstanceService = Depends(get_ontology_instance_service),
+) -> list[dict[str, Any]]:
+    """Markdown-backed Narrative Sources, with a Has Scenes flag per section."""
+    from app.services.creative_workshop_service import require_workshop_world
+    from app.services.architect_source_documents import list_architect_sources
+    await require_workshop_world(session, ontology_id)
+    try:
+        documents = list_architect_sources(ontology_id)
+    except (FileNotFoundError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="ShreckWorld Sources are unavailable") from exc
+    rows = [item.public() for item in documents]
+    if rows:
+        result = await instances.graph_session.run("""
+            MATCH (scene:Scene)
+            WHERE toInteger(scene.ontology_id) = $ontology_id
+              AND scene.source_id IS NOT NULL
+            RETURN scene.source_id AS source_id, scene.source_section_id AS section_id,
+                   count(scene) AS scene_count
+        """, ontology_id=ontology_id)
+        counts = {(str(row["source_id"]), str(row["section_id"])): int(row["scene_count"])
+                  for row in await result.data()}
+        for row in rows:
+            count = counts.get((row["source_id"], row["section_id"]), 0)
+            row["scene_count"] = count
+            row["has_scenes"] = count > 0
+    return rows
+
+
 @router.post(
     "/worlds/{ontology_id}/analyze",
     response_model=ArchitectAnalysisRunRead,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from uuid import uuid4
 from sqlalchemy import select, update
 from app.celery_app import celery_app
 from app.db.session import session_factory
@@ -48,9 +49,7 @@ is ambiguous or lacks evidence, omit the proposal. Output strictly the schema.""
 def model(run: OntologyLearnRun, stage: str) -> ShreckWorldModelTarget:
     target = run.model_targets[stage]
     # Compatible with the ShreckWorld model-target contract and shared config projection.
-    return ShreckWorldModelTarget(provider=target["provider"], name=target["name"],
-                                 reasoning=target.get("reasoning", False),
-                                 reasoning_effort=target.get("reasoning_effort"))
+    return ShreckWorldModelTarget.model_validate(target)
 
 def progress(db, run: OntologyLearnRun, percent: int, stage: str) -> bool:
     db.refresh(run)
@@ -141,7 +140,17 @@ def run_ontology_discovery(run_id: str) -> None:
                         schema_name="architect_ontology_discovery", response_schema=SCHEMA,
                         max_tokens=6000, model_target=model(run, "discovery"))
                     result = json.loads(raw)
-                    for candidate in result["proposals"]:
+                    # Independent schema-learning model extracts typed fields and edges.
+                    schema_raw = generate_shreckworld_structured_output(
+                        usage_tag="architect_ontology_schema",
+                        system_prompt=(PROMPT + "\\nPrioritize property types, relationships, "
+                                       "cardinality hints and inherited attributes. Do not invent facts."),
+                        user_content=json.dumps({"source_title": item.title, "sections": batch},
+                                                ensure_ascii=False),
+                        schema_name="architect_ontology_schema", response_schema=SCHEMA,
+                        max_tokens=6000, model_target=model(run, "schema"))
+                    schema_result = json.loads(schema_raw)
+                    for candidate in result["proposals"] + schema_result["proposals"]:
                         evidence_ids = candidate["evidence_block_ids"]
                         if not candidate["name"].strip() or not set(evidence_ids) <= allowed:
                             raise ValueError("invalid_ontology_evidence")
@@ -171,6 +180,46 @@ def run_ontology_discovery(run_id: str) -> None:
             relations = {(r["source_id"], r["target_id"], r["name"].casefold())
                          for r in current["relationships"]}
             names = {e["id"]: e["name"].casefold() for e in current["entities"]}
+            # Independently configurable reconciliation model proposes additional
+            # source-supported schema changes, but never edits the canonical graph.
+            if found:
+                grouped = list(found.values())
+                for offset in range(0, len(grouped), 50):
+                    group = grouped[offset:offset + 50]
+                    reconciliation_raw = generate_shreckworld_structured_output(
+                        usage_tag="architect_ontology_reconciliation",
+                        system_prompt=(PROMPT + "\\nReconcile terminology in the candidate list "
+                                       "against existing ontology definitions. Return only justified "
+                                       "candidate objects, preserving provided evidence IDs."),
+                        user_content=json.dumps({"candidates": group, "existing_entities":
+                            current["entities"], "existing_properties": current["properties"],
+                            "existing_relationships": current["relationships"]}, ensure_ascii=False),
+                        schema_name="architect_ontology_reconciliation", response_schema=SCHEMA,
+                        max_tokens=6000, model_target=model(run, "reconciliation"))
+                    reconciled = json.loads(reconciliation_raw)
+                    permitted = {block for proposal in group for ev in proposal["evidence"]
+                                 for block in ev.get("block_ids", [])}
+                    evidence_lookup = {block: ev for proposal in group for ev in proposal["evidence"]
+                                       for block in ev.get("block_ids", [])}
+                    for suggestion in reconciled["proposals"]:
+                        if (not suggestion["name"].strip() or
+                            not set(suggestion["evidence_block_ids"]) <= permitted):
+                            continue
+                        if suggestion["kind"] == "property" and suggestion["data_type"] not in ontology_studio.TYPES:
+                            continue
+                        if suggestion["kind"] == "relationship" and (
+                            not suggestion["source"].strip() or not suggestion["target"].strip()):
+                            continue
+                        evidence = [evidence_lookup[b] for b in suggestion["evidence_block_ids"]]
+                        candidate = normalize(suggestion, evidence[0])
+                        candidate["evidence"] = list({json.dumps(x, sort_keys=True): x for x in evidence}.values())
+                        key = proposal_key(candidate)
+                        if key in found:
+                            old = found[key]
+                            old["evidence"] = list({json.dumps(x, sort_keys=True): x
+                                                    for x in (old["evidence"] + candidate["evidence"])}.values())
+                        else:
+                            found[key] = candidate
             proposals = []
             for p in found.values():
                 kind = p["kind"]
@@ -183,7 +232,7 @@ def run_ontology_discovery(run_id: str) -> None:
                     p["change"] = ("update" if (p["source"].casefold(), p["target"].casefold(),
                                     p["name"].casefold()) in {(names.get(s),names.get(t),n) for s,t,n in relations}
                                    else "new")
-                p["id"] = str(__import__("uuid").uuid4())
+                p["id"] = str(uuid4())
                 proposals.append(p)
             if not progress(db, run, 95, "persisting"):
                 return

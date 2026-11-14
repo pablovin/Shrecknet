@@ -209,6 +209,7 @@ class StructuredOutputResult:
     text: str
     input_tokens: int | None
     output_tokens: int | None
+    finish_reason: str | None = None
 
 
 def generate_shreckworld_structured_output(
@@ -276,6 +277,7 @@ def generate_shreckworld_structured_output(
                         text=text,
                         input_tokens=prompt_tokens if isinstance(prompt_tokens, int) and prompt_tokens >= 0 else None,
                         output_tokens=completion_tokens if isinstance(completion_tokens, int) and completion_tokens >= 0 else None,
+                        finish_reason=body.get("finish_reason") if isinstance(body.get("finish_reason"), str) else None,
                     )
                 time.sleep(settings.synthesis_poll_interval_seconds)
     except httpx.HTTPError as exc:

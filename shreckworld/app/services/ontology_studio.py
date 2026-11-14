@@ -214,6 +214,8 @@ def apply_proposals(session: Session, run: OntologyLearnRun, decisions: dict,
         raise HTTPException(422, "Every proposal requires an explicit accept or reject decision")
     if set(decisions.values()) - {"accept", "reject"}:
         raise HTTPException(422, "Invalid review decision")
+    if any(decisions[p["id"]] == "accept" and p.get("conflict") for p in run.proposals):
+        raise HTTPException(422, "Resolve conflicting proposals before accepting them")
     by_name = {e.name.casefold(): e for e in session.scalars(select(OntologyEntity).where(
         OntologyEntity.root_id == owner.id, OntologyEntity.deleted.is_(False)))}
     # Entity types first: source order must never prevent property/edge creation.
@@ -251,6 +253,7 @@ def apply_proposals(session: Session, run: OntologyLearnRun, decisions: dict,
                     session.add(OntologyRelationship(root_id=owner.id, source_id=source.id,
                         target_id=target.id, name=p["name"], evidence=p.get("evidence", [])))
     snapshot(session, owner, author)
+    run.proposals = [{**p, "decision": decisions[p["id"]]} for p in run.proposals]
     run.status = "succeeded"
     run.finished_at = datetime.now(timezone.utc)
     for source in run.input_sources:

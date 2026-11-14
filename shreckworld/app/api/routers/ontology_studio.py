@@ -71,6 +71,15 @@ class LearnRequest(Strict):
     idempotency_key: str = Field(min_length=1, max_length=128)
     source_ids: list[str] = Field(min_length=1, max_length=20)
 
+class ProposalEdit(Strict):
+    expected_proposal_revision: int = Field(ge=0)
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    entity: str | None = None
+    source: str | None = None
+    target: str | None = None
+    data_type: str | None = None
+
 class ReviewRequest(Versioned):
     decisions: dict[str, str]
 
@@ -230,7 +239,8 @@ def learn(ontology_id: int, request: LearnRequest, token: str = Depends(oauth2_s
 def run_response(run):
     return {"id": run.id, "ontology_id": run.ontology_id, "status": run.status,
             "stage": run.stage, "progress": run.progress, "input_sources": run.input_sources,
-            "base_revision": run.base_revision, "proposals": run.proposals,
+            "base_revision": run.base_revision, "proposal_revision": run.proposal_revision,
+            "proposals": run.proposals,
             "diagnostics": run.diagnostics, "created_at": run.created_at,
             "finished_at": run.finished_at}
 
@@ -261,6 +271,42 @@ def cancel(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
     if run.status not in {"queued", "running"}:
         raise HTTPException(409, "Run cannot be cancelled")
     run.status = "cancel_requested"
+    db.commit()
+    return run_response(run)
+
+@router.patch("/runs/{run_id}/proposals/{proposal_id}")
+def edit_proposal(ontology_id: int, run_id: str, proposal_id: str, payload: ProposalEdit,
+                  token: str = Depends(oauth2_scheme),
+                  _: ShrecknetPrincipal = Depends(require_world_manager), db: Session = Depends(get_db)):
+    auth(ontology_id, token)
+    run = db.get(OntologyLearnRun, run_id)
+    if run is None or run.ontology_id != ontology_id:
+        raise HTTPException(404, "Run not found")
+    if run.status != "awaiting_review":
+        raise HTTPException(409, "Run is not awaiting review")
+    if run.proposal_revision != payload.expected_proposal_revision:
+        raise HTTPException(409, "Proposal revision conflict")
+    proposals = [dict(p) for p in run.proposals]
+    target = next((p for p in proposals if p["id"] == proposal_id), None)
+    if target is None:
+        raise HTTPException(404, "Proposal not found")
+    changes = payload.model_dump(exclude={"expected_proposal_revision"}, exclude_unset=True)
+    allowed = {"name", "description"}
+    if target["kind"] == "property":
+        allowed |= {"entity", "data_type"}
+    if target["kind"] == "relationship":
+        allowed |= {"source", "target"}
+    if set(changes) - allowed:
+        raise HTTPException(422, "Fields cannot be edited for this proposal type")
+    if any(not isinstance(v, str) or not v.strip() for k,v in changes.items() if k != "description"):
+        raise HTTPException(422, "Proposal references must not be blank")
+    if "data_type" in changes and changes["data_type"] not in service.TYPES:
+        raise HTTPException(422, "Invalid property type")
+    target.update(changes)
+    target.pop("conflict", None)
+    target["edited_by_human"] = True
+    run.proposals = proposals
+    run.proposal_revision += 1
     db.commit()
     return run_response(run)
 

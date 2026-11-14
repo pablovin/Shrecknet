@@ -1,5 +1,7 @@
 """Focused Ontology Studio regression tests: persistence, isolation and review."""
 from __future__ import annotations
+import ast
+from pathlib import Path
 from uuid import uuid4
 import pytest
 from fastapi import HTTPException
@@ -9,6 +11,14 @@ from app.db.base import Base
 from app.models.ontology_studio import (WorldOntology, OntologyEntity, OntologyProperty,
     OntologyRelationship, OntologyLearnRun, OntologyLearnSource)
 from app.services import ontology_studio as studio
+
+
+def test_sources_router_imports_every_book_map_dependency():
+    router_path = Path(__file__).parents[1] / "app/api/routers/ontology_studio.py"
+    tree = ast.parse(router_path.read_text())
+    imported_names = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+                      for alias in node.names}
+    assert {"read_book_map", "ShreckWorldDocumentBlock"} <= imported_names
 
 @pytest.fixture
 def db(tmp_path):

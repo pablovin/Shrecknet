@@ -9,11 +9,16 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_world_manager, oauth2_scheme, ShrecknetPrincipal
 from app.db.session import get_db
 from app.integrations.ontologies import resolve_ontology
-from app.models.document import ShreckWorldDocument, ShreckWorldDocumentBookMap
+from app.models.document import (
+    ShreckWorldDocument,
+    ShreckWorldDocumentBlock,
+    ShreckWorldDocumentBookMap,
+)
 from app.models.shreckworld import ShreckWorldLibraryItem
 from app.models.ontology_studio import OntologyLearnRun, OntologyLearnSource, OntologyLearnChapter, OntologyRevision
 from app.services import ontology_studio as service
 from app.services.ontology_discovery_batches import build_discovery_batches
+from app.services.book_map_contract import read_book_map
 from app.services.ontology_run_reporting import cancel_run, run_response
 from app.core.config import get_settings
 

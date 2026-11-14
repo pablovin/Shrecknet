@@ -11,6 +11,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from uuid import uuid4
+from collections import Counter
 
 from sqlalchemy import select, update
 from app.celery_app import celery_app
@@ -143,8 +144,6 @@ def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
         row.status = "completed"
         row.finished_at = datetime.now(timezone.utc)
         db.commit()
-        _chapter_sent(db, run, item, doc, batch)
-        db.commit()
         return proposals
     except Exception as exc:
         db.rollback()
@@ -257,6 +256,8 @@ def run_ontology_discovery(run_id: str) -> None:
                 return
             found: dict = {}
             total = len(planned)
+            remaining_by_chapter = Counter((row.source_id, row.chapter_id)
+                                           for *_, row in planned)
             completed = 0
             if not progress(db, run, 5, "preparing", {
                 "event": "plan_ready", "total_sources": len(run.input_sources),
@@ -280,6 +281,13 @@ def run_ontology_discovery(run_id: str) -> None:
                 for candidate in discovered:
                     accumulate(found, candidate)
                 completed += 1
+                chapter_key = (checkpoint.source_id, checkpoint.chapter_id)
+                remaining_by_chapter[chapter_key] -= 1
+                if remaining_by_chapter[chapter_key] == 0:
+                    # A chapter is "sent" only after every one of its bounded
+                    # windows produced a valid, persisted extraction.
+                    _chapter_sent(db, run, item, doc, batch)
+                    db.commit()
                 if not progress(db, run, 5 + int(65 * completed / max(1, total)),
                                 "discovering", {
                                     "event": "window_completed", **detail,

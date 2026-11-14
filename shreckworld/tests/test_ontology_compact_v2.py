@@ -185,3 +185,13 @@ def test_reconciliation_ops_reject_unrelated_merges_and_invalid_indices():
     assert error.value.code == "invalid_reconciliation_merge"
     with pytest.raises(CompactContractError):
         apply_reconciliation(proposals, [0], {"merge": [], "rename": [[99, "X"]], "review": []})
+
+
+def test_approved_near_names_are_sent_as_compact_hints_only():
+    candidates = [{"kind": "entity", "name": "Character Statistics", "evidence": []}]
+    known = [{"kind": "entity", "name": "Character Statistic", "description": "DO NOT REPEAT"}]
+    groups = ambiguous_groups(candidates, known=known)
+    assert groups == [[0]]
+    payload = reconciliation_input(candidates, groups[0], known=known)
+    assert "Character Statistic" in payload
+    assert "DO NOT REPEAT" not in payload

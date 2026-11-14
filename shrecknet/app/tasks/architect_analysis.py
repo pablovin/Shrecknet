@@ -2126,6 +2126,19 @@ async def _run_milestone_proposal_phase(
             adjacent_to = [str(value).strip() for value in adjacent_to if str(value).strip()]
 
             related_to = _normalize_related_to_items(item.get("related_to"), scene_entities)
+            # Strictly intersect the model's claimed paragraph IDs with markers
+            # actually present in the source excerpt. An unsupported attribution
+            # must be left empty, not guessed by semantic similarity.
+            scene_markers = {int(x) for x in re.findall(
+                r"\\[P(\\d+)\\]", str(scene.get("scene_text") or "")
+            )}
+            raw_paragraph_ids = item.get("source_paragraph_ids") or []
+            paragraph_ids = []
+            if isinstance(raw_paragraph_ids, list) and all(
+                isinstance(x, int) and not isinstance(x, bool) and x in scene_markers
+                for x in raw_paragraph_ids
+            ):
+                paragraph_ids = sorted(set(raw_paragraph_ids))
 
             milestones.append(
                 {
@@ -2139,6 +2152,10 @@ async def _run_milestone_proposal_phase(
                     "adjacent_to": adjacent_to,
                     "related_to": related_to,
                     "milestone_order": raw_idx,
+                    "source_paragraphs_absolute": paragraph_ids,
+                    "start_paragraph": paragraph_ids[0] if paragraph_ids else None,
+                    "end_paragraph": paragraph_ids[-1] if paragraph_ids else None,
+                    "provenance_status": "architect" if paragraph_ids else "scene_inherited",
                     "author": {
                         "created_by_type": "agent",
                         "created_by_author": author_id,
@@ -2729,14 +2746,16 @@ async def _run_scene_centric_chunking_test(
             scene = by_scene_ref.get(str(group.get("scene_ref") or ""), {})
             for milestone in group.get("milestones") or []:
                 for key in ("source_id", "section_id", "markdown_asset_id",
-                            "source_revision", "source_content_sha256",
-                            "start_paragraph", "end_paragraph",
-                            "source_paragraphs_absolute"):
+                            "source_revision", "source_content_sha256"):
                     milestone[key] = scene.get(key)
+                if not milestone.get("source_paragraphs_absolute"):
+                    for key in ("start_paragraph", "end_paragraph",
+                                "source_paragraphs_absolute"):
+                        milestone[key] = scene.get(key)
+                    # Not an independently identified paragraph: explicitly
+                    # inherited from the containing Scene's anchored window.
+                    milestone["provenance_status"] = "scene_inherited"
                 milestone["source_entity_instance_id"] = None
-                # A Milestone is inferred from a Scene; its containing Scene
-                # range is a truthful (but not narrower) passage anchor.
-                milestone["provenance_status"] = "scene_inherited"
 
     deduped_boundary_count = int(milestone_phase.get("deduped_boundary_count") or 0)
     removed_scene_refs = list(milestone_phase.get("removed_scene_refs") or [])

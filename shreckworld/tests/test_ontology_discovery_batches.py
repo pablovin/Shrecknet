@@ -96,4 +96,4 @@ def test_rejects_unsafe_character_budget():
 
 
 def test_default_window_limits_are_bounded():
-    assert 12000 <= MAX_BATCH_CHARS <= 32000
+    assert 4000 <= MAX_BATCH_CHARS <= 10000

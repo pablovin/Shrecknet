@@ -158,7 +158,17 @@ def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
 
 def _reconcile(db, run: OntologyLearnRun, found: dict) -> list[dict] | None:
     candidates = list(found.values())
-    groups = ambiguous_groups(candidates)
+    approved = ontology_studio.graph(db, run.ontology_id)
+    entity_names = {row["id"]: row["name"] for row in approved["entities"]}
+    known = [{"kind": "entity", "name": row["name"]} for row in approved["entities"]]
+    known.extend({"kind": "property", "name": row["name"],
+                  "entity": entity_names.get(row["entity_id"], "")}
+                 for row in approved["properties"])
+    known.extend({"kind": "relationship", "name": row["name"],
+                  "source": entity_names.get(row["source_id"], ""),
+                  "target": entity_names.get(row["target_id"], "")}
+                 for row in approved["relationships"])
+    groups = ambiguous_groups(candidates, known=known)
     discarded: set[int] = set()
     if not progress(db, run, 75, "reconciling", {
         "event": "reconciliation_started", "total_groups": len(groups),
@@ -175,7 +185,7 @@ def _reconcile(db, run: OntologyLearnRun, found: dict) -> list[dict] | None:
         response = generate_shreckworld_structured_output(
             usage_tag="architect_ontology_reconciliation",
             system_prompt=RECONCILIATION_PROMPT,
-            user_content=reconciliation_input(candidates, indices),
+            user_content=reconciliation_input(candidates, indices, known=known),
             schema_name="architect_ontology_reconcile_ops_v2",
             response_schema=RECONCILIATION_SCHEMA,
             max_tokens=900, model_target=model(run, "reconciliation"))

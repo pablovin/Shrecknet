@@ -98,7 +98,7 @@ def update_entity(session: Session, ontology_id: int, entity_id: str, data: dict
     for field in ("name", "description", "aliases", "parent_id"):
         if field in data:
             setattr(row, field, data[field])
-    if not row.name.strip():
+    if not isinstance(row.name, str) or not row.name.strip():
         raise HTTPException(422, "Entity name is required")
     snapshot(session, owner, author)
     session.commit()
@@ -216,7 +216,9 @@ def apply_proposals(session: Session, run: OntologyLearnRun, decisions: dict,
         raise HTTPException(422, "Invalid review decision")
     by_name = {e.name.casefold(): e for e in session.scalars(select(OntologyEntity).where(
         OntologyEntity.root_id == owner.id, OntologyEntity.deleted.is_(False)))}
-    for p in run.proposals:
+    # Entity types first: source order must never prevent property/edge creation.
+    ordered = sorted(run.proposals, key=lambda p: {"entity": 0, "property": 1, "relationship": 2}[p["kind"]])
+    for p in ordered:
         if decisions[p["id"]] != "accept":
             continue
         if p["kind"] == "entity":
@@ -234,6 +236,8 @@ def apply_proposals(session: Session, run: OntologyLearnRun, decisions: dict,
             if e and p["data_type"] in TYPES:
                 existing = session.scalar(select(OntologyProperty).where(
                     OntologyProperty.entity_id == e.id, OntologyProperty.name == p["name"]))
+                if existing is not None and existing.data_type != p["data_type"]:
+                    raise HTTPException(409, "Property type conflict; edit the existing property explicitly")
                 if existing is None:
                     session.add(OntologyProperty(entity_id=e.id, name=p["name"], data_type=p["data_type"],
                         description=p.get("description", ""), evidence=p.get("evidence", [])))

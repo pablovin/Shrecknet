@@ -11,7 +11,7 @@ from app.models.ontology_studio import OntologyLearnRun, OntologyLearnWindow
 from app.services.ontology_compact import (
     CONTRACT_VERSION, DISCOVERY_SCHEMA, CompactContractError, model_window,
     cache_fingerprint, parse_discovery, accumulate, ambiguous_groups,
-    reconciliation_input, apply_reconciliation,
+    reconciliation_input, apply_reconciliation, parse_model_response,
 )
 from app.services.ontology_discovery_batches import MAX_INPUT_TOKENS, build_discovery_batches
 from test_ontology_discovery_batches import make_map, block
@@ -161,3 +161,27 @@ def test_sqlite_window_checkpoint_persistence(tmp_path):
         assert rows[0].proposals[0]["name"] == "Character"
         assert rows[0].output_tokens == 75
     engine.dispose()
+
+
+def test_truncation_is_detected_before_json_decode_and_is_not_retried():
+    # A response that ends in a partial JSON string must fail with the precise
+    # length reason, not a generic JSONDecodeError.
+    response = SimpleNamespace(text='{"e":[{"n":"Unfinished', finish_reason="length")
+    with pytest.raises(CompactContractError) as error:
+        parse_model_response(response, stage="discovery")
+    assert error.value.code == "discovery_output_truncated"
+    with pytest.raises(CompactContractError) as malformed:
+        parse_model_response(SimpleNamespace(text='{"e":', finish_reason="stop"), stage="discovery")
+    assert malformed.value.code == "discovery_invalid_json"
+
+
+def test_reconciliation_ops_reject_unrelated_merges_and_invalid_indices():
+    proposals = [
+        {"kind": "entity", "name": "Character", "evidence": []},
+        {"kind": "property", "name": "Strength", "entity": "Character", "data_type": "integer", "evidence": []},
+    ]
+    with pytest.raises(CompactContractError) as error:
+        apply_reconciliation(proposals, [0, 1], {"merge": [[1, 0]], "rename": [], "review": []})
+    assert error.value.code == "invalid_reconciliation_merge"
+    with pytest.raises(CompactContractError):
+        apply_reconciliation(proposals, [0], {"merge": [], "rename": [[99, "X"]], "review": []})

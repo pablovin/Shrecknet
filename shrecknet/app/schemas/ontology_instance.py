@@ -154,7 +154,7 @@ class SceneDerivedFrom(BaseModel):
     start_paragraph: int | None = Field(default=None, ge=1)
     end_paragraph: int | None = Field(default=None, ge=1)
     source_paragraphs_absolute: list[int] = Field(default_factory=list, max_length=10000)
-    provenance_status: Literal["document_only", "architect", "historical_unverified"] | None = None
+    provenance_status: Literal["document_only", "architect", "historical_unverified", "scene_inherited"] | None = None
 
     @field_validator("source_paragraphs_absolute")
     @classmethod
@@ -190,6 +190,18 @@ class SceneDerivedFrom(BaseModel):
 class MilestoneDerivedFrom(BaseModel):
     model_config = ConfigDict(extra="ignore")
     entity_instance_id: str
+
+    @model_validator(mode="after")
+    def validate_origin(self) -> "MilestoneDerivedFrom":
+        if not self.entity_instance_id and not (self.source_id and self.section_id):
+            raise ValueError("A Milestone must refer to either a graph entity or a ShreckWorld Source section")
+        if bool(self.source_id) != bool(self.section_id):
+            raise ValueError("Both source_id and section_id are required")
+        if (self.start_paragraph is None) != (self.end_paragraph is None):
+            raise ValueError("Incomplete Milestone paragraph range")
+        if self.start_paragraph is not None and not (1 <= self.start_paragraph <= self.end_paragraph):
+            raise ValueError("Invalid Milestone paragraph range")
+        return self
 
     @field_validator("entity_instance_id", mode="before")
     def validate_entity_instance_id(cls, value: str) -> str:

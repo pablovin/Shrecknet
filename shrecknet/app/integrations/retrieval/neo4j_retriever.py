@@ -474,7 +474,10 @@ class Neo4jGraphRetriever:
                    WHEN 'Scene' IN labels(node) THEN node.id
                    ELSE node.scene_id
                END AS scene_id,
-               entity.entity_instance_id AS source_entity_instance_id
+               entity.entity_instance_id AS source_entity_instance_id,
+               node.source_id AS source_id,
+               node.source_section_id AS source_section_id,
+               node.source_provenance_json AS source_provenance_json
         """
 
         async with self._acquire_session() as session:
@@ -492,6 +495,9 @@ class Neo4jGraphRetriever:
                 "node_type": row.get("node_type"),
                 "scene_id": row.get("scene_id"),
                 "source_entity_instance_id": row.get("source_entity_instance_id"),
+                "source_id": row.get("source_id"),
+                "source_section_id": row.get("source_section_id"),
+                "source_provenance_json": row.get("source_provenance_json"),
             }
             for row in rows
             if row.get("node_id")
@@ -529,7 +535,7 @@ class Neo4jGraphRetriever:
                   MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(node)
               }
           )
-        OPTIONAL MATCH (node)-[prov:DERIVED_FROM|RELATES_TO]-(entity:EntityInstance)
+        OPTIONAL MATCH (node)-[prov:RELATES_TO]-(entity:EntityInstance)
         WITH node, collect(DISTINCT {
             relation: type(prov), entity_id: entity.entity_instance_id, entity_name: entity.alias
         })[0..12] AS provenance
@@ -629,6 +635,41 @@ class Neo4jGraphRetriever:
                     parts.pop()
                     entry["chunks"].pop()
                     entry["display_text"] = "\n\n".join([header] + [part for part in parts if part])
+        # Original narrative passages are hydrated separately from graph embeddings.
+        from app.services.architect_source_documents import load_architect_source
+        cache: dict[tuple[int, str, str], tuple[Any, str] | None] = {}
+        for entry in hydrated.values():
+            props = entry.get("properties") or {}
+            source_id, section_id = props.get("source_id"), props.get("source_section_id")
+            if entry.get("source_kind") not in {"Scene", "Milestone"} or not source_id or not section_id:
+                continue
+            try:
+                key = (int(props["ontology_id"]), str(source_id), str(section_id))
+                if key not in cache:
+                    cache[key] = await asyncio.to_thread(load_architect_source, *key)
+                item = cache[key]
+            except (FileNotFoundError, OSError, ValueError, KeyError):
+                continue
+            if item is None:
+                continue
+            doc, markdown = item
+            try:
+                lineage = json.loads(props.get("source_provenance_json") or "{}")
+            except (ValueError, TypeError):
+                lineage = {}
+            if not isinstance(lineage, dict):
+                lineage = {}
+            entry["narrative_source"] = {
+                "source_id": source_id, "section_id": section_id,
+                "title": doc.title, "revision": doc.source_revision,
+                "start_paragraph": lineage.get("start_paragraph"),
+                "end_paragraph": lineage.get("end_paragraph"),
+                "passage_status": lineage.get("provenance_status"),
+            }
+            excerpt = markdown[:max(800, min(3500, max_tokens_per_source * 3))]
+            entry["display_text"] = (entry.get("display_text") or "") + (
+                f"\\n\\nOriginal ShreckWorld Source: {doc.title}\\n{excerpt}"
+            )
         return hydrated
 
     async def run_bounded_read(
@@ -903,13 +944,13 @@ class Neo4jGraphRetriever:
         WHERE scene.ontology_id IN $ontology_ids
           AND (
             EXISTS {
-                MATCH (scene)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: entity_id})
+                MATCH (scene)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: entity_id})
             }
             OR EXISTS {
                 MATCH (scene)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: entity_id})
             }
             OR EXISTS {
-                MATCH (scene)-[:CONTAINS]->(:Milestone)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: entity_id})
+                MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: entity_id})
             }
             OR EXISTS {
                 MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: entity_id})
@@ -929,7 +970,7 @@ class Neo4jGraphRetriever:
         WHERE scene.ontology_id IN $ontology_ids
           AND (
             EXISTS {
-                MATCH (milestone)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: entity_id})
+                MATCH (milestone)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: entity_id})
             }
             OR EXISTS {
                 MATCH (milestone)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: entity_id})

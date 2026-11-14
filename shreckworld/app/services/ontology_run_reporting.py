@@ -13,7 +13,9 @@ from app.models.ontology_studio import OntologyLearnRun
 def progress(db, run: OntologyLearnRun, percent: int, stage: str,
              activity: dict | None = None) -> bool:
     """Save progress and return false if cancellation was requested."""
-    db.refresh(run)
+    # Only refresh the cancellation flag. Refreshing the whole ORM row here
+    # discarded uncommitted proposal JSON immediately before finalization.
+    db.refresh(run, attribute_names=["status"])
     if run.status == "cancel_requested":
         run.status, run.stage = "cancelled", "cancelled"
         run.finished_at = datetime.now(timezone.utc)
@@ -63,6 +65,7 @@ def run_response(run: OntologyLearnRun) -> dict:
         "stage": run.stage, "progress": run.progress,
         "input_sources": run.input_sources, "base_revision": run.base_revision,
         "proposal_revision": run.proposal_revision, "proposals": run.proposals,
+        "applied_revision": run.applied_revision,
         "diagnostics": [row for row in records if row.get("kind") != "progress"],
         "activity": activity_log[-1] if activity_log else None,
         "activity_log": activity_log,

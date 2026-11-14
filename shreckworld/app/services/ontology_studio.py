@@ -5,10 +5,113 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.models.ontology_studio import (WorldOntology, OntologyEntity, OntologyProperty,
-    OntologyRelationship, OntologyRevision, OntologyLearnRun, OntologyLearnSource)
+    OntologyRelationship, OntologyRevision, OntologyLearnRun, OntologyLearnSource,
+    OntologyLearnWindow)
 
 TYPES = {"text", "integer", "number", "boolean", "date", "datetime", "json", "image", "url"}
 CARDINALITY = {"one", "many"}
+
+
+def restore_review(db: Session, run: OntologyLearnRun, author: str) -> OntologyLearnRun:
+    """Undo this run's latest ontology revision and return its proposals to review."""
+    if run.status != "succeeded" or not run.proposals:
+        raise HTTPException(409, "Only a reviewed run with proposals can be reopened")
+    owner = root(db, run.ontology_id)
+    if owner is None:
+        raise HTTPException(409, "The ontology no longer exists")
+    applied_revision = run.applied_revision or run.base_revision + 1
+    if owner.revision != applied_revision:
+        raise HTTPException(409, "The ontology changed after this run; its approved changes cannot be safely undone")
+    if run.base_revision == 0:
+        previous = {"entities": [], "properties": [], "relationships": []}
+    else:
+        previous = db.scalar(select(OntologyRevision.snapshot).where(
+            OntologyRevision.root_id == owner.id,
+            OntologyRevision.revision == run.base_revision,
+        ))
+        if previous is None:
+            raise HTTPException(409, "The original ontology revision is unavailable")
+
+    entity_ids = list(db.scalars(select(OntologyEntity.id).where(OntologyEntity.root_id == owner.id)))
+    if entity_ids:
+        db.query(OntologyEntity).filter(OntologyEntity.root_id == owner.id).update(
+            {"parent_id": None}, synchronize_session=False)
+        db.query(OntologyProperty).filter(OntologyProperty.entity_id.in_(entity_ids)).delete(
+            synchronize_session=False)
+    db.query(OntologyRelationship).filter(OntologyRelationship.root_id == owner.id).delete(
+        synchronize_session=False)
+    db.query(OntologyEntity).filter(OntologyEntity.root_id == owner.id).delete(
+        synchronize_session=False)
+    db.flush()
+    for entity in previous.get("entities", []):
+        db.add(OntologyEntity(
+            id=entity["id"], root_id=owner.id, name=entity["name"],
+            description=entity.get("description", ""), aliases=entity.get("aliases", []),
+            evidence=entity.get("evidence", []), review_status=entity.get("review_status", "approved"),
+        ))
+    db.flush()
+    for entity in previous.get("entities", []):
+        if entity.get("parent_id"):
+            db.get(OntologyEntity, entity["id"]).parent_id = entity["parent_id"]
+    for prop in previous.get("properties", []):
+        db.add(OntologyProperty(
+            id=prop["id"], entity_id=prop["entity_id"], name=prop["name"],
+            data_type=prop["data_type"], required=prop.get("required", False),
+            cardinality=prop.get("cardinality", "one"), description=prop.get("description", ""),
+            constraints=prop.get("constraints", {}), evidence=prop.get("evidence", []),
+        ))
+    for relation in previous.get("relationships", []):
+        db.add(OntologyRelationship(
+            id=relation["id"], root_id=owner.id, source_id=relation["source_id"],
+            target_id=relation["target_id"], name=relation["name"],
+            description=relation.get("description", ""), cardinality=relation.get("cardinality", "many"),
+            inverse_name=relation.get("inverse_name"), evidence=relation.get("evidence", []),
+        ))
+    snapshot(db, owner, author)
+    run.proposals = [{key: value for key, value in proposal.items() if key != "decision"}
+                     for proposal in run.proposals]
+    run.base_revision = owner.revision
+    run.applied_revision = None
+    run.proposal_revision += 1
+    run.status, run.stage, run.progress = "awaiting_review", "awaiting_review", 100
+    run.finished_at = None
+    db.commit()
+    return run
+
+
+def recover_empty_review(db: Session, run: OntologyLearnRun) -> OntologyLearnRun:
+    """Restore a lost empty review from persisted, validated window proposals."""
+    from uuid import uuid4
+    from app.services.ontology_compact import accumulate
+
+    if run.status != "succeeded" or run.proposals:
+        raise HTTPException(409, "This run does not have an empty completed review")
+    owner = root(db, run.ontology_id)
+    if owner is None or owner.revision != run.base_revision + 1:
+        raise HTTPException(409, "The ontology changed after this run; proposals cannot be safely restored")
+    found: dict = {}
+    windows = db.scalars(select(OntologyLearnWindow).where(
+        OntologyLearnWindow.run_id == run.id,
+        OntologyLearnWindow.status == "completed",
+    ).order_by(OntologyLearnWindow.source_id, OntologyLearnWindow.chapter_id,
+               OntologyLearnWindow.window_index))
+    for window in windows:
+        for proposal in window.proposals or []:
+            accumulate(found, proposal)
+    if not found:
+        raise HTTPException(409, "No saved window proposals are available to restore")
+    run.proposals = [{**proposal, "id": str(uuid4())} for proposal in found.values()]
+    run.base_revision = owner.revision
+    run.applied_revision = None
+    run.proposal_revision += 1
+    run.status, run.stage, run.progress = "awaiting_review", "awaiting_review", 100
+    run.finished_at = None
+    run.diagnostics = [*(run.diagnostics or []), {
+        "kind": "warning", "code": "recovered_unreconciled_window_proposals",
+        "at": datetime.now(timezone.utc).isoformat(),
+    }][-250:]
+    db.commit()
+    return run
 
 def root(session: Session, ontology_id: int) -> WorldOntology | None:
     return session.scalar(select(WorldOntology).where(WorldOntology.ontology_id == ontology_id))
@@ -254,6 +357,7 @@ def apply_proposals(session: Session, run: OntologyLearnRun, decisions: dict,
                         target_id=target.id, name=p["name"], evidence=p.get("evidence", [])))
     snapshot(session, owner, author)
     run.proposals = [{**p, "decision": decisions[p["id"]]} for p in run.proposals]
+    run.applied_revision = owner.revision
     run.status = "succeeded"
     run.finished_at = datetime.now(timezone.utc)
     for source in run.input_sources:

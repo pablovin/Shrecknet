@@ -303,7 +303,38 @@ def get_run(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
     run = db.get(OntologyLearnRun, run_id)
     if run is None or run.ontology_id != ontology_id:
         raise HTTPException(404, "Run not found")
-    return run_response(run)
+    payload = run_response(run)
+    if run.status == "succeeded" and not run.proposals:
+        windows = db.scalars(select(OntologyLearnWindow).where(
+            OntologyLearnWindow.run_id == run.id,
+            OntologyLearnWindow.status == "completed",
+        ))
+        payload["proposals_recovery_available"] = any(bool(window.proposals) for window in windows)
+    else:
+        payload["proposals_recovery_available"] = False
+    return payload
+
+
+@router.post("/runs/{run_id}/recover-proposals")
+def recover_proposals(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
+                   user: ShrecknetPrincipal = Depends(require_world_manager),
+                   db: Session = Depends(get_db)):
+    auth(ontology_id, token)
+    run = db.get(OntologyLearnRun, run_id)
+    if run is None or run.ontology_id != ontology_id:
+        raise HTTPException(404, "Run not found")
+    return run_response(service.recover_empty_review(db, run))
+
+
+@router.post("/runs/{run_id}/discard-proposals")
+def discard_proposals(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
+                   user: ShrecknetPrincipal = Depends(require_world_manager),
+                   db: Session = Depends(get_db)):
+    auth(ontology_id, token)
+    run = db.get(OntologyLearnRun, run_id)
+    if run is None or run.ontology_id != ontology_id:
+        raise HTTPException(404, "Run not found")
+    return run_response(service.restore_review(db, run, user.user_id))
 
 @router.get("/runs/{run_id}/windows")
 def list_run_windows(ontology_id: int, run_id: str,

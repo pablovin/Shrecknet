@@ -39,6 +39,9 @@ Neo4j mutations are performed by Learn Ontology.
 | POST | `/learn` | Queue background discovery for selected chapters and pin current documents |
 | GET | `/runs` | Most recent ontology discovery runs |
 | GET | `/runs/{id}` | Status, stage, detailed progress, activity log, proposals and diagnostics |
+| GET | `/runs/{id}/windows` | Detailed extraction-window checkpoints |
+| POST | `/runs/{id}/recover-proposals` | Restore an empty review from saved extraction-window candidates |
+| POST | `/runs/{id}/discard-proposals` | Undo the latest approved run revision and reopen its proposals |
 | POST | `/runs/{id}/cancel` | Request cancellation |
 | PATCH | `/runs/{id}/proposals/{proposal_id}` | Human correction of proposed schema |
 | POST | `/runs/{id}/review` | Explicitly accept/reject every proposal |
@@ -120,6 +123,23 @@ diagnostics by the API. Usage totals are persisted on each run. Existing SQLite
 databases add the three integer columns at startup with zero defaults; prior runs
 therefore remain readable and report zero usage. Model summaries include
 provider/model name but omit credentials.
+
+The worker saves the consolidated proposal JSON before its final progress
+checkpoint. The checkpoint refreshes only cancellation status, preserving
+pending proposal writes. For older runs whose final proposal list was lost but
+whose completed window outputs remain, `POST /runs/{id}/recover-proposals`
+reconstructs and deduplicates the validated window candidates and returns the
+run to `awaiting_review`. This recovery does not repeat model reconciliation;
+the response includes a safe warning so candidates are reviewed carefully.
+Recovery is available only when the run has no final proposals, saved completed
+window candidates, and no ontology revision newer than the empty review result.
+
+`POST /runs/{id}/discard-proposals` reopens a succeeded run for review. It
+restores the ontology snapshot from before that run's approval, clears prior
+accept/reject decisions, and records a new immutable revision for the restore.
+The operation is rejected with 409 if the ontology has changed since approval,
+so later edits cannot be silently removed. The run records `applied_revision`;
+existing databases receive this nullable integer column additively at startup.
 
  The user
 must review all proposals before successful adoption.

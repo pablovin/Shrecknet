@@ -201,6 +201,13 @@ class MilestoneDerivedFrom(BaseModel):
         return cleaned
 
 
+class MilestoneSourceReference(MilestoneDerivedFrom):
+    """Read-side reference to both the legacy entity and migrated Source."""
+    source_id: str | None = Field(default=None, max_length=64)
+    section_id: str | None = Field(default=None, max_length=128)
+    markdown_asset_id: str | None = Field(default=None, max_length=64)
+
+
 class MilestoneEntityRelation(BaseModel):
     model_config = ConfigDict(extra="ignore")
     entity_instance_id: str
@@ -344,6 +351,7 @@ class MilestoneRead(MilestoneBase):
     ontology_id: int
     created_at: datetime
     updated_at: datetime
+    derived_from: MilestoneSourceReference
 
 
 class SceneBase(BaseModel):

@@ -49,6 +49,11 @@ def _id(*parts: object) -> str:
     return str(uuid5(NAMESPACE_URL, "shreckworld-graph-import:" + ":".join(map(str, parts))))
 
 
+def graph_collection_entry_id(ontology_id: int, entity_instance_id: str) -> str:
+    """Stable identity shared by imported graph entities and Source-link repair."""
+    return _id("collection-entry", ontology_id, entity_instance_id)
+
+
 def _rank(type_name: str) -> int | None:
     for expression, rank in NARRATIVE_TYPES:
         if expression.search(type_name):
@@ -518,7 +523,7 @@ def _import_world_hierarchy(
 
             def visit(identifier: str, parent_entry_id: str | None, level: int, order: int) -> None:
                 node = nodes[identifier]
-                entry_id = _id("collection-entry", ontology_id, identifier)
+                entry_id = graph_collection_entry_id(ontology_id, identifier)
                 mappings = db.scalars(select(GraphSourceImport).where(
                     GraphSourceImport.ontology_id == ontology_id,
                     GraphSourceImport.entity_instance_id == identifier,
@@ -659,21 +664,29 @@ def _import_graph_sources_unlocked(session_factory, settings) -> dict[str, int]:
     return summary
 
 
-def import_graph_sources(session_factory, settings=None) -> dict[str, int]:
-    """Perform one process-wide import, guarded across parallel API workers."""
+def import_graph_sources(session_factory, settings=None, *, wait_for_lock: bool = False) -> dict[str, int]:
+    """Perform one process-wide import, guarded across parallel API workers.
+
+    Startup callers skip when another process owns the lock. An explicit
+    operator migration can wait so the following reconciliation sees a
+    completed import rather than an empty "already running" summary.
+    """
     import fcntl
     settings = settings or get_settings()
     settings.media_root.mkdir(parents=True, exist_ok=True)
     lock_path = settings.media_root / ".graph-source-import.lock"
     with lock_path.open("a+b") as lock:
-        try:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            logger.info("Skipping graph import: another process holds the startup lock")
-            return {"ontologies": 0, "hierarchies": 0, "entries_added": 0,
-                    "documents_created": 0, "documents_reused": 0, "errors": 0,
-                    "worlds_without_scene_anchors": 0,
-                    "worlds_without_valid_narrative_paths": 0}
+        if wait_for_lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        else:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                logger.info("Skipping graph import: another process holds the startup lock")
+                return {"ontologies": 0, "hierarchies": 0, "entries_added": 0,
+                        "documents_created": 0, "documents_reused": 0, "errors": 0,
+                        "worlds_without_scene_anchors": 0,
+                        "worlds_without_valid_narrative_paths": 0}
         try:
             return _import_graph_sources_unlocked(session_factory, settings)
         finally:

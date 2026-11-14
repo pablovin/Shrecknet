@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from datetime import datetime, timezone
 
-from app.schemas.ontology_instance import MilestoneCreate, SceneCreate
+from app.schemas.ontology_instance import MilestoneCreate, MilestoneRead, SceneCreate
 from app.services.ontology_instance_service import OntologyInstanceService
 
 
@@ -134,3 +135,31 @@ async def test_validate_scene_milestones_payload_rejects_unknown_derived_from_en
             instance_id="inst-1",
             milestones=milestones,
         )
+
+
+def test_milestone_read_exposes_migrated_source_reference_but_create_does_not_accept_it():
+    created = MilestoneCreate.model_validate({
+        "name": "Clue",
+        "description": "A clue appears.",
+        "created_by_type": "human",
+        "created_by_author": "user-1",
+        "derived_from": {
+            "entity_instance_id": "entity-1",
+            "source_id": "untrusted-source",
+            "section_id": "untrusted-section",
+        },
+    })
+    assert created.derived_from.model_dump() == {"entity_instance_id": "entity-1"}
+
+    now = datetime.now(timezone.utc)
+    read = MilestoneRead(
+        id="milestone-1", scene_id="scene-1", instance_id="instance-1", ontology_id=7,
+        name="Clue", description="A clue appears.", created_by_type="human",
+        created_by_author="user-1", created_at=now, updated_at=now,
+        derived_from={
+            "entity_instance_id": "entity-1", "source_id": "source-1",
+            "section_id": "section-1", "markdown_asset_id": "asset-1",
+        },
+    )
+    assert read.derived_from.source_id == "source-1"
+    assert read.derived_from.section_id == "section-1"

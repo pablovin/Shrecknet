@@ -2679,7 +2679,12 @@ class OntologyInstanceService:
             temporal_type=props.get("temporal_type") or "other",
             boundary_type=props.get("boundary_type") or "none",
             local_order=local_order or {},
-            derived_from={"entity_instance_id": derived_from_entity_id or ""},
+            derived_from={
+                "entity_instance_id": derived_from_entity_id or "",
+                "source_id": _normalize_optional_str(props.get("source_id")),
+                "section_id": _normalize_optional_str(props.get("source_section_id")),
+                "markdown_asset_id": _normalize_optional_str(props.get("source_markdown_asset_id")),
+            },
             relates_to=relates_to,
             created_at=_parse_dt(props.get("created_at")),
             updated_at=_parse_dt(props.get("updated_at")),

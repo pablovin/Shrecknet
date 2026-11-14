@@ -57,6 +57,10 @@ Example:
 ### Get scene
 - `GET /ontology-instances/{instance_id}/scenes/{scene_id}`
 
+Read responses may include `source_id`, `section_id`, and `markdown_asset_id`
+inside `derived_from` after the explicit Scene/Milestone Source-reference
+migration. The required `entity_instance_id` remains the legacy graph anchor.
+
 ### Update scene
 - `PUT /ontology-instances/{instance_id}/scenes/{scene_id}`
 
@@ -70,6 +74,11 @@ Base under scene:
 
 ### List milestones
 - `GET /ontology-instances/{instance_id}/scenes/{scene_id}/milestones`
+
+Milestone read responses may include optional `source_id`, `section_id`, and
+`markdown_asset_id` inside `derived_from`. These are ShreckWorld Source
+references added by the explicit migration; create/update requests continue to
+identify provenance with `entity_instance_id`.
 
 ### Create milestone
 - `POST /ontology-instances/{instance_id}/scenes/{scene_id}/milestones`

@@ -28,6 +28,8 @@ def _fixture(tmp_path, monkeypatch):
             CREATE TABLE source_assets (
                 id TEXT, source_id TEXT, section_id TEXT,
                 kind TEXT, storage_path TEXT, content_sha256 TEXT);
+            CREATE TABLE source_organizations (
+                source_id TEXT, revision INTEGER, nodes TEXT);
             CREATE TABLE graph_source_imports (
                 ontology_id INTEGER, instance_id TEXT, entity_instance_id TEXT,
                 source_id TEXT, section_id TEXT);
@@ -40,6 +42,8 @@ def _fixture(tmp_path, monkeypatch):
              "/app/media/ontologies/42/source-1/story.md", sha256(payload).hexdigest()))
         conn.execute("INSERT INTO graph_source_imports VALUES(?,?,?,?,?)",
             (42, "page-1", "legacy-story", "source-1", "chapter-1"))
+        conn.execute("INSERT INTO source_organizations VALUES(?,?,?)",
+            ("source-1", 5, '[{"id":"chapter-1","metadata":{"markdown_asset_id":"asset-1"}}]'))
     return db, saved
 
 
@@ -52,6 +56,12 @@ def test_reader_only_lists_file_backed_narrative_sources(tmp_path, monkeypatch):
     assert entries[0].legacy_instance_id == "page-1"
     assert entries[0].source_revision == 5
     assert list_architect_sources(99, db) == []
+    # A stale Markdown asset must not become a selectable document.
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO source_assets VALUES(?,?,?,?,?,?)",
+            ("orphan", "source-1", "removed-section", "markdown",
+             "/app/media/ontologies/42/source-1/story.md", sha256(saved.read_bytes()).hexdigest()))
+    assert len(list_architect_sources(42, db)) == 1
     doc, text = load_architect_source(42, "source-1", "chapter-1", db)
     assert doc.markdown_asset_id == "asset-1"
     assert "Second paragraph" in text

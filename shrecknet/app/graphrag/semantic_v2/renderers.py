@@ -159,10 +159,7 @@ class SemanticDocumentRenderer:
         scene_id = _text(node["id"])
         related = node.get("related_entities") or []
         lines = [f"Scene: {_text(node.get('name'))}", _text(node.get("description"))]
-        derived_alias = _text(node.get("derived_alias"))
-        if derived_alias:
-            derived_type = _text(node.get("derived_type_name"))
-            lines.append(f"Derived from: {derived_alias}" + (f" ({derived_type})" if derived_type else ""))
+        # Narrative Source metadata is resolved at retrieval time, never embedded.
         aliases = sorted({_text(item.get("alias")) for item in related if _text(item.get("alias"))})
         if aliases:
             lines.append("Directly related entities: " + ", ".join(aliases))
@@ -171,7 +168,7 @@ class SemanticDocumentRenderer:
             document_id=f"scene:{scene_id}", source_kind="scene", source_node_id=scene_id,
             ontology_id=int(node["ontology_id"]), instance_id=_text(node.get("instance_id")) or None,
             scene_id=scene_id, related_entity_ids=[_text(item.get("id")) for item in related if item.get("id")],
-            derived_from_entity_id=_text(node.get("derived_id")) or None,
+            derived_from_entity_id=None,
             display_text=display, embedding_text=document_embedding_text(display),
             source_created_at=_text(node.get("created_at")) or None,
             source_updated_at=_text(node.get("updated_at")) or None,

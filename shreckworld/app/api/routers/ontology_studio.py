@@ -11,8 +11,9 @@ from app.db.session import get_db
 from app.integrations.ontologies import resolve_ontology
 from app.models.document import ShreckWorldDocument, ShreckWorldDocumentBookMap
 from app.models.shreckworld import ShreckWorldLibraryItem
-from app.models.ontology_studio import OntologyLearnRun, OntologyLearnSource, OntologyRevision
+from app.models.ontology_studio import OntologyLearnRun, OntologyLearnSource, OntologyLearnChapter, OntologyRevision
 from app.services import ontology_studio as service
+from app.services.ontology_discovery_batches import build_discovery_batches
 from app.services.ontology_run_reporting import cancel_run, run_response
 from app.core.config import get_settings
 
@@ -71,6 +72,7 @@ class RelationshipPatch(Versioned):
 class LearnRequest(Strict):
     idempotency_key: str = Field(min_length=1, max_length=128)
     source_ids: list[str] = Field(min_length=1, max_length=20)
+    chapter_ids: dict[str, list[str]] | None = None
 
 class ProposalEdit(Strict):
     expected_proposal_revision: int = Field(ge=0)
@@ -186,6 +188,8 @@ def sources(ontology_id: int, token: str = Depends(oauth2_scheme),
     auth(ontology_id, token)
     history = {r.source_id: r for r in db.scalars(select(OntologyLearnSource).where(OntologyLearnSource.ontology_id == ontology_id))}
     current = {item.id: (item, doc) for item,doc in eligible_sources(db, ontology_id)}
+    sent = {(row.source_id, row.content_digest, row.chapter_id) for row in db.scalars(
+        select(OntologyLearnChapter).where(OntologyLearnChapter.ontology_id == ontology_id))}
     result = []
     for item in db.scalars(select(ShreckWorldLibraryItem).where(
         ShreckWorldLibraryItem.ontology_id == ontology_id, ShreckWorldLibraryItem.source_type == "explanatory")):
@@ -193,10 +197,21 @@ def sources(ontology_id: int, token: str = Depends(oauth2_scheme),
         learned = history.get(item.id)
         source_status = ("not_indexed" if doc is None else "ready" if learned is None else
              "learned" if learned.content_digest == doc[1].source_sha256 else "outdated")
+        chapters = []
+        if doc:
+            mapped = read_book_map(db.get(ShreckWorldDocumentBookMap, doc[1].id).payload)
+            block_rows = list(db.scalars(select(ShreckWorldDocumentBlock).where(
+                ShreckWorldDocumentBlock.document_id == doc[1].id)))
+            chapter_titles = {}
+            for batch in build_discovery_batches(mapped, {b.id: b for b in block_rows}):
+                chapter_titles[batch["chapter_id"]] = batch["chapter_title"]
+            chapters = [{"id": chapter_id, "title": title,
+                "sent": (item.id, doc[1].source_sha256, chapter_id) in sent}
+                for chapter_id, title in chapter_titles.items()]
         result.append({"id": item.id, "title": item.title, "index_status": item.index_status,
             "learning_status": source_status, "last_learned_at": learned.reviewed_at if learned else None,
             "last_learned_run_id": learned.run_id if learned else None,
-            "document_id": doc[1].id if doc else None})
+            "document_id": doc[1].id if doc else None, "chapters": chapters})
     return result
 
 @router.post("/learn", status_code=202)
@@ -205,12 +220,25 @@ def learn(ontology_id: int, request: LearnRequest, token: str = Depends(oauth2_s
     auth(ontology_id, token)
     if len(set(request.source_ids)) != len(request.source_ids):
         raise HTTPException(422, "Duplicate sources")
+    if request.chapter_ids is not None and not set(request.chapter_ids) <= set(request.source_ids):
+        raise HTTPException(422, "Chapter selections must belong to selected sources")
     lookup = {item.id: (item, doc) for item,doc in eligible_sources(db, ontology_id)}
     if not all(source_id in lookup for source_id in request.source_ids):
         raise HTTPException(422, "Selected Explanatory Sources must have an active Book Map")
-    pins = [{"source_id": sid, "title": lookup[sid][0].title,
-             "document_id": lookup[sid][1].id, "content_digest": lookup[sid][1].source_sha256}
-            for sid in request.source_ids]
+    pins = []
+    for sid in request.source_ids:
+        item, doc = lookup[sid]
+        mapped = read_book_map(db.scalar(select(ShreckWorldDocumentBookMap).where(
+            ShreckWorldDocumentBookMap.document_id == doc.id)).payload)
+        batches = build_discovery_batches(mapped, {b.id: b for b in db.scalars(
+            select(ShreckWorldDocumentBlock).where(ShreckWorldDocumentBlock.document_id == doc.id))})
+        available = {batch["chapter_id"] for batch in batches}
+        requested = (request.chapter_ids or {}).get(sid)
+        chosen = sorted(available) if requested is None else requested
+        if not chosen or len(set(chosen)) != len(chosen) or not set(chosen) <= available:
+            raise HTTPException(422, "Selected chapters must belong to the active Book Map")
+        pins.append({"source_id": sid, "title": item.title, "document_id": doc.id,
+                     "content_digest": doc.source_sha256, "chapter_ids": chosen})
     found = db.scalar(select(OntologyLearnRun).where(OntologyLearnRun.owner_id == user.user_id,
                     OntologyLearnRun.idempotency_key == request.idempotency_key))
     if found:

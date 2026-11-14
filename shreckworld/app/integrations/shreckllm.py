@@ -5,6 +5,7 @@ validation. The owning service validates and renders the public response.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 import os
 import time
 from typing import Any
@@ -203,11 +204,18 @@ def _serialize_evidence(evidence: list[dict[str, Any]]) -> str:
     return json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
 
 
+@dataclass(frozen=True)
+class StructuredOutputResult:
+    text: str
+    input_tokens: int | None
+    output_tokens: int | None
+
+
 def generate_shreckworld_structured_output(
     *, usage_tag: str, system_prompt: str, user_content: str,
     schema_name: str, response_schema: dict[str, Any], max_tokens: int,
     model_target: ShreckWorldModelTarget,
-) -> str:
+) -> StructuredOutputResult:
     """Run a bounded ShreckLLM structured-output job for ShreckWorld agent stages."""
     settings = get_settings()
     headers = {}
@@ -257,10 +265,18 @@ def generate_shreckworld_structured_output(
                 if state == "succeeded":
                     result = client.get(f"/chat/jobs/{job_id}/result", timeout=timeout)
                     result.raise_for_status()
-                    text = result.json().get("text")
+                    body = result.json()
+                    text = body.get("text")
                     if not isinstance(text, str) or not text.strip():
                         raise ShreckLLMUnavailable("ShreckLLM returned empty structured output")
-                    return text
+                    usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+                    prompt_tokens = usage.get("prompt_tokens")
+                    completion_tokens = usage.get("completion_tokens")
+                    return StructuredOutputResult(
+                        text=text,
+                        input_tokens=prompt_tokens if isinstance(prompt_tokens, int) and prompt_tokens >= 0 else None,
+                        output_tokens=completion_tokens if isinstance(completion_tokens, int) and completion_tokens >= 0 else None,
+                    )
                 time.sleep(settings.synthesis_poll_interval_seconds)
     except httpx.HTTPError as exc:
         raise ShreckLLMUnavailable("ShreckLLM could not complete a structured-output job") from exc

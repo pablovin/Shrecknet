@@ -35,8 +35,8 @@ Neo4j mutations are performed by Learn Ontology.
 
 | Method | Route suffix | Purpose |
 | --- | --- | --- |
-| GET | `/sources` | Explanatory sources only, including learning states |
-| POST | `/learn` | Queue background discovery and pin current documents |
+| GET | `/sources` | Explanatory sources, learning states, active Book Map chapters, and per-document chapter sent state |
+| POST | `/learn` | Queue background discovery for selected chapters and pin current documents |
 | GET | `/runs` | Most recent ontology discovery runs |
 | GET | `/runs/{id}` | Status, stage, detailed progress, activity log, proposals and diagnostics |
 | POST | `/runs/{id}/cancel` | Request cancellation |
@@ -59,9 +59,18 @@ IDs are UUIDs, not display names.
 ```json
 {
   "idempotency_key": "world-7-rulebooks-2026-11-14",
-  "source_ids": ["SOURCE_UUID_A", "SOURCE_UUID_B"]
+  "source_ids": ["SOURCE_UUID_A", "SOURCE_UUID_B"],
+  "chapter_ids": {"SOURCE_UUID_A": ["BOOKMAP_CHAPTER_ID"]}
 }
 ```
+
+`chapter_ids` is optional for compatibility. Omitted source entries mean all
+chapters with indexed text in that source's active Book Map. The ShreckOS
+chapter picker defaults to all chapters and can submit a subset. `/sources`
+returns each source's chapter `id`, `title`, and `sent` flag. A chapter becomes
+sent after its model request succeeds; state is scoped to the active document
+digest, so replacing or reindexing a source presents its chapters as unsent.
+The chapter ledger is stored in an additive ShreckWorld table.
 
 The server verifies all selected Sources are **explanatory** and have a
 current active Bookmap. It pins document IDs and content digests before queueing.
@@ -76,14 +85,19 @@ A queued cancellation is terminal immediately; a running job changes to
 An in-flight model request cannot be interrupted mid-response.
 
 `/runs`, `/runs/{id}`, and the initial `POST /learn` result include
-`activity`, `activity_log`, and `model_summary`. Activity events give their
+`activity`, `activity_log`, and `model_summary`, plus cumulative `input_tokens`,
+`output_tokens`, and `llm_calls`. Token totals are provider-reported prompt and
+completion usage from successful discovery and reconciliation responses. When a
+provider omits usage, the call is counted and its unavailable token values add
+zero. Failed model requests are not counted as completed calls. Activity events give their
 timestamp, stage, source/chapter names, source number, window number,
 completed/total windows, discovered proposals, and reconciliation progress.
-These fields are persisted in the existing bounded run diagnostics JSON
+Activity fields are persisted in the existing bounded run diagnostics JSON
 (250 recent events), with user-facing progress events separated from error
-diagnostics by the API. No database migration or new tables are necessary;
-runs created by previous versions return empty activity records. Model
-summaries include provider/model name but omit credentials.
+diagnostics by the API. Usage totals are persisted on each run. Existing SQLite
+databases add the three integer columns at startup with zero defaults; prior runs
+therefore remain readable and report zero usage. Model summaries include
+provider/model name but omit credentials.
 
  The user
 must review all proposals before successful adoption.

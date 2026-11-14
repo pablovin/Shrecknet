@@ -77,6 +77,9 @@ class OntologyLearnRun(Base):
     model_targets: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    llm_calls: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     stage: Mapped[str] = mapped_column(String(40), default="queued", nullable=False)
     proposals: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     proposal_revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -95,3 +98,16 @@ class OntologyLearnSource(Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("shreckworld_ontology_runs.id"), nullable=False)
     reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (UniqueConstraint("ontology_id", "source_id", name="uq_ontology_learn_source"),)
+
+class OntologyLearnChapter(Base):
+    """Chapter windows that reached the Architect model for a pinned document."""
+    __tablename__ = "shreckworld_ontology_learned_chapters"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    ontology_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    document_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    content_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    chapter_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    chapter_title: Mapped[str] = mapped_column(String(500), nullable=False)
+    last_sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    __table_args__ = (UniqueConstraint("ontology_id", "source_id", "content_digest", "chapter_id", name="uq_ontology_learn_chapter"),)

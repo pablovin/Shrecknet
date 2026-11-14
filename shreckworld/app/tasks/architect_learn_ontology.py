@@ -7,7 +7,7 @@ from uuid import uuid4
 from sqlalchemy import select, update
 from app.celery_app import celery_app
 from app.db.session import session_factory
-from app.models.ontology_studio import OntologyLearnRun
+from app.models.ontology_studio import OntologyLearnRun, OntologyLearnChapter
 from app.models.document import (ShreckWorldDocument, ShreckWorldDocumentBookMap,
     ShreckWorldDocumentBlock)
 from app.models.shreckworld import ShreckWorldLibraryItem
@@ -16,7 +16,7 @@ from app.services.book_map_contract import read_book_map
 from app.services.ontology_discovery_batches import build_discovery_batches
 from app.integrations.shreckllm import generate_shreckworld_structured_output
 from app.services import ontology_studio
-from app.services.ontology_run_reporting import progress
+from app.services.ontology_run_reporting import progress, record_llm_usage
 
 logger = logging.getLogger(__name__)
 SCHEMA = {
@@ -97,7 +97,13 @@ def run_ontology_discovery(run_id: str) -> None:
                 mapped = read_book_map(book.payload)
                 blocks = {b.id: b for b in db.scalars(select(ShreckWorldDocumentBlock).where(
                     ShreckWorldDocumentBlock.document_id == doc.id))}
-                prepared.append((item, doc, build_discovery_batches(mapped, blocks)))
+                batches = build_discovery_batches(mapped, blocks)
+                selected_chapters = source.get("chapter_ids")
+                if selected_chapters is not None:
+                    if not set(selected_chapters) <= {batch["chapter_id"] for batch in batches}:
+                        raise ValueError("pinned_chapter_unavailable")
+                    batches = [batch for batch in batches if batch["chapter_id"] in set(selected_chapters)]
+                prepared.append((item, doc, batches))
             total_windows = sum(len(batches) for _, _, batches in prepared)
             completed_windows = 0
             if not progress(db, run, 5, "preparing", {
@@ -123,13 +129,30 @@ def run_ontology_discovery(run_id: str) -> None:
                         return
                     allowed = {b["id"] for group in batch["sections"] for b in group["blocks"]}
                     block_sections = {b["id"]: group for group in batch["sections"] for b in group["blocks"]}
-                    raw = generate_shreckworld_structured_output(
+                    response = generate_shreckworld_structured_output(
                         usage_tag="architect_ontology_discovery", system_prompt=PROMPT,
                         user_content=json.dumps({"source_title": item.title, **batch},
                                                 ensure_ascii=False),
                         schema_name="architect_ontology_discovery", response_schema=SCHEMA,
                         max_tokens=6000, model_target=model(run, "discovery"))
-                    result = json.loads(raw)
+                    sent = db.scalar(select(OntologyLearnChapter).where(
+                        OntologyLearnChapter.ontology_id == run.ontology_id,
+                        OntologyLearnChapter.source_id == item.id,
+                        OntologyLearnChapter.content_digest == doc.source_sha256,
+                        OntologyLearnChapter.chapter_id == batch["chapter_id"]))
+                    if sent is None:
+                        sent = OntologyLearnChapter(ontology_id=run.ontology_id,
+                            source_id=item.id, document_id=doc.id, content_digest=doc.source_sha256,
+                            chapter_id=batch["chapter_id"], chapter_title=batch["chapter_title"])
+                        db.add(sent)
+                    else:
+                        sent.document_id = doc.id
+                        sent.chapter_title = batch["chapter_title"]
+                        sent.last_sent_at = datetime.now(timezone.utc)
+                    db.commit()
+                    record_llm_usage(db, run, input_tokens=response.input_tokens,
+                                     output_tokens=response.output_tokens)
+                    result = json.loads(response.text)
                     for candidate in result["proposals"]:
                         evidence_ids = candidate["evidence_block_ids"]
                         if not candidate["name"].strip() or not set(evidence_ids) <= allowed:
@@ -198,7 +221,7 @@ def run_ontology_discovery(run_id: str) -> None:
                                     "group_index": group_index, "total_groups": total_groups,
                                     "proposals_discovered": len(found)}):
                         return
-                    reconciliation_raw = generate_shreckworld_structured_output(
+                    reconciliation_response = generate_shreckworld_structured_output(
                         usage_tag="architect_ontology_reconciliation",
                         system_prompt=(PROMPT + "\\nReconcile terminology in the candidate list "
                                        "against existing ontology definitions. Return only justified "
@@ -208,7 +231,9 @@ def run_ontology_discovery(run_id: str) -> None:
                             "existing_entities": current["entities"][:100]}, ensure_ascii=False),
                         schema_name="architect_ontology_reconciliation", response_schema=SCHEMA,
                         max_tokens=6000, model_target=model(run, "reconciliation"))
-                    reconciled = json.loads(reconciliation_raw)
+                    record_llm_usage(db, run, input_tokens=reconciliation_response.input_tokens,
+                                     output_tokens=reconciliation_response.output_tokens)
+                    reconciled = json.loads(reconciliation_response.text)
                     permitted = {block for proposal in group for ev in proposal["evidence"]
                                  for block in ev.get("block_ids", [])}
                     evidence_lookup = {block: ev for proposal in group for ev in proposal["evidence"]

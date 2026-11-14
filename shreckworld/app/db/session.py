@@ -61,6 +61,13 @@ def create_schema() -> None:
             }.items():
                 if name not in columns:
                     connection.execute(text(f"ALTER TABLE shreckworld_embedding_jobs ADD COLUMN {name} {definition}"))
+        if "shreckworld_ontology_runs" in inspector.get_table_names():
+            columns = {column["name"] for column in inspector.get_columns("shreckworld_ontology_runs")}
+            for name in ("input_tokens", "output_tokens", "llm_calls"):
+                if name not in columns:
+                    connection.execute(text(
+                        f"ALTER TABLE shreckworld_ontology_runs ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0"
+                    ))
         if "shreckworlds" in inspector.get_table_names():
             columns = {column["name"] for column in inspector.get_columns("shreckworlds")}
             if "shrecknet_world_id" not in columns:

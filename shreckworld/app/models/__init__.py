@@ -1,5 +1,5 @@
 from app.models.ontology_studio import (WorldOntology, OntologyEntity, OntologyProperty,
-    OntologyRelationship, OntologyRevision, OntologyLearnRun, OntologyLearnSource)
+    OntologyRelationship, OntologyRevision, OntologyLearnRun, OntologyLearnSource, OntologyLearnChapter)
 from app.models.sources import SourceHierarchy, SourceOrganization, SourceAsset, GraphSourceImport
 from app.models.source_collection import SourceCollection
 from app.models.document import (ShreckWorldDocument, ShreckWorldDocumentPage, ShreckWorldDocumentSection, ShreckWorldDocumentBlock, ShreckWorldDocumentBookMap)

@@ -13,6 +13,7 @@ def stub_run(status="running", diagnostics=None):
     return SimpleNamespace(
         id="r1", ontology_id=7, owner_id="owner", status=status,
         progress=0, stage="queued", diagnostics=diagnostics or [],
+        input_tokens=1234, output_tokens=567, llm_calls=3,
         model_targets={"discovery": {"provider": "openrouter", "name": "example",
                                      "api_key": "should-never-appear"},
                        "reconciliation": {"provider": "openrouter", "name": "example"}},
@@ -48,6 +49,9 @@ def test_progress_reports_window_activity_and_separates_errors():
     })
     payload = run_response(run)
     assert payload["progress"] == 23
+    assert payload["input_tokens"] == 1234
+    assert payload["output_tokens"] == 567
+    assert payload["llm_calls"] == 3
     assert payload["activity"]["chapter_title"] == "Combat"
     assert payload["activity"]["completed_windows"] == 2
     assert payload["diagnostics"] == [{"kind": "error", "code": "old_warning"}]
@@ -65,6 +69,17 @@ def test_progress_events_are_bounded_for_large_rulebooks():
         assert progress(db, run, i % 100, "discovering", {"event": "window_completed", "completed_windows": i})
     assert len(run.diagnostics) == 250
     assert run_response(run)["activity"]["completed_windows"] == 259
+
+
+def test_record_llm_usage_accumulates_completed_calls_and_tolerates_missing_usage():
+    from app.services.ontology_run_reporting import record_llm_usage
+
+    run = stub_run()
+    run.input_tokens = run.output_tokens = run.llm_calls = 0
+    db = FakeDb(run)
+    record_llm_usage(db, run, input_tokens=100, output_tokens=25)
+    record_llm_usage(db, run, input_tokens=None, output_tokens=None)
+    assert (run.input_tokens, run.output_tokens, run.llm_calls) == (100, 25, 2)
 
 
 def test_queued_cancel_is_terminal_and_running_cancel_is_cooperative():

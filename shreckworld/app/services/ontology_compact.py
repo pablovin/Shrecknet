@@ -216,7 +216,7 @@ def accumulate(found: dict, proposal: dict) -> None:
 
 
 def _canonical(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+    return re.sub(r"[\W_]+", "", value.casefold(), flags=re.UNICODE)
 
 
 def _comparable(a: dict, b: dict) -> bool:
@@ -275,8 +275,12 @@ def reconciliation_input(candidates: list[dict], indices: list[int]) -> str:
         for idx in indices]})
 
 
-def apply_reconciliation(candidates: list[dict], indices: list[int], operations: dict) -> list[dict]:
-    """Only provenance-preserving edits to existing candidates; no generated facts."""
+def apply_reconciliation(candidates: list[dict], indices: list[int], operations: dict) -> set[int]:
+    """Apply operations to the in-place candidate array; return removed indexes.
+
+    Entity merges/renames update dependent property owner and relationship
+    endpoints, preventing orphan references at human-review time.
+    """
     if not isinstance(operations, dict) or set(operations) != {"merge", "rename", "review"}:
         raise CompactContractError("invalid_reconciliation_envelope")
     if any(not isinstance(operations[k], list) or len(operations[k]) > 20
@@ -284,6 +288,16 @@ def apply_reconciliation(candidates: list[dict], indices: list[int], operations:
         raise CompactContractError("invalid_reconciliation_envelope")
     allowed = set(indices)
     removed: set[int] = set()
+
+    def replace_entity(old: str, new: str) -> None:
+        for proposal in candidates:
+            if proposal["kind"] == "property" and proposal.get("entity") == old:
+                proposal["entity"] = new
+            elif proposal["kind"] == "relationship":
+                for field in ("source", "target"):
+                    if proposal.get(field) == old:
+                        proposal[field] = new
+
     for pair in operations["merge"]:
         if not isinstance(pair, list) or len(pair) != 2 or any(type(i) is not int for i in pair):
             raise CompactContractError("invalid_reconciliation_merge")
@@ -297,19 +311,27 @@ def apply_reconciliation(candidates: list[dict], indices: list[int], operations:
                                               "alternatives": sorted({candidates[origin]["data_type"],
                                                                       candidates[target]["data_type"]})}
             continue
-        seen = {compact_json(e): e for e in candidates[target].get("evidence", [])}
-        seen.update({compact_json(e): e for e in candidates[origin].get("evidence", [])})
-        candidates[target]["evidence"] = list(seen.values())
+        evidence = {compact_json(e): e for e in candidates[target].get("evidence", [])}
+        evidence.update({compact_json(e): e for e in candidates[origin].get("evidence", [])})
+        candidates[target]["evidence"] = list(evidence.values())
         candidates[target]["aliases"] = sorted(set(candidates[target].get("aliases", []) +
                                                    [candidates[origin]["name"]]))
+        if candidates[origin]["kind"] == "entity":
+            replace_entity(candidates[origin]["name"], candidates[target]["name"])
         removed.add(origin)
     for pair in operations["rename"]:
         if (not isinstance(pair, list) or len(pair) != 2 or type(pair[0]) is not int
             or pair[0] not in allowed or pair[0] in removed):
             raise CompactContractError("invalid_reconciliation_rename")
-        candidates[pair[0]]["name"] = _valid_name(pair[1])
+        old = candidates[pair[0]]["name"]
+        new = _valid_name(pair[1])
+        if candidates[pair[0]]["kind"] == "entity":
+            replace_entity(old, new)
+        if old != new:
+            candidates[pair[0]]["aliases"] = sorted(set(candidates[pair[0]].get("aliases", []) + [old]))
+        candidates[pair[0]]["name"] = new
     for number in operations["review"]:
         if type(number) is not int or number not in allowed or number in removed:
             raise CompactContractError("invalid_reconciliation_review")
         candidates[number]["conflict"] = {"reason": "ambiguous_ontology_mapping"}
-    return [c for index, c in enumerate(candidates) if index not in removed]
+    return removed

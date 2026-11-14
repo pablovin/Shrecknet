@@ -40,6 +40,7 @@ jobs:
             shrecknet/app/tasks/architect_generation.py \
             shrecknet/app/tasks/architect_analysis.py \
             shrecknet/app/services/architect_source_documents.py \
+            shrecknet/app/services/architect_passages.py \
             shrecknet/app/services/character_embodiment_service.py \
             shrecknet/app/services/character_agent_service.py \
             shrecknet/app/integrations/retrieval/neo4j_retriever.py \

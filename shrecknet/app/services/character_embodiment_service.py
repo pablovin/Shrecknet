@@ -215,7 +215,7 @@ class CharacterEmbodimentService:
             OPTIONAL MATCH (scene)-[entity_rel:RELATES_TO]->
                            (:EntityInstance {entity_instance_id:$entity_id})
             RETURN coalesce(scene.source_id + ':' + scene.source_section_id,
-                            source.entity_instance_id) AS source_id,
+                            scene.source_id, source.entity_instance_id) AS source_id,
                    coalesce(scene.source_id, source.alias, source.entity_instance_id) AS source_name,
                    source.created_at AS source_created_at,
                    scene.id AS scene_id, scene.name AS scene_name,
@@ -465,7 +465,7 @@ class CharacterEmbodimentService:
                    scene.observation_group_id AS observation_group_id,
                    scene.independence_status AS independence_status,
                    coalesce(scene.source_id + ':' + scene.source_section_id,
-                            source.entity_instance_id) AS source_id,
+                            scene.source_id, source.entity_instance_id) AS source_id,
                    coalesce(scene.source_id, source.alias, source.entity_instance_id) AS source_alias
             ORDER BY coalesce(toString(scene.created_at), ''), scene.id
             """,

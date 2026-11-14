@@ -1969,10 +1969,10 @@ class CharacterAgentService:
                 RETURN agent, entity, scene,
                   CASE WHEN agent IS NULL OR entity IS NULL OR scene IS NULL THEN false
                        ELSE EXISTS {
-                         MATCH (scene)-[:DERIVED_FROM|RELATES_TO]->(entity)
+                         MATCH (scene)-[:RELATES_TO]->(entity)
                        } OR EXISTS {
                          MATCH (scene)-[:CONTAINS]->(:Milestone)
-                               -[:DERIVED_FROM|RELATES_TO]->(entity)
+                               -[:RELATES_TO]->(entity)
                        }
                   END AS eligible,
                   EXISTS {

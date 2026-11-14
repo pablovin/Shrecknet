@@ -224,7 +224,7 @@ def _write_batch(tx, batch: list[dict]) -> None:
               -[:HAS_SCENE]->(scene:Scene {id: record.scene_id})
               -[:DERIVED_FROM]->(entity:EntityInstance {entity_instance_id: record.entity_id})
         WHERE toInteger(page.ontology_id) = record.ontology_id
-          AND toString(scene.instance_id) = record.instance_id
+          AND toInteger(entity.ontology_id) = record.ontology_id
         SET scene.source_provenance_json = record.payload,
             scene.source_id = record.source_id,
             scene.source_section_id = record.section_id,
@@ -245,13 +245,18 @@ def _reconcile(session_factory, settings) -> dict[str, int]:
         with driver.session(database=settings.graph_neo4j_database) as graph:
             rows = graph.run("""
                 MATCH (page:OntologyInstance)-[:HAS_SCENE]->(scene:Scene)
-                      -[:DERIVED_FROM]->(source:EntityInstance)<-[:HAS_ENTITY]-(page)
+                      -[:DERIVED_FROM]->(source:EntityInstance)
                 WHERE toString(scene.instance_id) = toString(page.instance_id)
+                  AND toInteger(source.ontology_id) = toInteger(page.ontology_id)
                 RETURN toInteger(page.ontology_id) AS ontology_id,
                        page.instance_id AS instance_id,
+                       source.instance_id AS source_instance_id,
                        scene.id AS scene_id,
                        source.entity_instance_id AS entity_id,
-                       scene.source_provenance_json AS existing
+                       scene.source_provenance_json AS existing,
+                       scene.source_id AS source_id,
+                       scene.source_section_id AS source_section_id,
+                       scene.source_markdown_asset_id AS source_markdown_asset_id
             """).data()
             # Exhaust the read cursor before starting any write transaction.
             batch = []
@@ -264,7 +269,7 @@ def _reconcile(session_factory, settings) -> dict[str, int]:
                     stats["conflicts"] += 1
                     continue
                 seen.add(identity)
-                key = (int(row["ontology_id"]), identity[0], str(row["entity_id"]))
+                key = (int(row["ontology_id"]), str(row["source_instance_id"]), str(row["entity_id"]))
                 mapping = mappings.get(key)
                 if mapping is None:
                     continue
@@ -279,7 +284,10 @@ def _reconcile(session_factory, settings) -> dict[str, int]:
                     stats["document_only"] += 1
                 if recovered:
                     stats["paragraphs_recovered"] += 1
-                if _decode(row["existing"]) == payload:
+                if (_decode(row["existing"]) == payload
+                        and row.get("source_id") == payload.get("source_id")
+                        and row.get("source_section_id") == payload.get("section_id")
+                        and row.get("source_markdown_asset_id") == payload.get("markdown_asset_id")):
                     continue
                 batch.append({"ontology_id": key[0], "instance_id": identity[0],
                               "scene_id": identity[1], "entity_id": key[2],

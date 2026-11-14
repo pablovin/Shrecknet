@@ -13,7 +13,7 @@ class WorldOntology(Base):
     __tablename__ = "shreckworld_ontology"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     ontology_id: Mapped[int] = mapped_column(Integer, unique=True, nullable=False, index=True)
-    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

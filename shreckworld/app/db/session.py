@@ -26,6 +26,8 @@ def create_schema() -> None:
         ShreckWorldSettings,
         GameBinding, GameDefinition, GameGenerationRun, GameRuleset, GameRulesetReview,
         GameRulesetVersion, ShreckTable, ShreckTableParticipant,
+        WorldOntology, OntologyEntity, OntologyProperty, OntologyRelationship,
+        OntologyRevision, OntologyLearnRun, OntologyLearnSource,
     )
     from app.db.base import Base
 

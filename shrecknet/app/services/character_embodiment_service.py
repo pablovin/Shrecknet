@@ -202,7 +202,7 @@ class CharacterEmbodimentService:
         entity_evidence = [item for item in all_evidence if item.kind != "scene"]
         rows = await self.graph.run(
             """
-            MATCH (scene:Scene)-[:DERIVED_FROM]->(source:EntityInstance)
+            MATCH (scene:Scene)
             WHERE (EXISTS {
               MATCH (scene)-[:RELATES_TO]->
                     (:EntityInstance {entity_instance_id:$entity_id})
@@ -210,10 +210,12 @@ class CharacterEmbodimentService:
               MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->
                     (:EntityInstance {entity_instance_id:$entity_id})
             })
+            OPTIONAL MATCH (scene)-[:DERIVED_FROM]->(source:EntityInstance)
             OPTIONAL MATCH (scene)-[entity_rel:RELATES_TO]->
                            (:EntityInstance {entity_instance_id:$entity_id})
-            RETURN source.entity_instance_id AS source_id,
-                   coalesce(source.alias, source.entity_instance_id) AS source_name,
+            RETURN coalesce(scene.source_id + ':' + scene.source_section_id,
+                            source.entity_instance_id) AS source_id,
+                   coalesce(scene.source_id, source.alias, source.entity_instance_id) AS source_name,
                    source.created_at AS source_created_at,
                    scene.id AS scene_id, scene.name AS scene_name,
                    scene.description AS scene_description,
@@ -451,8 +453,9 @@ class CharacterEmbodimentService:
                    toString(scene.created_at) AS created_at,
                    scene.observation_group_id AS observation_group_id,
                    scene.independence_status AS independence_status,
-                   source.entity_instance_id AS source_id,
-                   coalesce(source.alias, source.entity_instance_id) AS source_alias
+                   coalesce(scene.source_id + ':' + scene.source_section_id,
+                            source.entity_instance_id) AS source_id,
+                   coalesce(scene.source_id, source.alias, source.entity_instance_id) AS source_alias
             ORDER BY coalesce(toString(scene.created_at), ''), scene.id
             """,
             entity_id=entity_instance_id, ontology_id=ontology_id,

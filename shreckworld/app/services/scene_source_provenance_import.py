@@ -232,6 +232,83 @@ def _write_batch(tx, batch: list[dict]) -> None:
     """, records=batch).consume()
 
 
+def _backfill_milestones(graph) -> dict[str, int]:
+    """Idempotently inherit the containing Scene's document and paragraph window.
+
+    Historical Milestones have no independently verified paragraph span; the
+    inherited range is marked as such. Existing Milestone passage edits win.
+    """
+    rows = graph.run("""
+        MATCH (page:OntologyInstance)-[:HAS_SCENE]->(scene:Scene)
+              -[:CONTAINS]->(milestone:Milestone)
+        WHERE scene.source_id IS NOT NULL
+          AND toInteger(scene.ontology_id) = toInteger(milestone.ontology_id)
+        OPTIONAL MATCH (milestone)-[:DERIVED_FROM]->(legacy:EntityInstance)
+        RETURN scene.id AS scene_id, milestone.id AS milestone_id,
+               scene.source_id AS source_id,
+               scene.source_section_id AS section_id,
+               scene.source_markdown_asset_id AS markdown_asset_id,
+               scene.source_provenance_json AS scene_evidence,
+               milestone.source_provenance_json AS previous,
+               milestone.source_id AS current_source_id,
+               milestone.source_section_id AS current_section_id,
+               milestone.source_markdown_asset_id AS current_markdown_asset_id,
+               legacy.entity_instance_id AS legacy_id
+    """).data()
+    changes: list[dict] = []
+    conflicts = 0
+    for row in rows:
+        old = _decode(row["previous"])
+        if old is None:
+            conflicts += 1
+            continue
+        if (old.get("source_id") not in (None, "", row["source_id"])
+                or old.get("section_id") not in (None, "", row["section_id"])
+                or row["current_source_id"] not in (None, row["source_id"])
+                or row["current_section_id"] not in (None, row["section_id"])):
+            conflicts += 1
+            continue
+        source_evidence = _decode(row["scene_evidence"]) or {}
+        current = dict(old)
+        current["entity_instance_id"] = old.get("entity_instance_id") or row["legacy_id"]
+        current["source_id"] = row["source_id"]
+        current["section_id"] = row["section_id"]
+        if row["markdown_asset_id"]:
+            current.setdefault("markdown_asset_id", row["markdown_asset_id"])
+        if current.get("start_paragraph") is None and current.get("end_paragraph") is None:
+            if (source_evidence.get("start_paragraph") is not None and
+                    source_evidence.get("end_paragraph") is not None):
+                current["start_paragraph"] = source_evidence["start_paragraph"]
+                current["end_paragraph"] = source_evidence["end_paragraph"]
+                current["source_paragraphs_absolute"] = source_evidence.get(
+                    "source_paragraphs_absolute") or []
+                current["provenance_status"] = "scene_inherited"
+            else:
+                current.setdefault("provenance_status", "document_only")
+        if (current == old and row["current_source_id"] == current.get("source_id")
+                and row["current_section_id"] == current.get("section_id")
+                and row["current_markdown_asset_id"] == current.get("markdown_asset_id")):
+            continue
+        changes.append({
+            "scene_id": row["scene_id"], "milestone_id": row["milestone_id"],
+            "source_id": current["source_id"], "section_id": current["section_id"],
+            "markdown_asset_id": current.get("markdown_asset_id"),
+            "payload": json.dumps(current, ensure_ascii=False),
+        })
+    for pos in range(0, len(changes), _BATCH_SIZE):
+        batch = changes[pos:pos + _BATCH_SIZE]
+        graph.execute_write(lambda tx, payload: tx.run("""
+            UNWIND $records AS record
+            MATCH (scene:Scene {id: record.scene_id})-[:CONTAINS]->
+                  (milestone:Milestone {id: record.milestone_id})
+            SET milestone.source_id = record.source_id,
+                milestone.source_section_id = record.section_id,
+                milestone.source_markdown_asset_id = record.markdown_asset_id,
+                milestone.source_provenance_json = record.payload
+        """, records=payload).consume(), batch)
+    return {"milestones_updated": len(changes), "milestone_conflicts": conflicts}
+
+
 def _reconcile(session_factory, settings) -> dict[str, int]:
     mappings = _source_mappings(session_factory)
     historical, jobs = _historical_scene_ranges(settings.legacy_jobs_database_path)
@@ -302,6 +379,7 @@ def _reconcile(session_factory, settings) -> dict[str, int]:
             if batch:
                 graph.execute_write(_write_batch, batch)
                 stats["updated"] += len(batch)
+            stats.update(_backfill_milestones(graph))
     finally:
         driver.close()
     output = dict(stats)

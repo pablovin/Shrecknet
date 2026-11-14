@@ -3203,17 +3203,25 @@ class OntologyInstanceService:
                 entity_instance_id=payload.derived_from.entity_instance_id,
             )
         if payload.derived_from.source_id:
-            from app.services.architect_source_documents import load_architect_source
-            document, _ = await asyncio.to_thread(
-                load_architect_source, ontology_id,
-                payload.derived_from.source_id, payload.derived_from.section_id,
+            from app.services.architect_source_documents import (
+                load_architect_source, source_belongs_to_ontology,
             )
-            if (payload.derived_from.source_revision is not None
-                    and payload.derived_from.source_revision != document.source_revision):
-                raise ValueError("Scene Source revision changed during creation")
-            if (payload.derived_from.markdown_asset_id is not None
-                    and payload.derived_from.markdown_asset_id != document.markdown_asset_id):
-                raise ValueError("Scene Source Markdown asset changed")
+            if payload.derived_from.entity_instance_id:
+                if not await asyncio.to_thread(
+                    source_belongs_to_ontology, ontology_id, payload.derived_from.source_id,
+                ):
+                    raise ValueError("Scene Source does not belong to this ontology")
+            else:
+                document, _ = await asyncio.to_thread(
+                    load_architect_source, ontology_id,
+                    payload.derived_from.source_id, payload.derived_from.section_id,
+                )
+                if (payload.derived_from.source_revision is not None
+                        and payload.derived_from.source_revision != document.source_revision):
+                    raise ValueError("Scene Source revision changed during creation")
+                if (payload.derived_from.markdown_asset_id is not None
+                        and payload.derived_from.markdown_asset_id != document.markdown_asset_id):
+                    raise ValueError("Scene Source Markdown asset changed")
         await self._validate_scene_relates_to_entities(
             instance_id=instance_id,
             entity_instance_ids=[item.entity_instance_id for item in payload.relates_to],
@@ -3487,15 +3495,23 @@ class OntologyInstanceService:
                     entity_instance_id=payload.derived_from.entity_instance_id,
                 )
             if payload.derived_from.source_id:
-                from app.services.architect_source_documents import load_architect_source
-                document, _ = await asyncio.to_thread(
-                    load_architect_source,
-                    await self._get_instance_ontology_id(instance_id),
-                    payload.derived_from.source_id, payload.derived_from.section_id,
+                from app.services.architect_source_documents import (
+                    load_architect_source, source_belongs_to_ontology,
                 )
-                if (payload.derived_from.source_revision is not None and
-                        document.source_revision != payload.derived_from.source_revision):
-                    raise ValueError("Scene Source revision changed")
+                ontology_id = await self._get_instance_ontology_id(instance_id)
+                if payload.derived_from.entity_instance_id:
+                    if not await asyncio.to_thread(
+                        source_belongs_to_ontology, ontology_id, payload.derived_from.source_id,
+                    ):
+                        raise ValueError("Scene Source does not belong to this ontology")
+                else:
+                    document, _ = await asyncio.to_thread(
+                        load_architect_source, ontology_id,
+                        payload.derived_from.source_id, payload.derived_from.section_id,
+                    )
+                    if (payload.derived_from.source_revision is not None
+                            and document.source_revision != payload.derived_from.source_revision):
+                        raise ValueError("Scene Source revision changed")
             # Source identity/range is updated together with DERIVED_FROM.
             # An entity-only update deliberately drops stale passage metadata.
             updates["source_provenance_json"] = json.dumps(

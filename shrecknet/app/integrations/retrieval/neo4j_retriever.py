@@ -666,7 +666,25 @@ class Neo4jGraphRetriever:
                 "end_paragraph": lineage.get("end_paragraph"),
                 "passage_status": lineage.get("provenance_status"),
             }
-            excerpt = markdown[:max(800, min(3500, max_tokens_per_source * 3))]
+            # Only paragraph refs from the SAME saved Markdown revision may be
+            # interpreted as an exact slice. Historical unverified offsets are
+            # retained as metadata but are never highlighted as verified text.
+            limit = max(800, min(3500, max_tokens_per_source * 3))
+            excerpt = markdown[:limit]
+            status = "document_preview"
+            start, end = lineage.get("start_paragraph"), lineage.get("end_paragraph")
+            if (
+                lineage.get("provenance_status") in {"architect", "scene_inherited"}
+                and lineage.get("source_revision") == doc.source_revision
+                and isinstance(start, int) and isinstance(end, int)
+                and 1 <= start <= end <= 100000
+            ):
+                from app.jobs.architect.scene_centric_chunking import extract_paragraphs_from_sources
+                paragraphs = extract_paragraphs_from_sources(markdown, None)
+                if end <= len(paragraphs):
+                    excerpt = "\\n\\n".join(paragraphs[start - 1:end])[:limit]
+                    status = "verified_source_window" if lineage.get("provenance_status") == "architect" else "scene_inherited_window"
+            entry["narrative_source"]["excerpt_status"] = status
             entry["display_text"] = (entry.get("display_text") or "") + (
                 f"\\n\\nOriginal ShreckWorld Source: {doc.title}\\n{excerpt}"
             )

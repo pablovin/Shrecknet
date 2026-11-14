@@ -165,6 +165,12 @@ def run_ontology_discovery(run_id: str) -> None:
                         proposal = normalize(candidate, evidence)
                         key = proposal_key(proposal)
                         if key in found:
+                            if (candidate["kind"] == "property" and
+                                found[key].get("data_type") != proposal.get("data_type")):
+                                found[key]["conflict"] = {
+                                    "reason": "inconsistent_source_property_type",
+                                    "alternatives": sorted({found[key]["data_type"], proposal["data_type"]})
+                                }
                             if evidence not in found[key]["evidence"]:
                                 found[key]["evidence"].append(evidence)
                         else:
@@ -191,9 +197,9 @@ def run_ontology_discovery(run_id: str) -> None:
                         system_prompt=(PROMPT + "\\nReconcile terminology in the candidate list "
                                        "against existing ontology definitions. Return only justified "
                                        "candidate objects, preserving provided evidence IDs."),
-                        user_content=json.dumps({"candidates": group, "existing_entities":
-                            current["entities"], "existing_properties": current["properties"],
-                            "existing_relationships": current["relationships"]}, ensure_ascii=False),
+                        user_content=json.dumps({"candidates": group,
+                            "existing_properties": current["properties"][:100],
+                            "existing_entities": current["entities"][:100]}, ensure_ascii=False),
                         schema_name="architect_ontology_reconciliation", response_schema=SCHEMA,
                         max_tokens=6000, model_target=model(run, "reconciliation"))
                     reconciled = json.loads(reconciliation_raw)
@@ -232,6 +238,8 @@ def run_ontology_discovery(run_id: str) -> None:
                     p["change"] = ("update" if (p["source"].casefold(), p["target"].casefold(),
                                     p["name"].casefold()) in {(names.get(s),names.get(t),n) for s,t,n in relations}
                                    else "new")
+                if p.get("conflict"):
+                    p["change"] = "conflict"
                 p["id"] = str(uuid4())
                 proposals.append(p)
             if not progress(db, run, 95, "persisting"):

@@ -8,13 +8,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import Any
+import math
+import re
+
+from app.services.ontology_compact import model_window
 
 from app.schemas.book_map import BookMapV4
 from app.schemas.shreckworld import BookMapRead
 
 # Approximately 6K text tokens at four characters/token. The JSON headings,
 # evidence IDs and instructions are additional input tokens, not part of this cap.
-MAX_BATCH_CHARS = 24000
+MAX_BATCH_CHARS = 8500
+MAX_INPUT_TOKENS = 3000
 STRUCTURAL = {"document", "part", "chapter", "section", "appendix", "contents"}
 CHAPTER_BOUNDARIES = {"chapter", "appendix"}
 POSITION_FALLBACK = 10**9
@@ -142,6 +147,7 @@ def build_discovery_batches(
     blocks: dict[str, Any],
     *,
     max_chars: int = MAX_BATCH_CHARS,
+    max_input_tokens: int = MAX_INPUT_TOKENS,
 ) -> list[dict]:
     """Return one LLM request per chapter, or several windows for long chapters.
 
@@ -151,6 +157,8 @@ def build_discovery_batches(
     """
     if max_chars < 256:
         raise ValueError("max_chars must be at least 256")
+    if max_input_tokens < 256:
+        raise ValueError("max_input_tokens must be at least 256")
     owners, positions = _structure_for_block(mapped)
     default = {
         "chapter_id": "unmapped",
@@ -178,38 +186,73 @@ def build_discovery_batches(
         current = None
         size = 0
 
+    # Conservative estimate on the *actual compact serialized prompt*, rather
+    # than source characters alone. English prose, Unicode, table punctuation
+    # and JSON separators contribute differently. This is a soft estimate, not
+    # provider-verified billing; model usage is captured separately.
+    def estimate_tokens(payload: str) -> int:
+        words = len(re.findall(r"\w+|[^\w\s]", payload))
+        return max(math.ceil(len(payload.encode("utf-8")) / 3), words)
+
+    def fits(batch: dict) -> bool:
+        serialized, _ = model_window(batch, "Reference Source")
+        return estimate_tokens(serialized) + 180 <= max_input_tokens
+
+    def append_piece(owner: dict, block: Any, fragment: str, index: int) -> None:
+        nonlocal current, size
+        if current is None:
+            current = {
+                "chapter_id": owner["chapter_id"],
+                "chapter_title": owner["chapter_title"], "sections": [],
+            }
+        if (not current["sections"] or
+                current["sections"][-1]["section_id"] != owner["section_id"]):
+            current["sections"].append({
+                "section_id": owner["section_id"],
+                "heading_path": list(owner["heading_path"]),
+                "pages": dict(owner["pages"]),
+                "section_type": owner["section_type"], "blocks": [],
+            })
+        current["sections"][-1]["blocks"].append({
+            "id": block.id, "type": block.block_type, "text": fragment,
+            "fragment_index": index,
+        })
+        size += len(fragment)
+
     for block in rows:
         body = block.display_text or ""
         if not body.strip():
             continue
         owner = owners.get(block.id, default)
-        for index, fragment in enumerate(_fragments(body, max_chars)):
-            if current is not None and (
-                current["chapter_id"] != owner["chapter_id"] or
-                size + len(fragment) > max_chars
-            ):
+        # Track fragment positions even if a long paragraph must be divided by
+        # the token-aware budget. No source characters are removed or overlapped.
+        pending = list(_fragments(body, min(max_chars, max_input_tokens * 2)))
+        fragment_index = 0
+        while pending:
+            fragment = pending.pop(0)
+            if current is not None and (current["chapter_id"] != owner["chapter_id"]
+                                         or size + len(fragment) > max_chars):
                 flush()
-            if current is None:
-                current = {
-                    "chapter_id": owner["chapter_id"],
-                    "chapter_title": owner["chapter_title"],
-                    "sections": [],
-                }
-            if (not current["sections"] or
-                    current["sections"][-1]["section_id"] != owner["section_id"]):
-                current["sections"].append({
-                    "section_id": owner["section_id"],
-                    "heading_path": list(owner["heading_path"]),
-                    "pages": dict(owner["pages"]),
-                    "section_type": owner["section_type"],
-                    "blocks": [],
-                })
-            current["sections"][-1]["blocks"].append({
-                "id": block.id,
-                "type": block.block_type,
-                "text": fragment,
-                "fragment_index": index,
-            })
-            size += len(fragment)
+            append_piece(owner, block, fragment, fragment_index)
+            if not fits(current):
+                # First try a new window at the same chapter boundary.
+                # If one fragment alone overflows, split it deterministically.
+                current["sections"][-1]["blocks"].pop()
+                size -= len(fragment)
+                if not current["sections"][-1]["blocks"]:
+                    current["sections"].pop()
+                if current["sections"]:
+                    flush()
+                    pending.insert(0, fragment)
+                    continue
+                current = None
+                size = 0
+                if len(fragment) < 2:
+                    raise ValueError("single_fragment_exceeds_input_budget")
+                middle = len(fragment) // 2
+                pending.insert(0, fragment[middle:])
+                pending.insert(0, fragment[:middle])
+                continue
+            fragment_index += 1
     flush()
     return batches

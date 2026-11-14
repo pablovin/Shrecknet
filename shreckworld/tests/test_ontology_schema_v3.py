@@ -128,15 +128,24 @@ def test_relationship_with_missing_target_is_counted_not_misassigned():
     ({"e": [{"n": "Investigator", "b": [0], "p": [
         {"o": 3, "n": "age", "t": "i", "b": [0]}], "r": []}],
       "overflow": False}, "invalid_compact_property"),
-    ({"e": [{"n": "Investigator", "b": [0], "p": [], "r": []},
-           {"n": "investigator", "b": [1], "p": [], "r": []}],
-      "overflow": False}, "duplicate_compact_entity_type"),
 ])
 def test_invalid_responses_fail_closed_without_retries(payload, code):
     _, lookup = model_window(sample_batch(), "Call of Cthulhu")
     with pytest.raises(CompactContractError) as ex:
         parse_discovery(payload, lookup, supported())
     assert ex.value.code == code
+
+
+def test_duplicate_type_names_merge_without_losing_source_evidence():
+    _, lookup = model_window(sample_batch(), "Call of Cthulhu")
+    raw = {"e": [
+        {"n": "Investigator", "b": [0], "p": [{"n": "age", "t": "i", "b": [0]}], "r": []},
+        {"n": "investigator", "b": [1], "p": [{"n": "age", "t": "i", "b": [1]}], "r": []},
+    ], "overflow": False}
+    proposals = parse_discovery(raw, lookup, supported())
+    assert proposal_counts(proposals) == {"entity_types": 1, "properties": 1, "relationships": 0}
+    assert [e["block_ids"] for e in proposals[0]["evidence"]] == [["real-uuid-1"], ["real-uuid-2"]]
+    assert [e["block_ids"] for e in proposals[1]["evidence"]] == [["real-uuid-1"], ["real-uuid-2"]]
 
 
 def test_reconciliation_merges_schema_types_without_dropping_references():

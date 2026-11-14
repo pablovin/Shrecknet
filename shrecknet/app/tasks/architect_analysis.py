@@ -2130,7 +2130,7 @@ async def _run_milestone_proposal_phase(
             # actually present in the source excerpt. An unsupported attribution
             # must be left empty, not guessed by semantic similarity.
             scene_markers = {int(x) for x in re.findall(
-                r"\\[P(\\d+)\\]", str(scene.get("scene_text") or "")
+                r"\[P(\d+)\]", str(scene.get("scene_text") or "")
             )}
             raw_paragraph_ids = item.get("source_paragraph_ids") or []
             paragraph_ids = []

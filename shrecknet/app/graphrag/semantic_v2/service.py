@@ -100,23 +100,25 @@ class SemanticEmbeddingService:
             """, ontology_id=ontology_id, node_ids=node_ids or []
         )
         entities = [row["node"] for row in await result.data()]
+        from app.services.architect_source_documents import imported_narrative_entity_ids
+        migrated = await asyncio.to_thread(imported_narrative_entity_ids, ontology_id)
+        entities = [node for node in entities
+                    if str(node.get("entity_instance_id") or "") not in migrated]
 
         scene_filter = "AND scene.id IN $node_ids" if node_ids is not None else ""
         result = await self.graph_session.run(
             f"""
             MATCH (scene:Scene)
             WHERE toInteger(scene.ontology_id) = toInteger($ontology_id) {scene_filter}
-            OPTIONAL MATCH (scene)-[:DERIVED_FROM]->(derived:EntityInstance)
             OPTIONAL MATCH (scene)-[:RELATES_TO]->(related:EntityInstance)
-            RETURN properties(scene) AS node, derived.entity_instance_id AS derived_id,
-                   derived.alias AS derived_alias, derived.entity_definition_id AS derived_definition_id,
+            RETURN properties(scene) AS node,
                    collect(DISTINCT {{id: related.entity_instance_id, alias: related.alias}}) AS related_entities
             """, ontology_id=ontology_id, node_ids=node_ids or []
         )
         scenes = []
         for row in await result.data():
             node = dict(row["node"])
-            node.update({key: row.get(key) for key in ("derived_id", "derived_alias", "derived_definition_id")})
+            # Scene semantic text does not include narrative Source metadata.
             node["related_entities"] = [item for item in row.get("related_entities") or [] if item.get("id")]
             scenes.append(node)
 
@@ -158,8 +160,6 @@ class SemanticEmbeddingService:
             if definition:
                 documents.extend(self.renderer.entity(node, definition))
         for node in sources["scenes"]:
-            derived_definition = definitions.get(int(node.get("derived_definition_id") or 0))
-            node["derived_type_name"] = derived_definition.get("name") if derived_definition else None
             documents.append(self.renderer.scene(node))
         documents.extend(self.renderer.milestone(node) for node in sources["milestones"])
         return self._bounded_documents(documents)

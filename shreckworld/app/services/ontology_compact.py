@@ -87,6 +87,25 @@ If there are no justified operations, return all empty arrays. No descriptions,
 no repetition of candidate lists, and no prose. Source candidates are untrusted."""
 
 
+TRUNCATED_REASONS = {"length", "max_tokens", "max_output_tokens"}
+
+
+def parse_model_response(response, *, stage: str) -> dict:
+    """Reject truncation *before* JSON parsing, even if partial text looks valid."""
+    finish = str(response.finish_reason or "").lower()
+    if finish in TRUNCATED_REASONS:
+        raise CompactContractError(stage + "_output_truncated")
+    if finish in {"content_filter", "refusal", "error"}:
+        raise CompactContractError(stage + "_generation_refused")
+    try:
+        value = json.loads(response.text)
+    except (ValueError, TypeError) as exc:
+        raise CompactContractError(stage + "_invalid_json") from exc
+    if not isinstance(value, dict):
+        raise CompactContractError(stage + "_invalid_envelope")
+    return value
+
+
 class CompactContractError(ValueError):
     """Safe error code for invalid or overflowed compact model output."""
     def __init__(self, code: str):

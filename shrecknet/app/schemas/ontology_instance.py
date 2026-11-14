@@ -146,7 +146,7 @@ class SceneDerivedFrom(BaseModel):
     they are not necessarily positions in later edited Markdown.
     """
     model_config = ConfigDict(extra="ignore")
-    entity_instance_id: str
+    entity_instance_id: str | None = None
     source_id: str | None = Field(default=None, max_length=64)
     section_id: str | None = Field(default=None, max_length=128)
     markdown_asset_id: str | None = Field(default=None, max_length=64)
@@ -166,6 +166,14 @@ class SceneDerivedFrom(BaseModel):
         return values
 
     @model_validator(mode="after")
+    def validate_origin(self) -> "SceneDerivedFrom":
+        if not self.entity_instance_id and not (self.source_id and self.section_id):
+            raise ValueError("Scene needs a legacy entity or a Source document section")
+        if bool(self.source_id) != bool(self.section_id):
+            raise ValueError("Both source_id and section_id must be provided")
+        return self
+
+    @model_validator(mode="after")
     def validate_passage(self) -> "SceneDerivedFrom":
         if (self.start_paragraph is None) != (self.end_paragraph is None):
             raise ValueError("Both start and end paragraph are required")
@@ -180,7 +188,7 @@ class SceneDerivedFrom(BaseModel):
     @field_validator("entity_instance_id", mode="before")
     def validate_entity_instance_id(cls, value: str) -> str:
         if value is None:
-            raise ValueError("entity_instance_id cannot be empty")
+            return None
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("entity_instance_id cannot be empty")
@@ -189,7 +197,15 @@ class SceneDerivedFrom(BaseModel):
 
 class MilestoneDerivedFrom(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    entity_instance_id: str
+    entity_instance_id: str | None = None
+    source_id: str | None = Field(default=None, max_length=64)
+    section_id: str | None = Field(default=None, max_length=128)
+    markdown_asset_id: str | None = Field(default=None, max_length=64)
+    source_revision: int | None = Field(default=None, ge=1)
+    start_paragraph: int | None = Field(default=None, ge=1)
+    end_paragraph: int | None = Field(default=None, ge=1)
+    source_paragraphs_absolute: list[int] = Field(default_factory=list)
+    provenance_status: Literal["document_only", "architect", "historical_unverified", "scene_inherited"] | None = None
 
     @model_validator(mode="after")
     def validate_origin(self) -> "MilestoneDerivedFrom":
@@ -206,7 +222,7 @@ class MilestoneDerivedFrom(BaseModel):
     @field_validator("entity_instance_id", mode="before")
     def validate_entity_instance_id(cls, value: str) -> str:
         if value is None:
-            raise ValueError("entity_instance_id cannot be empty")
+            return None
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("entity_instance_id cannot be empty")

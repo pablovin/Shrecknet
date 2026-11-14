@@ -120,3 +120,17 @@ def load_architect_source(
     if not text.strip():
         raise ValueError("Selected narrative Source has no text")
     return selected, text
+
+
+def imported_narrative_entity_ids(ontology_id: int) -> set[str]:
+    """Narrative graph documents migrated to ShreckWorld (never graph authority)."""
+    try:
+        with _connection() as db:
+            return {str(row[0]) for row in db.execute("""
+                SELECT m.entity_instance_id FROM graph_source_imports m
+                JOIN shreckworld_library_items i ON i.id = m.source_id
+                WHERE m.ontology_id=? AND i.source_type='narrative'
+            """, (ontology_id,))}
+    except (FileNotFoundError, OSError, sqlite3.Error):
+        # Do not disable ordinary ontology embeddings if ShreckWorld is offline.
+        return set()

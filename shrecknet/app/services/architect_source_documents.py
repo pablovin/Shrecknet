@@ -66,6 +66,9 @@ def list_architect_sources(ontology_id: int, database_path: Path | None = None) 
             SELECT i.id, i.title, i.source_revision, i.storage_path, i.mime_type,
                    i.source_sha256, a.id AS asset_id, a.section_id,
                    a.storage_path AS asset_path, a.content_sha256 AS asset_hash,
+                   (SELECT o.nodes FROM source_organizations o
+                    WHERE o.source_id=i.id ORDER BY o.revision DESC LIMIT 1)
+                       AS organization_nodes,
                    (SELECT m.instance_id FROM graph_source_imports m
                     WHERE m.ontology_id=i.ontology_id AND m.source_id=i.id
                     ORDER BY m.instance_id LIMIT 1) AS instance_id
@@ -78,6 +81,22 @@ def list_architect_sources(ontology_id: int, database_path: Path | None = None) 
         """, (ontology_id,)).fetchall()
         result = []
         for row in rows:
+            if row["asset_id"] is not None:
+                # SourceAssets are immutable files, but an old revision can
+                # leave an unlinked row behind. Only active SourceOrganization
+                # section references can be analyzed.
+                try:
+                    sections = json.loads(row["organization_nodes"] or "[]")
+                except (TypeError, ValueError):
+                    sections = []
+                if not isinstance(sections, list) or not any(
+                    isinstance(node, dict)
+                    and node.get("id") == row["section_id"]
+                    and isinstance(node.get("metadata"), dict)
+                    and node["metadata"].get("markdown_asset_id") == row["asset_id"]
+                    for node in sections
+                ):
+                    continue
             stored = row["asset_path"] or row["storage_path"] or ""
             if not stored:
                 continue

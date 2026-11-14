@@ -29,8 +29,8 @@ def milestone_source_passage(
     raw_scene_ids = scene.get("source_paragraphs_absolute") or []
     scene_ids = raw_scene_ids if (
         isinstance(raw_scene_ids, list)
-        and raw_scene_ids == sorted(set(raw_scene_ids))
         and all(type(i) is int and start <= i <= end for i in raw_scene_ids)
+        and raw_scene_ids == sorted(set(raw_scene_ids))
     ) else []
     raw = milestone.get("source_paragraphs_absolute")
     if (

@@ -237,12 +237,24 @@ def learn(ontology_id: int, request: LearnRequest, token: str = Depends(oauth2_s
     return run_response(run)
 
 def run_response(run):
+    """Expose human-readable job progress without leaking model credentials.
+
+    Progress events are saved in the existing diagnostics JSON field, so
+    upgraded deployments do not need an ALTER TABLE migration.
+    """
+    records = run.diagnostics or []
+    activity_log = [row for row in records if row.get("kind") == "progress"]
+    last_activity = activity_log[-1] if activity_log else None
     return {"id": run.id, "ontology_id": run.ontology_id, "status": run.status,
             "stage": run.stage, "progress": run.progress, "input_sources": run.input_sources,
             "base_revision": run.base_revision, "proposal_revision": run.proposal_revision,
             "proposals": run.proposals,
-            "diagnostics": run.diagnostics, "created_at": run.created_at,
-            "finished_at": run.finished_at}
+            "diagnostics": [row for row in records if row.get("kind") != "progress"],
+            "activity": last_activity, "activity_log": activity_log,
+            "model_summary": {k: {"provider": v.get("provider"), "name": v.get("name")}
+                              for k, v in (run.model_targets or {}).items()
+                              if k in {"discovery", "reconciliation"} and isinstance(v, dict)},
+            "created_at": run.created_at, "finished_at": run.finished_at}
 
 @router.get("/runs")
 def list_runs(ontology_id: int, token: str = Depends(oauth2_scheme),
@@ -270,7 +282,14 @@ def cancel(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
         raise HTTPException(404, "Run not found")
     if run.status not in {"queued", "running"}:
         raise HTTPException(409, "Run cannot be cancelled")
-    run.status = "cancel_requested"
+    # A queued job can be cancelled immediately; a running LLM call can only
+    # be stopped cooperatively at the next saved worker checkpoint.
+    if run.status == "queued":
+        run.status, run.stage = "cancelled", "cancelled"
+        run.finished_at = datetime.now(timezone.utc)
+    else:
+        run.status = "cancel_requested"
+        run.stage = "cancelling"
     db.commit()
     return run_response(run)
 

@@ -1078,8 +1078,9 @@ class Neo4jGraphRetriever:
             overlap = len(query_tokens & text_tokens) / max(1, len(query_tokens)) if query_tokens else 0.0
             lexical_bonus = min(0.08, overlap * 0.12)
             type_bonus = 0.06 if node_type == "scene" else 0.04
-            lineage_bonus = 0.04 if source_entity_instance_id and source_entity_instance_id in matched_entity_ids else 0.0
-            return round(min(0.99, base + lexical_bonus + type_bonus + lineage_bonus), 6)
+            # The old narrative source entity is not evidence of participant
+            # relevance; only explicit RELATES_TO matching contributes.
+            return round(min(0.99, base + lexical_bonus + type_bonus), 6)
 
         def _build_chunk(
             *,

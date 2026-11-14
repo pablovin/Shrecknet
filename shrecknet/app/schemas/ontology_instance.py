@@ -168,9 +168,7 @@ class SceneDerivedFrom(BaseModel):
     @model_validator(mode="after")
     def validate_origin(self) -> "SceneDerivedFrom":
         if not self.entity_instance_id and not (self.source_id and self.section_id):
-            raise ValueError("Scene needs a legacy entity or a Source document section")
-        if bool(self.source_id) != bool(self.section_id):
-            raise ValueError("Both source_id and section_id must be provided")
+            raise ValueError("Source-only Scenes require both the Source and section")
         return self
 
     @model_validator(mode="after")
@@ -210,9 +208,7 @@ class MilestoneDerivedFrom(BaseModel):
     @model_validator(mode="after")
     def validate_origin(self) -> "MilestoneDerivedFrom":
         if not self.entity_instance_id and not (self.source_id and self.section_id):
-            raise ValueError("A Milestone must refer to either a graph entity or a ShreckWorld Source section")
-        if bool(self.source_id) != bool(self.section_id):
-            raise ValueError("Both source_id and section_id are required")
+            raise ValueError("Source-only Milestones require both the Source and section")
         if (self.start_paragraph is None) != (self.end_paragraph is None):
             raise ValueError("Incomplete Milestone paragraph range")
         if self.start_paragraph is not None and not (1 <= self.start_paragraph <= self.end_paragraph):
@@ -227,6 +223,11 @@ class MilestoneDerivedFrom(BaseModel):
         if not cleaned:
             raise ValueError("entity_instance_id cannot be empty")
         return cleaned
+
+
+class MilestoneSourceReference(MilestoneDerivedFrom):
+    """Read-side compatibility type for legacy entity and migrated Source."""
+    pass
 
 
 class MilestoneEntityRelation(BaseModel):
@@ -373,6 +374,7 @@ class MilestoneRead(MilestoneBase):
     created_at: datetime
     updated_at: datetime
 
+    derived_from: MilestoneSourceReference
 
 class SceneBase(BaseModel):
     model_config = ConfigDict(extra="ignore")

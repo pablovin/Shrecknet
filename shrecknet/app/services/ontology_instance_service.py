@@ -3021,7 +3021,7 @@ class OntologyInstanceService:
             local_order={"followed_by_scene_id": scene_relations.get("next_id"), "preceded_by_scene_id": scene_relations.get("previous_id")},
             derived_from={
                 **_read_scene_provenance(scene_node.get("source_provenance_json")),
-                "entity_instance_id": scene_relations.get("derived_from") or "",
+                "entity_instance_id": scene_relations.get("derived_from"),
                 "source_id": scene_node.get("source_id")
                     or _read_scene_provenance(scene_node.get("source_provenance_json")).get("source_id"),
                 "section_id": scene_node.get("source_section_id")
@@ -4006,7 +4006,7 @@ class OntologyInstanceService:
 
             derived_from_entity_id = (
                 payload.derived_from.entity_instance_id
-                if payload.derived_from is not None
+                if payload.derived_from is not None and payload.derived_from.entity_instance_id
                 else current.derived_from.entity_instance_id
             )
             if derived_from_entity_id:

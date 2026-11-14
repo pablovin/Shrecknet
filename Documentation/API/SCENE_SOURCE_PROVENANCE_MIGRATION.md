@@ -1,94 +1,104 @@
-# Scene → ShreckWorld Source provenance (compatibility phase)
+# Scene and Milestone → ShreckWorld Source references
 
-This phase **adds** direct ShreckWorld Source identifiers to Neo4j Scenes.
-It does **not** remove or repoint any existing
-`(scene:Scene)-[:DERIVED_FROM]->(legacy:EntityInstance)` relationships. Those
-legacy edges and the original `derived_from.entity_instance_id` API field stay
-exactly as before. Character Agent, Atlas, Elder, Milestone, embedding, and
-graph-retrieval systems will be migrated separately.
+This migration adds direct ShreckWorld Source identifiers to Neo4j Scene and
+Milestone nodes. ShreckWorld Source records live in SQL, so the graph stores
+their IDs as node properties; it does not create Neo4j Source nodes or new graph
+relationships. The migration never removes or repoints existing
+`DERIVED_FROM` relationships to legacy `EntityInstance` nodes. The
+`derived_from.entity_instance_id` API field remains available.
 
-## Stored Scene properties
+## Stored properties
 
-| Neo4j property | Meaning |
+| Node property | Meaning |
 | --- | --- |
-| `source_id` | ShreckWorld's narrative Source/library-item ID |
+| `source_id` | ShreckWorld narrative Source/library-item ID |
 | `source_section_id` | Specific Story/Session section in the Source hierarchy |
 | `source_markdown_asset_id` | Optional private per-section Markdown asset ID |
-| `source_provenance_json` | Optional, versioned passage evidence (serialized `SceneDerivedFrom`) |
+| `source_provenance_json` (Scene only) | Versioned passage evidence and Source reference |
 
-All are optional. Existing graph-only Scenes continue to work. The
-`SceneRead.derived_from` object now also exposes optional
-`source_id`, `section_id`, `markdown_asset_id`, `source_revision`,
-`start_paragraph`, `end_paragraph`, `source_paragraphs_absolute`, and
-`provenance_status`. The existing `entity_instance_id` remains required
-and comes from the graph edge, not the JSON copy.
+All are optional. Existing graph-only records continue to work. The
+`SceneRead.derived_from` object exposes optional `source_id`, `section_id`,
+`markdown_asset_id`, `source_revision`, `start_paragraph`, `end_paragraph`,
+`source_paragraphs_absolute`, and `provenance_status`. The required
+`entity_instance_id` still comes from the graph relationship. The
+`MilestoneRead.derived_from` object exposes optional `source_id`, `section_id`,
+and `markdown_asset_id` alongside its required entity ID.
 
-Document-level provenance identifies the exact new Source and Story section
-even when no paragraph span is recoverable. Missing evidence yields no
-paragraph IDs or range. The paragraph indices are **the Architect's original
-one-based source indices**: they are not guaranteed to match revised Markdown,
-so inferred matches are labeled `historical_unverified`. Do not highlight a
-passage as exact until a source revision/text alignment check is implemented.
+Document-level provenance identifies the exact Source and Story section even
+when no paragraph span is recoverable. The paragraph indices are the
+Architect's original one-based source indices; they are not guaranteed to match
+revised Markdown. Recovered ranges are labeled `historical_unverified`. Do not
+highlight a passage as exact until a source revision/text alignment check is
+implemented.
 
-## New Architect runs
+## Explicit operator migration
 
-The Architect's segmentation already records paragraph ranges during analysis.
-They now survive the frontend review schema and flow into `SceneCreate`.
-During generation, Shrecknet reads the `graph_source_imports` and
-`source_assets` mapping from its existing ShreckWorld database mount at
-`/backup-sources/shreckworld/data/shreckworld.db` (read-only SQLite connection).
-It resolves the Source and section by **all three** original identifiers:
-ontology, ontology instance, legacy entity instance. The user-editable review
-payload cannot supply an arbitrary Source ID in place of this mapping.
+Scene/Milestone Source references are **not** backfilled automatically on API
+startup. Run the operator script from `shreckworld/`. Without `--apply`, it is
+read-only and prints a preview. With `--apply`, it first runs the entity-to-
+Source importer, waiting for any in-progress startup import to finish, then
+reconciles Scene and Milestone properties:
 
-If the Source import has not yet completed, the Scene is still created with
-its legacy graph origin and paragraph evidence. On a future startup, the
-migration fills its Source IDs once the matching Source exists. The new
-paragraph evidence is retained even when the document reference is missing.
+```bash
+cd shreckworld
+python scripts/migrate_graph_scene_sources.py
+python scripts/migrate_graph_scene_sources.py --apply
+```
 
-`source_revision` is intentionally null if the reviewed legacy text was not
-verified against that exact Source Markdown revision; paragraph positions alone
-must not claim such a match.
+The apply run waits on its own interprocess lock. It resolves each legacy
+`DERIVED_FROM` entity to the deterministic Narrative collection entry, accepts
+only Source IDs that exist in ShreckWorld and belong to the same ontology, and
+requires a unique Source for the entry. It replaces stale Scene/Milestone Source
+properties with that verified mapping while preserving Scene paragraph evidence
+and every legacy graph relationship. If the entity-to-Source importer reports
+errors, the script skips graph writes and includes the reason in its report.
+The operation is idempotent and can be run again explicitly after fixing missing
+Sources or importer errors.
 
-## Automatic startup backfill
+The final JSON report includes:
 
-After ShreckWorld finishes its automatic graph Sources importer, the
-`scene_source_provenance_import` migration runs. It is insert-only toward
-missing metadata: it will not replace existing, conflicting Source IDs or
-paragraph anchors and uses the same media-root, interprocess file locking
-approach as the Sources importer.
+- `sources_added`, grouped by ontology, listing Source IDs and titles created by
+  this invocation. Existing Sources are not listed as newly added.
+- `scenes` and `milestones`, with one `linked`, `already_linked`, `would_link`,
+  or `not_linked` row per graph record. Unlinked rows include a reason and the
+  legacy source entity ID when available.
+- Per-kind totals grouped globally and by ontology, plus the entity-to-Source
+  importer summary.
 
-- Read `graph_source_imports` and current Markdown asset mappings from
-  ShreckWorld SQL.
-- Read historical Architect analysis evidence from:
-  - `/legacy-shrecknet-data/shrecknet_jobs.db` when jobs still exist;
-  - `/legacy-shrecknet-data/architect_provenance/analysis-job-*.json`;
-  - `/legacy-shrecknet-data/local_tests/arhictect/Analyses/*/pipeline_output.json`
-    (original spelling of the Architect output directory).
-- Match evidence **only** by exact ontology-instance ID, Scene ID, and
-  original source entity ID. Conflicting ranges are rejected; no semantic/LLM
-  guesses or generated paragraph numbers.
-- Write `Scene.source_id`, `Scene.source_section_id`, optional
-  `Scene.source_markdown_asset_id` and `source_provenance_json`. No
-  `DERIVED_FROM`, `HAS_SCENE`, Milestone, `RELATES_TO`, or narrative
-  data changes.
-- On restart, keep already populated, nonconflicting fields unchanged. Missing
-  Sources are skipped without inventing IDs. If logs/artifacts are unavailable,
-  preserve document-level references and leave paragraphs empty.
+The ShreckWorld API startup still runs the entity-to-Source importer according
+to `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP`. It no longer runs the
+Scene/Milestone-reference migration. This migration performs no Neo4j writes
+until the operator supplies `--apply`; normal Scene/Milestone creation paths
+are unchanged.
 
-The Shrecknet startup job-cleanup path now writes a reduced copy of completed
-Architect analysis Scene evidence to its durable `architect_provenance`
-directory **before** deleting background jobs. If preservation fails, the
-cleanup keeps those jobs to avoid silently destroying provenance. Old job
-records deleted by previous Shrecknet versions cannot be resurrected; surviving
-local analysis artifacts may still contain those records.
+## Mapping and passage evidence
 
-The ShreckWorld importer runs in a daemon startup thread after schema setup.
-The Scene backfill runs **after** that attempt. The web API is not blocked;
-check ShreckWorld logs for `Scene source provenance startup reconciliation`.
-The migration can be safely retried on another service start.
+The migration reads active Narrative collection entries, their `source_ids`,
+current ShreckWorld Source rows, and Markdown asset mappings from SQL. It
+resolves collection entry IDs using the same deterministic key as the entity
+import; names and slugs are not used as identity. It accepts a Source only when
+the entry identifies exactly one existing same-ontology Source.
 
-## Query derived Scenes by new Source
+For Scenes, the migration preserves existing paragraph evidence. It can also
+recover Architect paragraph ranges from:
+
+- `/legacy-shrecknet-data/shrecknet_jobs.db` when jobs still exist;
+- `/legacy-shrecknet-data/architect_provenance/analysis-job-*.json`;
+- `/legacy-shrecknet-data/local_tests/arhictect/Analyses/*/pipeline_output.json`
+  (original spelling of the Architect output directory).
+
+Historical evidence matches only by exact ontology-instance ID, Scene ID, and
+original source entity ID. Conflicting ranges are rejected. Missing or
+ambiguous Sources are reported and left unlinked. If historical Architect
+artifacts are unavailable, document-level references are still written and
+paragraph fields remain empty. No `DERIVED_FROM`, `HAS_SCENE`, `CONTAINS`,
+`RELATES_TO`, or narrative data changes.
+
+The Source importer may run in a daemon startup thread. The Scene/Milestone
+reference migration is separate and operator-triggered; inspect its JSON output
+to verify coverage and unresolved records.
+
+## Query scenes by new Source
 
 ```cypher
 MATCH (scene:Scene)
@@ -99,17 +109,16 @@ ORDER BY scene.created_at
 ```
 
 An additive Neo4j index on `(Scene.source_id, Scene.source_section_id)` is
-created during Shrecknet graph startup. As of this phase, **existing** graph
-readers continue to use the original graph `DERIVED_FROM` relationships.
-Migrating those readers and retiring the old edges are explicit future tasks.
+created during Shrecknet graph startup. Existing graph readers continue to use
+legacy entity `DERIVED_FROM` relationships unless they explicitly read the new
+Source ID properties.
 
 ## Deployment and rollback
 
-This PR is layered on the default-on Sources importer (PR #468). Deploy it
-after the Sources import and with access to the existing ShreckWorld database
-and Shrecknet legacy databases. Back up ShreckWorld SQLite, Neo4j, and the
-Shrecknet databases/media before the first deploy.
+Deploy the ShreckWorld migration script with access to ShreckWorld SQL, Neo4j,
+and the existing Shrecknet legacy databases/media. Back up ShreckWorld SQLite,
+Neo4j, and the Shrecknet databases/media before applying it.
 
-New fields and graph indexes are additive. Reverting this phase leaves the
-existing `DERIVED_FROM` relationships intact, so existing graph readers
-continue working. The new Source properties may remain on Scenes harmlessly.
+New properties are additive. Reverting this phase leaves the existing
+`DERIVED_FROM` relationships intact, so existing graph readers continue
+working. New Source ID properties may remain on graph nodes harmlessly.

@@ -328,10 +328,31 @@ docker compose up -d --build shreckworld_api
 docker compose logs shreckworld_api
 ```
 
-The startup sequence imports graph narratives first, then reconciles existing
-Scenes with their imported Source and section IDs. See the
-[Scene Source provenance migration](SCENE_SOURCE_PROVENANCE_MIGRATION.md)
-for recovered Architect paragraph evidence and Neo4j compatibility details.
+Startup imports graph narratives but does not write Source IDs onto Scene or
+Milestone nodes. The Scene/Milestone reference migration is an explicit operator
+action described below.
+
+## Explicit Scene and Milestone Source-reference migration
+
+The operator command first reruns the entity-to-Source import, then resolves
+each Scene and Milestone's legacy `DERIVED_FROM` entity through its deterministic
+Narrative collection entry. It writes `source_id`, `source_section_id`, and
+`source_markdown_asset_id` properties only when the entry points to exactly one
+existing same-ontology Source. Existing `DERIVED_FROM` relationships remain
+untouched. The command is idempotent and prints a JSON audit report with Sources
+created per ontology and every Scene/Milestone linked or unresolved.
+
+Run from `shreckworld/`; the default is a read-only preview:
+
+```bash
+python scripts/migrate_graph_scene_sources.py
+python scripts/migrate_graph_scene_sources.py --apply
+```
+
+If the entity-to-Source import reports errors, `--apply` reports the import
+results but skips graph writes. See the [Scene and Milestone Source-reference
+migration](SCENE_SOURCE_PROVENANCE_MIGRATION.md) for the report fields, matching
+rules, evidence recovery, and rollback behavior.
 
 Back up ShreckWorld's database and media before deploying this change.
 Rollback is setting `SHRECKWORLD_GRAPH_IMPORT_ON_STARTUP=false` and restarting

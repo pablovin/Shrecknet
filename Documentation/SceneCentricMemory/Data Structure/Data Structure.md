@@ -237,6 +237,12 @@ The instance is the canonical owner of the scene.
 
 Every scene must have exactly one `DERIVED_FROM` entity. The service validates that this entity belongs to the same ontology instance. This is the scene's primary provenance or source anchor; it is not a general participant list.
 
+The explicit ShreckWorld Source-reference migration may add `source_id`,
+`source_section_id`, and `source_markdown_asset_id` properties to Scene and
+Milestone nodes after resolving that legacy entity through its Narrative
+collection entry. These optional IDs do not replace or alter `DERIVED_FROM`;
+see [Scene and Milestone Source references](../../API/SCENE_SOURCE_PROVENANCE_MIGRATION.md).
+
 #### Relevant entities: `RELATES_TO`
 
 ```text

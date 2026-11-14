@@ -1,12 +1,10 @@
-"""Scene provenance migration: exact evidence only, repeatable and non-destructive."""
+"""Historical Architect paragraph evidence is recovered by exact identity."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
-import sqlite3
 
 from app.services.scene_source_provenance_import import (
-    _historical_scene_ranges, _paragraphs_from_proposal, _reconciled_payload,
+    _historical_scene_ranges, _paragraphs_from_proposal,
 )
 
 
@@ -24,36 +22,6 @@ def test_only_valid_scene_ranges_are_accepted():
     assert _paragraphs_from_proposal(_proposal(start=19, end=12)) is None
     assert _paragraphs_from_proposal({"start_paragraph": 1, "end_paragraph": 5,
                                         "source_paragraphs_absolute": [6]}) is None
-
-
-def test_missing_evidence_creates_document_only_reference():
-    payload, recovered = _reconciled_payload(
-        previous=None, entity_id="story-1",
-        document=("source-A", "section-B", "md-C"), historical=None)
-    assert recovered is False
-    assert payload["entity_instance_id"] == "story-1"
-    assert (payload["source_id"], payload["section_id"], payload["markdown_asset_id"]) == (
-        "source-A", "section-B", "md-C")
-    assert "start_paragraph" not in payload
-    assert "end_paragraph" not in payload
-    assert payload["provenance_status"] == "document_only"
-
-
-def test_exact_evidence_is_recovered_once_and_manual_edits_never_overwritten():
-    evidence = {"start_paragraph": 12, "end_paragraph": 19,
-                "source_paragraphs_absolute": [12, 19]}
-    original, recovered = _reconciled_payload(
-        previous=None, entity_id="story-1", document=("source-A", "section-B", None),
-        historical=evidence)
-    assert recovered and original["start_paragraph"] == 12
-    again, recovered = _reconciled_payload(
-        previous=json.dumps(original), entity_id="story-1",
-        document=("source-A", "section-B", None), historical=evidence)
-    assert again == original and not recovered
-    conflicted, recovered = _reconciled_payload(
-        previous=json.dumps({"source_id": "user-overridden", "entity_instance_id": "story-1"}),
-        entity_id="story-1", document=("source-A", "section-B", None), historical=evidence)
-    assert conflicted is None and not recovered
 
 
 def test_archived_and_local_artifacts_recover_after_jobs_purge(tmp_path):

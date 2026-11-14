@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import date, datetime, time, timezone
 from typing import Any
@@ -244,6 +245,16 @@ class CharacterEmbodimentService:
                 created_at=str(row["scene_created_at"]) if row["scene_created_at"] else None,
                 entity_relation=_json_safe(dict(row["entity_relation"] or {})),
             ))
+        from app.services.architect_source_documents import list_architect_sources
+        try:
+            labels = {
+                source.source_id: source.title
+                for source in await asyncio.to_thread(list_architect_sources, ontology_id)
+            }
+        except (FileNotFoundError, OSError):
+            labels = {}
+        for key, group in grouped.items():
+            group["source_name"] = labels.get(key.split(":", 1)[0], group["source_name"])
         groups = [CharacterSourceGroup.model_validate(item) for item in grouped.values()]
         groups.sort(key=lambda group: (
             group.source_created_at
@@ -482,6 +493,17 @@ class CharacterEmbodimentService:
                 }
                 groups[gid] = group
             group["scenes"].append(s)
+
+        from app.services.architect_source_documents import list_architect_sources
+        try:
+            source_titles = {
+                source.source_id: source.title
+                for source in await asyncio.to_thread(list_architect_sources, ontology_id)
+            }
+        except (FileNotFoundError, OSError):
+            source_titles = {}
+        for gid, group in groups.items():
+            group["source_alias"] = source_titles.get(gid.split(":", 1)[0], group["source_alias"])
 
         source_groups = sorted(
             groups.values(),

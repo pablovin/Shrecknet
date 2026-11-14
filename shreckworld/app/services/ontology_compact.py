@@ -264,16 +264,17 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
             or not isinstance(item["r"], list) or len(item["r"]) > MAX_RELATIONSHIPS_PER_TYPE):
             raise CompactContractError("invalid_compact_entity")
         key = _normalized_entity_name(name)
-        if key in names:
-            raise CompactContractError("duplicate_compact_entity_type")
+        # Duplicated type labels are recoverable: consolidate definitions
+        # and their evidence deterministically, rather than losing a whole
+        # paid window because the model repeated a class name.
         # Validate evidence even for suppressed obvious instances, so the
         # generator cannot return pointers that never existed in the input.
         support = _support(item["b"], lookup, base)
         if key in {_normalized_entity_name(example) for example in KNOWN_INSTANCE_EXAMPLES}:
             stats["suppressed_instances"] += 1
             continue
-        names[key] = name
-        source_entities.append((item, name, support))
+        canonical = names.setdefault(key, name)
+        source_entities.append((item, canonical, support))
     results = []
     for item, name, support in source_entities:
         results.append({"kind": "entity", "name": name, "description": "",
@@ -298,10 +299,11 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
             results.append({"kind": "relationship", "source": name,
                             "target": names[target_key], "name": _valid_name(relation["n"]),
                             "description": "", "evidence": support})
-    stats["entities"] = sum(item["kind"] == "entity" for item in results)
-    stats["properties"] = sum(item["kind"] == "property" for item in results)
-    stats["relationships"] = sum(item["kind"] == "relationship" for item in results)
-    return results
+    consolidated = {}
+    for proposal in results:
+        accumulate(consolidated, proposal)
+    stats.update(proposal_counts(consolidated.values()))
+    return list(consolidated.values())
 
 
 def accumulate(found: dict, proposal: dict) -> None:

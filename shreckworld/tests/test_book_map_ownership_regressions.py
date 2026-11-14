@@ -58,6 +58,20 @@ def test_call_of_cthulhu_false_toc_page35_stays_in_chapter3():
     assert next(b for b in project_resolved_document(source, resolution).blocks if b.block_id == "b35").section_id == paragraph.parent_id
 
 
+def test_one_chunk_is_listed_on_every_related_element_node():
+    source = document([
+        block("paragraph-a", [28], "First extracted paragraph."),
+        block("paragraph-b", [28], "Second extracted paragraph."),
+    ])
+    resolution = resolve_structure(document_id="coc", document=source)
+    tree = tree_for(source, resolution, chunk_ids_by_block={
+        "paragraph-a": ["shared-chunk"], "paragraph-b": ["shared-chunk"],
+    }, index_alignment="aligned")
+
+    related_nodes = [node for node in tree.nodes if "shared-chunk" in node.chunk_ids]
+    assert {node.source_block_ids[0] for node in related_nodes} == {"paragraph-a", "paragraph-b"}
+
+
 @pytest.mark.parametrize("spans", [None, [(0, 5), (0, 5)], [(0, 4), (5, 10)], [(0, 5), (5, 11)]])
 def test_call_of_cthulhu_unresolved_pages275_278_do_not_extend_chapter13(spans):
     provenance = [{"page_no": page, **({"charspan": span} if spans else {})}

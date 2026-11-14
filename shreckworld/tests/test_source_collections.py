@@ -123,6 +123,44 @@ def test_nested_entry_tree_and_source_references(db):
         assert cross_scope.value.status_code == 422
 
 
+@pytest.mark.parametrize("category", ["narrative", "explanatory"])
+def test_hierarchy_item_accepts_one_source_and_legacy_excess_can_be_removed(db, category):
+    collection = sample(db, category=category)
+    scope = OntologyScope(7, "World")
+    db.add_all([
+        ShreckWorldLibraryItem(
+            id=f"file-{number}", ontology_id=7, source_type=category,
+            title=f"File {number}", pdf_path="/unused",
+            source_sha256=str(number) * 64,
+        )
+        for number in range(1, 4)
+    ])
+    db.commit()
+
+    with pytest.raises(HTTPException) as too_many:
+        source_collections.save_collection(db, scope, collection.id, CollectionUpdate(
+            expected_revision=1, name=collection.name,
+            nodes=[entry("adventure", sources=["file-1", "file-2"])],
+        ))
+    assert too_many.value.status_code == 422
+
+    # Old persisted entries can still be edited to remove excess references.
+    collection.nodes = [entry("adventure", sources=["file-1", "file-2"]).model_dump(mode="json")]
+    db.commit()
+    reduced = source_collections.save_collection(db, scope, collection.id, CollectionUpdate(
+        expected_revision=1, name=collection.name,
+        nodes=[entry("adventure", sources=["file-1"])],
+    ))
+    assert reduced.nodes[0].source_ids == ["file-1"]
+
+    with pytest.raises(HTTPException) as added:
+        source_collections.save_collection(db, scope, collection.id, CollectionUpdate(
+            expected_revision=2, name=collection.name,
+            nodes=[entry("adventure", sources=["file-1", "file-3"])],
+        ))
+    assert added.value.status_code == 422
+
+
 def test_invalid_tree_and_duplicate_positions():
     with pytest.raises(ValidationError):
         CollectionUpdate(expected_revision=1, name="Bad", nodes=[

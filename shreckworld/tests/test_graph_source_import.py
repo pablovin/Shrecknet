@@ -184,6 +184,37 @@ def test_story_documents_attach_without_overwriting_edits(tmp_path, monkeypatch)
     engine.dispose()
 
 
+def test_graph_import_projects_at_most_one_source_per_entry_and_keeps_provenance(tmp_path, monkeypatch):
+    settings, engine, factory = _init(tmp_path, monkeypatch)
+    monkeypatch.setattr(importer, "_graph_worlds", lambda _: [_world()])
+    importer.import_graph_sources(factory, settings)
+    with Session(engine) as db:
+        collection = db.scalar(select(SourceCollection).where(SourceCollection.ontology_id == 42))
+        story = next(entry for entry in (CollectionEntry.model_validate(row) for row in collection.nodes)
+                     if entry.title == "Story 01 First Steps")
+        original_source_id = story.source_ids[0]
+        db.add(ShreckWorldLibraryItem(
+            id="additional-source", ontology_id=42, source_type="narrative",
+            title="Additional source", pdf_path="/unused", source_sha256="c" * 64,
+        ))
+        db.add(GraphSourceImport(
+            ontology_id=42, instance_id="another-page", entity_instance_id="story-1",
+            source_id="additional-source", section_id="additional-section",
+            source_content_hash="d" * 64,
+        ))
+        db.commit()
+
+    result = importer.import_graph_sources(factory, settings)
+    assert result["errors"] == 0
+    with Session(engine) as db:
+        collection = db.scalar(select(SourceCollection).where(SourceCollection.ontology_id == 42))
+        story = next(entry for entry in (CollectionEntry.model_validate(row) for row in collection.nodes)
+                     if entry.title == "Story 01 First Steps")
+        assert story.source_ids == [original_source_id]
+        assert db.get(GraphSourceImport, (42, "another-page", "story-1")).source_id == "additional-source"
+    engine.dispose()
+
+
 def test_timelines_are_only_imported_when_nested_under_adventures(tmp_path, monkeypatch):
     assert importer._rank("Stories") == 2
     assert importer._rank("Story Arcs") == 1

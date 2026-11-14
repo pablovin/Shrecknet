@@ -40,8 +40,10 @@ Structured tables use deterministic header/value rows, and captions remain
 ordinary text evidence. Image pixels are not embedded, and this pipeline does
 not run OCR or image identification. New indexes use recipe
 `book-map-v4-e5-context-v1`; prior Docling and PyMuPDF context recipes remain
-searchable while active. Reindex to opt an older generation into the new
-resolved-context recipe. Map artifact restoration does not regenerate vectors.
+searchable while active. Each V4 element reports the chunks related through its
+source-block references; a chunk may be related to multiple elements without
+changing chunk construction. Map artifact restoration does not regenerate
+vectors.
 
 `GET .../book-map/nodes/{node_id}/content` returns ordered direct block text and
 direct-child summaries for a V4 node. It requires `document_id`; `source_sha256`

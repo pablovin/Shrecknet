@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from html.parser import HTMLParser
 from pathlib import Path
 import os
 import re
@@ -20,7 +21,7 @@ from app.models import (
 from app.repositories.source_scope import OntologyScope, scoped_item
 from app.schemas.book_map import BookMapV4
 from app.schemas.sources import (
-    AuthoredContent, ExtractedContent, HierarchyInput, HierarchyRead,
+    AuthoredContent, ExtractedContent, HierarchyInput, HierarchyRead, Paragraph,
     OrganizationInput, OrganizationRead, SourceCreate, SourceSection, SourceSettings,
 )
 from app.services.book_map_contract import try_read_book_map
@@ -151,6 +152,85 @@ def render_authored_markdown(nodes: list[SourceSection]) -> bytes:
 
     visit(root, 1)
     return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+
+
+class _AuthoredDocumentParser(HTMLParser):
+    """Split rich-editor HTML into heading sections and their original markup."""
+
+    def __init__(self, content: str):
+        super().__init__(convert_charrefs=False)
+        self.sections: list[tuple[int | None, str, str]] = []
+        self.heading_level: int | None = None
+        self.heading_tag: str | None = None
+        self.heading_text: list[str] = []
+        self.section_title: str | None = None
+        self.section_level: int | None = None
+        self.body: list[str] = []
+        self.feed(content)
+        self.close()
+        self._flush_section()
+
+    def _flush_section(self) -> None:
+        if self.section_title is not None:
+            self.sections.append((self.section_level, self.section_title, "".join(self.body)))
+        elif self.body:
+            self.sections.append((None, "", "".join(self.body)))
+        self.body = []
+
+    def handle_starttag(self, tag: str, attrs):
+        if self.heading_level is not None:
+            return
+        if re.fullmatch(r"h[1-6]", tag):
+            self._flush_section()
+            self.heading_level = int(tag[1])
+            self.heading_tag = tag
+            self.heading_text = []
+            return
+        self.body.append(self.get_starttag_text() or f"<{tag}>")
+
+    def handle_startendtag(self, tag: str, attrs):
+        if self.heading_level is None:
+            self.body.append(self.get_starttag_text() or f"<{tag}/>")
+
+    def handle_endtag(self, tag: str):
+        if self.heading_level is not None:
+            if tag == self.heading_tag:
+                title = " ".join("".join(self.heading_text).split())
+                self.section_level, self.section_title = self.heading_level, title
+                self.heading_level = None
+                self.heading_tag = None
+                self.heading_text = []
+            return
+        self.body.append(f"</{tag}>")
+
+    def handle_data(self, data: str):
+        if self.heading_level is not None:
+            self.heading_text.append(data)
+        else:
+            self.body.append(data)
+
+    def handle_entityref(self, name: str):
+        token = f"&{name};"
+        if self.heading_level is not None:
+            from html import unescape
+            self.heading_text.append(unescape(token))
+        else:
+            self.body.append(token)
+
+    def handle_charref(self, name: str):
+        token = f"&#{name};"
+        if self.heading_level is not None:
+            from html import unescape
+            self.heading_text.append(unescape(token))
+        else:
+            self.body.append(token)
+
+
+def authored_document_sections(content: str) -> list[tuple[int | None, str, str]]:
+    parser = _AuthoredDocumentParser(content)
+    if parser.heading_level is not None:
+        _fail(422, "A heading is not closed in the rich-text document")
+    return parser.sections
 
 
 def _write_authored_revision(item: ShreckWorldLibraryItem, data: bytes) -> Path:
@@ -318,7 +398,10 @@ def get_organization(db: Session, item: ShreckWorldLibraryItem) -> OrganizationR
     return OrganizationRead(revision=item.source_revision, nodes=nodes, unresolved_section_ids=missing)
 
 
-def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: OrganizationInput) -> OrganizationRead:
+def save_organization(
+    db: Session, item: ShreckWorldLibraryItem, payload: OrganizationInput,
+    *, markdown_override: str | None = None,
+) -> OrganizationRead:
     if payload.expected_revision != item.source_revision:
         _fail(409, "Source changed; reload and reconcile your edits")
     from app.services.source_assets import validate_asset_references, update_markdown_assets
@@ -372,7 +455,8 @@ def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: Organi
     staged_assets = []
     values: dict = {"source_revision": next_revision}
     if item.authored:
-        markdown = render_authored_markdown(payload.nodes)
+        markdown = (markdown_override.encode("utf-8") if markdown_override is not None
+                    else render_authored_markdown(payload.nodes))
         try:
             new_file = _write_authored_revision(item, markdown)
         except OSError as exc:
@@ -406,6 +490,119 @@ def save_organization(db: Session, item: ShreckWorldLibraryItem, payload: Organi
             staged.unlink(missing_ok=True)
         raise
     return OrganizationRead(revision=next_revision, nodes=payload.nodes)
+
+
+def save_authored_document(
+    db: Session, item: ShreckWorldLibraryItem, expected_revision: int, content: str,
+) -> OrganizationRead:
+    """Save the rich editor's complete authored Markdown and its section projection."""
+    if not item.authored:
+        _fail(422, "Only authored Markdown uses the source organization editor")
+    if expected_revision != item.source_revision:
+        _fail(409, "Source changed; reload before saving")
+    if len(content.encode("utf-8")) > 2_000_000:
+        _fail(413, "Markdown document exceeds the 2 MB editor limit")
+    current = get_organization(db, item)
+    root = next((node for node in current.nodes if node.parent_id is None), None)
+    if root is None:
+        _fail(422, "Authored source root is unavailable")
+    template = db.get(SourceHierarchy, (item.hierarchy_template_id, item.hierarchy_template_version))
+    if template is None:
+        _fail(422, "Authored source hierarchy is unavailable")
+
+    old_by_depth: dict[int, list[SourceSection]] = {}
+    old_children: dict[str, list[SourceSection]] = {}
+    for node in current.nodes:
+        if node.parent_id is not None:
+            old_children.setdefault(node.parent_id, []).append(node)
+
+    def gather(parent_id: str, depth: int) -> None:
+        children = sorted(old_children.get(parent_id, []), key=lambda node: (node.order, node.id))
+        old_by_depth.setdefault(depth, []).extend(children)
+        for child in children:
+            gather(child.id, depth + 1)
+
+    gather(root.id, 1)
+    used_ids: set[str] = {root.id}
+    depth_offsets: dict[int, int] = {}
+    old_by_title: dict[tuple[int, str], list[SourceSection]] = {}
+    for depth, rows in old_by_depth.items():
+        for node in rows:
+            old_by_title.setdefault((depth, node.title.casefold()), []).append(node)
+
+    def paragraph_rows(text: str, existing: SourceSection | None) -> list[Paragraph]:
+        if not text.strip():
+            return []
+        previous = existing.content_reference.paragraphs if existing and isinstance(existing.content_reference, AuthoredContent) else []
+        paragraph_id = previous[0].id if previous else str(uuid4())
+        return [Paragraph(id=paragraph_id, text=text.strip())]
+
+    root_title = root.title
+    root_body: list[str] = []
+    headings = authored_document_sections(content)
+    root_heading_seen = False
+    root_body.extend(body for depth, _, body in headings if depth is None and body.strip())
+    new_nodes: list[SourceSection] = []
+    root_updated = root.model_copy(deep=True)
+    stack: dict[int, SourceSection] = {0: root_updated}
+    last_depth = 0
+
+    for heading_level, title, body in headings:
+        if heading_level is None:
+            continue
+        if not title:
+            _fail(422, "Headings in an authored Markdown document cannot be empty")
+        if heading_level == 1:
+            if root_heading_seen:
+                _fail(422, "An authored Markdown document can have only one level-one heading")
+            root_heading_seen = True
+            root_title = title
+            if body.strip():
+                root_body.append(body)
+            continue
+        depth = heading_level - 1
+        if depth > len(template.section_types):
+            _fail(422, "Heading depth exceeds the source hierarchy template")
+        if depth > last_depth + 1:
+            _fail(422, "Headings cannot skip a level")
+        parent = stack.get(depth - 1)
+        if parent is None:
+            _fail(422, "Heading has no parent section")
+        candidates = old_by_title.get((depth, title.casefold()), [])
+        old = next((node for node in candidates if node.id not in used_ids), None)
+        if old is None:
+            rows = old_by_depth.get(depth, [])
+            offset = depth_offsets.get(depth, 0)
+            old = next((node for node in rows[offset:] if node.id not in used_ids), None)
+        depth_offsets[depth] = depth_offsets.get(depth, 0) + 1
+        if old is not None:
+            used_ids.add(old.id)
+            section_id = old.id
+            metadata = old.metadata.model_copy(deep=True)
+            section_type = old.section_type
+        else:
+            section_id = str(uuid4())
+            metadata = None
+            section_type = template.section_types[depth - 1]
+        existing = old
+        section = SourceSection(
+            id=section_id, parent_id=parent.id,
+            section_type=section_type, title=title,
+            order=sum(1 for node in new_nodes if node.parent_id == parent.id),
+            content_reference=AuthoredContent(paragraphs=paragraph_rows(body, existing)),
+            metadata=metadata or {},
+        )
+        new_nodes.append(section)
+        stack[depth] = section
+        for deeper in [level for level in stack if level > depth]:
+            del stack[deeper]
+        last_depth = depth
+
+    root_updated.title = root_title
+    root_updated.content_reference = AuthoredContent(paragraphs=paragraph_rows("\n\n".join(root_body), root))
+    nodes = [root_updated, *new_nodes]
+    payload = OrganizationInput(expected_revision=expected_revision, nodes=nodes)
+    return save_organization(db, item, payload, markdown_override=content)
 
 
 def save_hierarchy_image(

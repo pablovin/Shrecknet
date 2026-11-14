@@ -166,9 +166,12 @@ derived from each source item. Items
 without graph-import mappings return an empty array. The API validates strict hierarchy levels,
 no cycles, sibling-order uniqueness, artwork ownership and document
 references. Attachments must belong to **the same ontology and the same
-Narrative/Explanatory category**. An Explanatory entry can have at most one
-attached source; a `PUT` that adds another returns HTTP 422. Existing entries
-with excess attachments can remove references until one remains. Drag/reparent
+Narrative/Explanatory category**. Both Narrative and Explanatory entries can
+have at most one attached source; a `PUT` that adds another returns HTTP 422.
+Existing entries with excess attachments remain readable and editable so their
+old references can be removed; adding a new source is rejected until the entry
+has one or none. Graph-source import preserves all provenance mappings while
+projecting no more than one source onto each hierarchy entry. Drag/reparent
 operations are saved as one revision. A stale edit returns HTTP 409 rather
 than overwriting another person's changes.
 Entry `id` and `parent_id` values must contain 1–128 ASCII letters, digits,
@@ -185,17 +188,20 @@ SourceCollection or create a duplicate entry hierarchy.
 
 ## Sources V2: document reading and rich Markdown editing
 
-- `GET /sources/{source_id}/document`: bounded read-only preview of
-  TXT, HTML, DOCX and Markdown originals; PDF returns an indicator so the
+- `GET /sources/{source_id}/document`: bounded preview of TXT, HTML, DOCX
+  and Markdown originals; uploaded and authored Markdown are editable unless
+  truncated. PDF returns an indicator so the
   authorized original-byte streaming endpoint can be used for the browser
   PDF viewer.
 - `PUT /sources/{source_id}/document`: revision-safe rich editing for
-  **uploaded Markdown**. This writes a new immutable Markdown file version
-  with a new source checksum and marks its existing index stale. Previously
-  indexed generations are retained and are not passed off as current.
-- Newly **authored Markdown** continues through its
-  `/sources/{source_id}/organization` editing contract. This prevents
-  competing editable authorities for the same file.
+  uploaded and authored Markdown. It writes a new immutable Markdown file
+  version with a new source checksum and marks its existing index stale.
+  For authored sources, the service also updates the `SourceOrganization`
+  projection from the editor's heading tree and rich-text blocks in the same
+  revision transaction. Previously indexed generations are retained and are
+  not passed off as current. The Sources page exposes this through explicit
+  Edit, Save and Cancel actions and the shared Chronicle rich-text editor,
+  including source-owned image uploads.
 - Imported TXT, DOCX, HTML and PDF stay read-only. DOCX previews are
   bounded and display plain text, without running macros or loading
   external assets.

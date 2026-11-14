@@ -20,9 +20,11 @@ artifact. This operation never parses, embeds, mutates Qdrant, or rewrites
 chunks/FTS. Generations without a retained artifact are classified as requiring
 a reparse.
 
-New vectors use recipe `book-map-v4-e5-context-v1`; existing
-`docling-e5-context-v2` and `pymupdf-e5-context-v2` indexes remain eligible for
-active retrieval until explicitly reindexed.
+New vectors use recipe `book-map-v4-e5-context-v1`. Book Map V4 records the
+many-to-many relationship between chunks and elements from each chunk's source
+block references; this does not change chunk construction. Existing V4 and
+Docling/PyMuPDF context indexes remain eligible for active retrieval until
+explicitly reindexed.
 
 New items are directly owned by ontologies. Use `/ontologies/{ontology_id}/items` and its item/index subroutes; no ShreckWorld creation is required. The `/admin/shreckworlds/.../library-items` routes below remain compatibility contracts. See [direct routes and migration](SHRECKWORLD_READER_API.md#direct-ontology-item-routes) for authorization, item ownership, deployment and rollback.
 

@@ -160,7 +160,10 @@ Discovery consumes direct source-block ownership once per generation.
 
 The new indexing context uses recipe `book-map-v4-e5-context-v1`; earlier
 `docling-e5-context-v2` and `pymupdf-e5-context-v2` generations remain eligible
-while active. New indexes write `book_map_v4.json` and evidence/quality metadata
+while active. Each V4 content node stores its related chunk IDs, derived from
+the chunk's source-block references. This is many-to-many: one chunk can be
+related to several elements, and one element can link to several chunks. The
+chunking recipe is unchanged. New indexes write `book_map_v4.json` and evidence/quality metadata
 with the ingestion artifacts. `python -m scripts.backfill_book_map_v4` previews
 artifact restoration by default; pass `--write` to restore validated maps. Old
 generations without retained V4 artifacts are classified `needs_reparse`; the

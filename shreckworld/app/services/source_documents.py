@@ -1,4 +1,4 @@
-"""Read-only previews for imported documents and revision-safe Markdown editing."""
+"""Bounded source document previews and revision-safe Markdown editing."""
 from __future__ import annotations
 
 from hashlib import sha256
@@ -91,27 +91,30 @@ def read_document(item: ShreckWorldLibraryItem) -> DocumentRead:
     return DocumentRead(
         source_id=item.id, revision=item.source_revision,
         format=suffix[1:], content=content, truncated=truncated,
-        editable=suffix == ".md" and not item.authored and not truncated,
+        editable=suffix == ".md" and not truncated,
     )
 
 
 def save_imported_markdown(
     db: Session, item: ShreckWorldLibraryItem, payload: DocumentSave,
 ) -> DocumentRead:
-    """Save imported .md without modifying preserved Book Map generations.
-
-    Authored sources still use their structured organization editor, never
-    this raw-file endpoint, so there cannot be two competing edit authorities.
-    """
-    if item.authored:
-        _error(422, "Edit authored Markdown through its structured source editor")
+    """Save Markdown as an immutable revision and keep authored projections synced."""
     if Path(item.original_filename or "").suffix.lower() != ".md":
         _error(415, "Only Markdown documents are editable")
     if item.source_revision != payload.expected_revision:
         _error(409, "Source changed; reload before saving")
-    current = _path(item)
     if len(payload.content.encode("utf-8")) > 2_000_000:
         _error(413, "Markdown document exceeds the 2 MB editor limit")
+    if item.authored:
+        from app.services.source_workspace import save_authored_document
+        organization = save_authored_document(
+            db, item, payload.expected_revision, payload.content,
+        )
+        return DocumentRead(
+            source_id=item.id, revision=organization.revision,
+            format="md", content=payload.content, editable=True,
+        )
+    current = _path(item)
     destination = current.parent / ("document-" + uuid4().hex + ".md")
     try:
         with destination.open("xb") as output:

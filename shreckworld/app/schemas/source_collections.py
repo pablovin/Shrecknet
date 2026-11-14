@@ -24,6 +24,8 @@ class CollectionEntry(Contract):
     title: Title
     description: str = Field(default="", max_length=10000)
     image_key: Annotated[str, Field(pattern=r"^[a-f0-9]{32}\.(?:png|jpg|webp)$")] | None = None
+    # Keep the wider read/write shape for legacy records; save_collection applies
+    # the one-source rule while allowing old excess attachments to be removed.
     source_ids: list[Identifier] = Field(default_factory=list, max_length=30)
     # Read-only projection resolved from GraphSourceImport; ignored when saving.
     graph_source_entity_ids: list[Identifier] = Field(default_factory=list)

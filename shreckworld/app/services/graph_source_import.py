@@ -558,8 +558,11 @@ def _import_world_hierarchy(
 
                 old = by_id.get(entry_id)
                 if old is not None:
-                    combined_sources = sorted(set(old.source_ids).union(source_ids))
-                    entry = old.model_copy(update={"source_ids": combined_sources})
+                    # Collections allow one attached file per entry. Preserve an
+                    # existing attachment; otherwise choose the first stable
+                    # source mapping. All GraphSourceImport rows remain intact.
+                    attached_sources = old.source_ids[:1] or source_ids[:1]
+                    entry = old.model_copy(update={"source_ids": attached_sources})
                 else:
                     props = _properties(node, prop_defs)
                     description = str(props.get("description") or "")[:10000]
@@ -572,7 +575,7 @@ def _import_world_hierarchy(
                         id=entry_id, parent_id=parent_entry_id, level=level,
                         order=max(sibling_orders, default=-1) + 1 if parent_entry_id is None else order,
                         title=_display_title(node), description=description,
-                        image_key=image_key, source_ids=source_ids,
+                        image_key=image_key, source_ids=source_ids[:1],
                     )
                     result["entries_added"] += 1
                 if old is not None and source_ids and entry.source_ids != old.source_ids:

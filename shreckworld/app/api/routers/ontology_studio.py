@@ -2,6 +2,7 @@
 from __future__ import annotations
 from uuid import uuid4
 from datetime import datetime, timezone
+from collections import Counter, defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -17,6 +18,7 @@ from app.models.document import (
 from app.models.shreckworld import ShreckWorldLibraryItem
 from app.models.ontology_studio import OntologyLearnRun, OntologyLearnSource, OntologyLearnChapter, OntologyLearnWindow, OntologyRevision
 from app.services import ontology_studio as service
+from app.services.ontology_compact import CONTRACT_VERSION, proposal_counts
 from app.services.ontology_discovery_batches import build_discovery_batches
 from app.services.book_map_contract import read_book_map
 from app.services.ontology_run_reporting import cancel_run, run_response
@@ -193,8 +195,20 @@ def sources(ontology_id: int, token: str = Depends(oauth2_scheme),
     auth(ontology_id, token)
     history = {r.source_id: r for r in db.scalars(select(OntologyLearnSource).where(OntologyLearnSource.ontology_id == ontology_id))}
     current = {item.id: (item, doc) for item,doc in eligible_sources(db, ontology_id)}
-    sent = {(row.source_id, row.content_digest, row.chapter_id) for row in db.scalars(
-        select(OntologyLearnChapter).where(OntologyLearnChapter.ontology_id == ontology_id))}
+    # V2 "chapter sent" history must not imply a chapter was processed using
+    # the schema-only V3 contract. A chapter is sent only if all of its current
+    # V3 windows completed in the same run for the current source digest.
+    completed_by_run = defaultdict(set)
+    for row in db.scalars(select(OntologyLearnWindow).where(
+        OntologyLearnWindow.ontology_id == ontology_id,
+        OntologyLearnWindow.contract_version == CONTRACT_VERSION,
+        OntologyLearnWindow.status == "completed",
+    )):
+        key = (row.source_id, row.content_digest, row.chapter_id, row.run_id)
+        completed_by_run[key].add(row.window_index)
+    fully_processed = defaultdict(list)
+    for (source_id, digest, chapter_id, _), indices in completed_by_run.items():
+        fully_processed[(source_id, digest, chapter_id)].append(indices)
     result = []
     for item in db.scalars(select(ShreckWorldLibraryItem).where(
         ShreckWorldLibraryItem.ontology_id == ontology_id, ShreckWorldLibraryItem.source_type == "explanatory")):
@@ -208,10 +222,14 @@ def sources(ontology_id: int, token: str = Depends(oauth2_scheme),
             block_rows = list(db.scalars(select(ShreckWorldDocumentBlock).where(
                 ShreckWorldDocumentBlock.document_id == doc[1].id)))
             chapter_titles = {}
+            chapter_window_counts = Counter()
             for batch in build_discovery_batches(mapped, {b.id: b for b in block_rows}):
                 chapter_titles[batch["chapter_id"]] = batch["chapter_title"]
+                chapter_window_counts[batch["chapter_id"]] += 1
             chapters = [{"id": chapter_id, "title": title,
-                "sent": (item.id, doc[1].source_sha256, chapter_id) in sent}
+                "sent": any(all(index in indices for index in range(1, chapter_window_counts[chapter_id] + 1))
+                            for indices in fully_processed.get(
+                                (item.id, doc[1].source_sha256, chapter_id), []))}
                 for chapter_id, title in chapter_titles.items()]
         result.append({"id": item.id, "title": item.title, "index_status": item.index_status,
             "learning_status": source_status, "last_learned_at": learned.reviewed_at if learned else None,
@@ -306,6 +324,7 @@ def list_run_windows(ontology_id: int, run_id: str,
              "window_index": row.window_index,
              "contract_version": row.contract_version, "status": row.status,
              "cached": row.cached, "proposals_count": len(row.proposals or []),
+             "schema_counts": proposal_counts(row.proposals or []),
              "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
              "error_code": row.error_code, "finished_at": row.finished_at}
             for row in rows]

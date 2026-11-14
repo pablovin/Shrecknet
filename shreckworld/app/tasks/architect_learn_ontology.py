@@ -1,6 +1,6 @@
-"""Architect Learn Ontology V2: bounded, compact, checkpointed; no automatic retries.
+"""Architect Learn Ontology V3: schema-only, bounded, compact, checkpointed; no automatic retries.
 
-Each Bookmap window gets one combined entity/property/relationship response.
+Each Bookmap window gets one nested entity/property/relationship schema response.
 The model only generates names, references and type codes. Python reconstructs
 provenance, consolidates candidates and persists successful windows. On a
 truncated/invalid result the affected window and run fail without retrying.
@@ -26,6 +26,7 @@ from app.services.ontology_compact import (
     CONTRACT_VERSION, DISCOVERY_SCHEMA, DISCOVERY_PROMPT, RECONCILIATION_SCHEMA,
     RECONCILIATION_PROMPT, CompactContractError, model_window, cache_fingerprint,
     parse_discovery, accumulate, ambiguous_groups, parse_model_response,
+    proposal_counts,
     reconciliation_input, apply_reconciliation,
 )
 from app.integrations.shreckllm import generate_shreckworld_structured_output
@@ -111,7 +112,8 @@ def _reusable_window(db, row: OntologyLearnWindow) -> OntologyLearnWindow | None
 
 
 def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
-                    lookup: dict, row: OntologyLearnWindow) -> list[dict]:
+                    lookup: dict, row: OntologyLearnWindow,
+                    stats: dict) -> list[dict]:
     cached = _reusable_window(db, row)
     if cached is not None:
         row.proposals = cached.proposals
@@ -119,13 +121,15 @@ def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
         row.cached = True
         row.finished_at = datetime.now(timezone.utc)
         db.commit()
+        stats.update(proposal_counts(cached.proposals or []))
+        stats["cached"] = True
         return cached.proposals
     row.status = "running"
     db.commit()
     try:
         response = generate_shreckworld_structured_output(
             usage_tag="architect_ontology_discovery", system_prompt=DISCOVERY_PROMPT,
-            user_content=content, schema_name="architect_ontology_compact_v2",
+            user_content=content, schema_name="architect_ontology_schema_v3",
             response_schema=DISCOVERY_SCHEMA, max_tokens=3500,
             model_target=model(run, "discovery"))
         # Account for paid tokens even when the model exhausts its limit.
@@ -139,7 +143,7 @@ def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
             "content_digest": doc.source_sha256, "chapter_id": batch["chapter_id"],
             "chapter_title": batch["chapter_title"],
         }
-        proposals = parse_discovery(data, lookup, base)
+        proposals = parse_discovery(data, lookup, base, stats=stats)
         row.proposals = proposals
         row.status = "completed"
         row.finished_at = datetime.now(timezone.utc)
@@ -277,7 +281,9 @@ def run_ontology_discovery(run_id: str) -> None:
                 if not progress(db, run, 5 + int(65 * completed / max(1, total)),
                                 "discovering", {"event": "window_started", **detail}):
                     return
-                discovered = _window_extract(db, run, item, doc, batch, content, lookup, checkpoint)
+                window_stats: dict = {}
+                discovered = _window_extract(db, run, item, doc, batch,
+                                             content, lookup, checkpoint, window_stats)
                 for candidate in discovered:
                     accumulate(found, candidate)
                 completed += 1
@@ -288,10 +294,15 @@ def run_ontology_discovery(run_id: str) -> None:
                     # windows produced a valid, persisted extraction.
                     _chapter_sent(db, run, item, doc, batch)
                     db.commit()
+                # Distinguish reusable schema elements from total proposal count.
+                counts = proposal_counts(found.values())
                 if not progress(db, run, 5 + int(65 * completed / max(1, total)),
                                 "discovering", {
                                     "event": "window_completed", **detail,
                                     "completed_windows": completed, "proposals_discovered": len(found),
+                                    **counts,
+                                    "window_suppressed_instances": window_stats.get("suppressed_instances", 0),
+                                    "window_unresolved_relationships": window_stats.get("unresolved_relationships", 0),
                                     "cached": bool(checkpoint.cached),
                                     "window_input_tokens": checkpoint.input_tokens,
                                     "window_output_tokens": checkpoint.output_tokens,
@@ -302,6 +313,7 @@ def run_ontology_discovery(run_id: str) -> None:
                 return
             if not progress(db, run, 95, "persisting", {
                 "event": "proposals_ready", "proposals_discovered": len(proposals),
+                **proposal_counts(proposals),
                 "completed_windows": completed, "total_windows": total,
             }):
                 return
@@ -313,6 +325,7 @@ def run_ontology_discovery(run_id: str) -> None:
                 "kind": "progress", "event": "awaiting_review",
                 "stage": "awaiting_review", "progress": 100,
                 "proposals_discovered": len(proposals),
+                **proposal_counts(proposals),
                 "completed_windows": completed, "total_windows": total,
                 "at": datetime.now(timezone.utc).isoformat()}][-250:]
             db.commit()

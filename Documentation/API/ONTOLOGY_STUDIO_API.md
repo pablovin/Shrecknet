@@ -67,26 +67,37 @@ IDs are UUIDs, not display names.
 `chapter_ids` is optional for compatibility. Omitted source entries mean all
 chapters with indexed text in that source's active Book Map. The ShreckOS
 chapter picker defaults to all chapters and can submit a subset. `/sources`
-returns each source's chapter `id`, `title`, and `sent` flag. A chapter becomes
-sent after its model request succeeds; state is scoped to the active document
-digest, so replacing or reindexing a source presents its chapters as unsent.
-The chapter ledger is stored in an additive ShreckWorld table.
+returns each source's chapter `id`, `title`, and `sent` flag. A chapter is shown as sent only after every window under the active
+`ontology-schema-v3` contract completed successfully in the same run, for the
+active document digest. Legacy V2 sends do not count as V3 extraction, and
+changing the document digest marks its chapters unsent. Window checkpoints are
+stored in the additive ShreckWorld table.
 
 The server verifies all selected Sources are **explanatory** and have a
 current active Bookmap. It pins document IDs and content digests before queueing.
 The task reads Bookmap V3/V4 and persisted blocks without re-indexing.
-Combined entity/schema discovery and a separate reconciliation model produce evidence-backed proposals. Source blocks are visited once, grouped by Bookmap chapter, with subsection headings retained. Long chapters are divided into bounded, non-overlapping ~24,000-character windows. Text blocks beyond one window are fragmented without truncation.
+Combined entity/schema discovery and a separate reconciliation model produce evidence-backed proposals. Source blocks are visited once, grouped by Bookmap chapter, with subsection headings retained. Long chapters are divided into bounded, non-overlapping ~3,000-token target windows. Text blocks beyond one window are fragmented without truncation.
 The task never writes approved entity definitions.
 
-### V2 compact extraction (no automatic retries)
+### V3 RPG schema-only extraction (no automatic retries)
 
-Discovery uses a strict symbolic contract with entity/property/relationship arrays and local numeric passage references. The model no longer returns long descriptions, confidence or block UUIDs. Python reconstructs canonical source/document/block/section provenance and human-reviewable proposal records. Each chapter is partitioned into smaller windows by conservative compact-prompt token estimates (approximately 3,000 tokens, including a fixed overhead), without losing any source characters. The output cap is 3,500 tokens, with explicit overflow and invalid-output validation. These are target budgets, not guarantees of provider tokenization.
+**Scope:** The first pass discovers reusable entity TYPES, scalar PROPERTIES, and directed RELATIONSHIPS—not individual catalog entries, characters, skills, occupations, spells, creatures, scenes, or game algorithms. The RPG rulebook's terminology determines the schema.
 
-Every source/chapter/window writes a checkpoint to `shreckworld_ontology_learn_windows` (new additive table). Status is `pending`, `running`, `completed`, or `failed`. Accepted results and their evidence persist before the job continues. A new manually started run can reuse completed checkpoints for the identical source digest, contract version, prompt, input and selected model. Failed and incomplete outputs are never reused.
+Discovery returns one compact *nested* response per Bookmap window:
 
-The ShreckLLM `finish_reason` is propagated. A truncated, malformed, or explicitly overflowed model result is marked failed with a safe error code; **there is no automatic retry, JSON repair, or input splitting after a failure**. Existing successful windows stay available for a later manually started job. The `GET /runs/{id}/windows` endpoint reports window status, chapter, cache usage, input/output tokens, item counts and errors without returning generated source text.
+```json
+{"e":[{"n":"Investigator","b":[0],"p":[{"n":"age","t":"i","b":[1]}],"r":[{"n":"HAS_SKILL","t":"Skill","b":[2]}]},{"n":"Skill","b":[2],"p":[],"r":[]}],"overflow":false}
+```
 
-Reconciliation is optional and operation-only (`merge`, `rename`, `review` with numeric candidate positions); deterministic normalization handles exact duplicates and detects type conflicts. The reconciliation model is called only for plausible ambiguous candidates, never to regenerate full proposal descriptions. The V2 contract retains all approved ontology CRUD and human-review APIs. Descriptions are blank until explicitly edited by the user or a future opt-in enrichment step.
+Properties have **implicit ownership**, removing the fragile V2 numeric owner indexes. Directed relationships reference target entity type *names* rather than numeric entity indexes. Unresolved targets are omitted and explicitly counted, never attached to an arbitrary type. All numeric evidence indexes resolve to the original pinned source/document/chapter/section/block references.
+
+The discovery prompt includes short classification contrasts from **Call of Cthulhu, RuneQuest, Pendragon and D&D**. Investigator, Skill, Occupation, Cult, Knight and Class are potential reusable TYPES; Harvey Walters, Spot Hidden, Orlanth, Sir Gawain, Fireball and individual occupations/spells are example INSTANCES or catalog entries. These are guidance only: do not emit them unless evidenced in the selected RPG source. A narrow deterministic safety net suppresses explicitly enumerated named example instances, but this is not a universal semantic classifier; human review remains necessary.
+
+Text is grouped by Bookmap chapter and bounded by conservative ~3,000-token input windows. The output ceiling stays at 3,500 tokens. The `ontology-schema-v3` contract version changes the checkpoint fingerprint, so old V2 outputs are **not** reused. Each successful window is stored in `shreckworld_ontology_learn_windows` with full provenance and remains available on a later manual run if the source revision, model and contract match.
+
+Failed/truncated, invalid JSON, invalid evidence, and overflowed responses are rejected. **There are no automatic retries or JSON repairs.** The job stops at the failed window and keeps completed window checkpoints. Per-window counts split entity types/properties/relationships; run progress also counts excluded known examples and unresolved relationships.
+
+Reconciliation stays operation-only (`merge`, `rename`, `review`) with deterministic evidence merging and only targets plausible duplicate definitions. No descriptions are generated in first-pass discovery; the existing Ontology Studio review and editor remain the canonical place for human descriptions and approvals.
 
 
 Runs advance through `queued`, `running`, `awaiting_review`, and
@@ -102,7 +113,7 @@ completion usage from successful discovery and reconciliation responses. When a
 provider omits usage, the call is counted and its unavailable token values add
 zero. Failed model requests are not counted as completed calls. Activity events give their
 timestamp, stage, source/chapter names, source number, window number,
-completed/total windows, discovered proposals, and reconciliation progress.
+completed/total windows, discovered proposals, typed schema counts, suppressed example instances, unresolved relationship targets, and reconciliation progress.
 Activity fields are persisted in the existing bounded run diagnostics JSON
 (250 recent events), with user-facing progress events separated from error
 diagnostics by the API. Usage totals are persisted on each run. Existing SQLite

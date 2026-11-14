@@ -69,9 +69,11 @@ def run_response(run: OntologyLearnRun) -> dict:
         "input_tokens": run.input_tokens,
         "output_tokens": run.output_tokens,
         "llm_calls": run.llm_calls,
-        "extraction_contract": "ontology-compact-v2" if any(
-            event.get("contract_version") == "ontology-compact-v2"
-            for event in activity_log) else "legacy",
+        "extraction_contract": next(
+            (event["contract_version"] for event in reversed(activity_log)
+             if event.get("contract_version") in {"ontology-schema-v3", "ontology-compact-v2"}),
+            "legacy",
+        ),
         "model_summary": {
             key: {"provider": value.get("provider"), "name": value.get("name")}
             for key, value in (run.model_targets or {}).items()

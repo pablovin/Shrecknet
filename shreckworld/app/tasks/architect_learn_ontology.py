@@ -16,6 +16,7 @@ from app.services.book_map_contract import read_book_map
 from app.services.ontology_discovery_batches import build_discovery_batches
 from app.integrations.shreckllm import generate_shreckworld_structured_output
 from app.services import ontology_studio
+from app.services.ontology_run_reporting import progress
 
 logger = logging.getLogger(__name__)
 SCHEMA = {
@@ -51,17 +52,6 @@ def model(run: OntologyLearnRun, stage: str) -> ShreckWorldModelTarget:
     # Compatible with the ShreckWorld model-target contract and shared config projection.
     return ShreckWorldModelTarget.model_validate(target)
 
-def progress(db, run: OntologyLearnRun, percent: int, stage: str) -> bool:
-    db.refresh(run)
-    if run.status == "cancel_requested":
-        run.status, run.stage = "cancelled", "cancelled"
-        run.finished_at = datetime.now(timezone.utc)
-        db.commit()
-        return False
-    run.progress, run.stage = percent, stage
-    db.commit()
-    return True
-
 def normalize(item: dict, evidence: dict) -> dict:
     kind = item["kind"]
     out = {"kind": kind, "name": item["name"].strip(),
@@ -91,8 +81,11 @@ def run_ontology_discovery(run_id: str) -> None:
             run = db.get(OntologyLearnRun, run_id)
             found = {}
             total = len(run.input_sources)
-            for si, source in enumerate(run.input_sources):
-                if not progress(db, run, 5 + int(65 * si / total), "discovering"):
+            prepared = []
+            # Preflight every pinned source to compute exact work units before
+            # starting LLM calls. No text is duplicated in model requests.
+            for source in run.input_sources:
+                if not progress(db, run, 1, "preparing"):
                     return
                 doc = db.get(ShreckWorldDocument, source["document_id"])
                 item = db.get(ShreckWorldLibraryItem, source["source_id"])
@@ -104,12 +97,29 @@ def run_ontology_discovery(run_id: str) -> None:
                 mapped = read_book_map(book.payload)
                 blocks = {b.id: b for b in db.scalars(select(ShreckWorldDocumentBlock).where(
                     ShreckWorldDocumentBlock.document_id == doc.id))}
-                # One combined entity+schema extraction per bounded chapter window.
-                # Chapters provide semantic context; subsections preserve provenance.
-                batches = build_discovery_batches(mapped, blocks)
+                prepared.append((item, doc, build_discovery_batches(mapped, blocks)))
+            total_windows = sum(len(batches) for _, _, batches in prepared)
+            completed_windows = 0
+            if not progress(db, run, 5, "preparing", {
+                "event": "plan_ready", "total_sources": total, "total_windows": total_windows,
+                "completed_windows": 0, "proposals_discovered": 0,
+            }):
+                return
+            for si, (item, doc, batches) in enumerate(prepared):
                 for bi, batch in enumerate(batches):
-                    if not progress(db, run, 5 + int(65 * (si + bi / max(1, len(batches))) / total),
-                                    "discovering"):
+                    detail = {
+                        "source_id": item.id, "source_title": item.title,
+                        "source_index": si + 1, "total_sources": total,
+                        "chapter_id": batch["chapter_id"],
+                        "chapter_title": batch["chapter_title"],
+                        "window_index": bi + 1, "windows_in_source": len(batches),
+                        "completed_windows": completed_windows,
+                        "total_windows": total_windows,
+                        "proposals_discovered": len(found),
+                    }
+                    percent = 5 + int(65 * completed_windows / max(1, total_windows))
+                    if not progress(db, run, percent, "discovering",
+                                    {"event": "window_started", **detail}):
                         return
                     allowed = {b["id"] for group in batch["sections"] for b in group["blocks"]}
                     block_sections = {b["id"]: group for group in batch["sections"] for b in group["blocks"]}
@@ -151,7 +161,19 @@ def run_ontology_discovery(run_id: str) -> None:
                                 found[key]["evidence"].append(evidence)
                         else:
                             found[key] = proposal
-            if not progress(db, run, 75, "reconciling"):
+                    completed_windows += 1
+                    if not progress(db, run,
+                                    5 + int(65 * completed_windows / max(1, total_windows)),
+                                    "discovering", {"event": "window_completed",
+                                    **detail, "completed_windows": completed_windows,
+                                    "proposals_discovered": len(found)}):
+                        return
+            if not progress(db, run, 75, "reconciling",
+                            {"event": "reconciliation_started",
+                             "completed_windows": completed_windows,
+                             "total_windows": total_windows,
+                             "proposals_discovered": len(found)}):
+                return
                 return
             # Reconciliation must never replace approved edits or rewrite the graph.
             current = ontology_studio.graph(db, run.ontology_id)
@@ -166,8 +188,16 @@ def run_ontology_discovery(run_id: str) -> None:
             # source-supported schema changes, but never edits the canonical graph.
             if found:
                 grouped = list(found.values())
+                total_groups = (len(grouped) + 49) // 50
                 for offset in range(0, len(grouped), 50):
                     group = grouped[offset:offset + 50]
+                    group_index = offset // 50 + 1
+                    if not progress(db, run, 75 + int(19 * (group_index - 1) / total_groups),
+                                    "reconciling", {
+                                    "event": "reconciliation_group_started",
+                                    "group_index": group_index, "total_groups": total_groups,
+                                    "proposals_discovered": len(found)}):
+                        return
                     reconciliation_raw = generate_shreckworld_structured_output(
                         usage_tag="architect_ontology_reconciliation",
                         system_prompt=(PROMPT + "\\nReconcile terminology in the candidate list "
@@ -202,6 +232,12 @@ def run_ontology_discovery(run_id: str) -> None:
                                                     for x in (old["evidence"] + candidate["evidence"])}.values())
                         else:
                             found[key] = candidate
+                    if not progress(db, run, 75 + int(19 * group_index / total_groups),
+                                    "reconciling", {
+                                    "event": "reconciliation_group_completed",
+                                    "group_index": group_index, "total_groups": total_groups,
+                                    "proposals_discovered": len(found)}):
+                        return
             proposals = []
             for p in found.values():
                 kind = p["kind"]
@@ -218,12 +254,26 @@ def run_ontology_discovery(run_id: str) -> None:
                     p["change"] = "conflict"
                 p["id"] = str(uuid4())
                 proposals.append(p)
-            if not progress(db, run, 95, "persisting"):
+            if not progress(db, run, 95, "persisting", {
+                    "event": "proposals_ready", "proposals_discovered": len(proposals),
+                    "completed_windows": completed_windows, "total_windows": total_windows}):
+                return
+            # Refresh once more so cancellation remains cooperative even when
+            # requested during proposal finalization.
+            db.refresh(run)
+            if run.status == "cancel_requested":
+                progress(db, run, run.progress, "persisting")
                 return
             run.proposals = proposals
             run.progress = 100
             run.stage = "awaiting_review"
             run.status = "awaiting_review"
+            run.diagnostics = [*(run.diagnostics or []), {
+                "kind": "progress", "event": "awaiting_review",
+                "stage": "awaiting_review", "progress": 100,
+                "proposals_discovered": len(proposals),
+                "completed_windows": completed_windows, "total_windows": total_windows,
+                "at": datetime.now(timezone.utc).isoformat()}][-250:]
             db.commit()
         except Exception as exc:
             db.rollback()
@@ -232,8 +282,10 @@ def run_ontology_discovery(run_id: str) -> None:
             if run is not None:
                 run.status = "failed"
                 run.stage = "failed"
-                run.diagnostics = [{"code": "ontology_discovery_failed",
-                                    "failure_type": type(exc).__name__}]
+                run.diagnostics = [*(run.diagnostics or []), {
+                    "kind": "error", "code": "ontology_discovery_failed",
+                    "failure_type": type(exc).__name__,
+                    "at": datetime.now(timezone.utc).isoformat()}][-250:]
                 run.finished_at = datetime.now(timezone.utc)
                 db.commit()
             raise

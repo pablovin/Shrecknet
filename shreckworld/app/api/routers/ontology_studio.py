@@ -13,6 +13,7 @@ from app.models.document import ShreckWorldDocument, ShreckWorldDocumentBookMap
 from app.models.shreckworld import ShreckWorldLibraryItem
 from app.models.ontology_studio import OntologyLearnRun, OntologyLearnSource, OntologyRevision
 from app.services import ontology_studio as service
+from app.services.ontology_run_reporting import cancel_run, run_response
 from app.core.config import get_settings
 
 router = APIRouter(prefix="/api/v1/ontology-studio/worlds/{ontology_id}", tags=["Ontology Studio"])
@@ -236,14 +237,6 @@ def learn(ontology_id: int, request: LearnRequest, token: str = Depends(oauth2_s
         raise HTTPException(503, "Ontology discovery could not be queued") from exc
     return run_response(run)
 
-def run_response(run):
-    return {"id": run.id, "ontology_id": run.ontology_id, "status": run.status,
-            "stage": run.stage, "progress": run.progress, "input_sources": run.input_sources,
-            "base_revision": run.base_revision, "proposal_revision": run.proposal_revision,
-            "proposals": run.proposals,
-            "diagnostics": run.diagnostics, "created_at": run.created_at,
-            "finished_at": run.finished_at}
-
 @router.get("/runs")
 def list_runs(ontology_id: int, token: str = Depends(oauth2_scheme),
               _: ShrecknetPrincipal = Depends(require_world_manager), db: Session = Depends(get_db)):
@@ -268,10 +261,8 @@ def cancel(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
     run = db.get(OntologyLearnRun, run_id)
     if run is None or run.ontology_id != ontology_id:
         raise HTTPException(404, "Run not found")
-    if run.status not in {"queued", "running"}:
+    if not cancel_run(db, run):
         raise HTTPException(409, "Run cannot be cancelled")
-    run.status = "cancel_requested"
-    db.commit()
     return run_response(run)
 
 @router.patch("/runs/{run_id}/proposals/{proposal_id}")

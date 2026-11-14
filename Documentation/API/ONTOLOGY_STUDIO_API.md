@@ -38,7 +38,7 @@ Neo4j mutations are performed by Learn Ontology.
 | GET | `/sources` | Explanatory sources only, including learning states |
 | POST | `/learn` | Queue background discovery and pin current documents |
 | GET | `/runs` | Most recent ontology discovery runs |
-| GET | `/runs/{id}` | Status, stage, progress, proposals and diagnostics |
+| GET | `/runs/{id}` | Status, stage, detailed progress, activity log, proposals and diagnostics |
 | POST | `/runs/{id}/cancel` | Request cancellation |
 | PATCH | `/runs/{id}/proposals/{proposal_id}` | Human correction of proposed schema |
 | POST | `/runs/{id}/review` | Explicitly accept/reject every proposal |
@@ -70,7 +70,22 @@ Combined entity/schema discovery and a separate reconciliation model produce evi
 The task never writes approved entity definitions.
 
 Runs advance through `queued`, `running`, `awaiting_review`, and
-`succeeded`, or `cancelled`/`failed` with safe diagnostics. The user
+`succeeded`, or `cancelled`/`failed` with safe diagnostics.
+A queued cancellation is terminal immediately; a running job changes to
+`cancel_requested` and stops cooperatively at the next model-call checkpoint.
+An in-flight model request cannot be interrupted mid-response.
+
+`/runs`, `/runs/{id}`, and the initial `POST /learn` result include
+`activity`, `activity_log`, and `model_summary`. Activity events give their
+timestamp, stage, source/chapter names, source number, window number,
+completed/total windows, discovered proposals, and reconciliation progress.
+These fields are persisted in the existing bounded run diagnostics JSON
+(250 recent events), with user-facing progress events separated from error
+diagnostics by the API. No database migration or new tables are necessary;
+runs created by previous versions return empty activity records. Model
+summaries include provider/model name but omit credentials.
+
+ The user
 must review all proposals before successful adoption.
 
 ### Example: review
@@ -113,6 +128,15 @@ refresh-and-retry actions. Do not map extraction candidates directly to
 graph instances; this first stage defines schema only.
 
 ## Deployment and testing
+
+If `/api/v1/ontology-studio/worlds/1/sources` returns **404**, first verify
+that ShreckWorld API and worker containers have been rebuilt from a current
+Shrecknet checkout. The route is registered in `app.main`; an old image will
+still respond 404 even if ShreckOS is already updated. From the Shrecknet
+checkout run `docker compose build shreckworld_api` and
+`docker compose up -d --no-deps --force-recreate shreckworld_api shreckworld_worker`.
+The source list is available only to authenticated world managers; distinguish
+401/403 authorization failures from 404 router absence and 500 server errors.
 
 Deploy Shrecknet config publisher and `shreckconfig` before ShreckWorld
 API/workers to ensure model targets are present. New SQL tables are additive,

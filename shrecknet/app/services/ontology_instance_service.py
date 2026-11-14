@@ -2679,7 +2679,13 @@ class OntologyInstanceService:
             temporal_type=props.get("temporal_type") or "other",
             boundary_type=props.get("boundary_type") or "none",
             local_order=local_order or {},
-            derived_from={"entity_instance_id": derived_from_entity_id or ""},
+            derived_from={
+                **_read_scene_provenance(props.get("source_provenance_json")),
+                "entity_instance_id": derived_from_entity_id,
+                "source_id": props.get("source_id"),
+                "section_id": props.get("source_section_id"),
+                "markdown_asset_id": props.get("source_markdown_asset_id"),
+            },
             relates_to=relates_to,
             created_at=_parse_dt(props.get("created_at")),
             updated_at=_parse_dt(props.get("updated_at")),
@@ -2713,10 +2719,8 @@ class OntologyInstanceService:
             derived_from_entity_id = _normalize_optional_str(
                 str(derived_row.get("entity_instance_id") or "")
             )
-        if not derived_from_entity_id:
-            raise ValueError(
-                f"Scene '{scene_id}' must have a DERIVED_FROM entity_instance_id"
-            )
+        if not derived_from_entity_id and not props.get("source_id"):
+            raise ValueError(f"Scene '{scene_id}' lacks graph and document provenance")
 
         local_order_result = await self.graph_session.run(
             """
@@ -3192,10 +3196,23 @@ class OntologyInstanceService:
         if scene_id in await self._scene_ids_for_instance(instance_id):
             raise ValueError(f"Scene id '{scene_id}' already exists")
 
-        await self._validate_scene_derived_from(
-            instance_id=instance_id,
-            entity_instance_id=payload.derived_from.entity_instance_id,
-        )
+        if payload.derived_from.entity_instance_id:
+            await self._validate_scene_derived_from(
+                instance_id=instance_id,
+                entity_instance_id=payload.derived_from.entity_instance_id,
+            )
+        if payload.derived_from.source_id:
+            from app.services.architect_source_documents import load_architect_source
+            document, _ = await asyncio.to_thread(
+                load_architect_source, ontology_id,
+                payload.derived_from.source_id, payload.derived_from.section_id,
+            )
+            if (payload.derived_from.source_revision is not None
+                    and payload.derived_from.source_revision != document.source_revision):
+                raise ValueError("Scene Source revision changed during creation")
+            if (payload.derived_from.markdown_asset_id is not None
+                    and payload.derived_from.markdown_asset_id != document.markdown_asset_id):
+                raise ValueError("Scene Source Markdown asset changed")
         await self._validate_scene_relates_to_entities(
             instance_id=instance_id,
             entity_instance_ids=[item.entity_instance_id for item in payload.relates_to],
@@ -3270,15 +3287,17 @@ class OntologyInstanceService:
                 updated_at=now_str,
             )
 
-            await tx.run(
-                """
-                MATCH (scene:Scene {id: $scene_id})
-                MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
-                MERGE (scene)-[:DERIVED_FROM]->(entity)
-                """,
-                scene_id=scene_id,
-                entity_instance_id=payload.derived_from.entity_instance_id,
-            )
+            # Legacy graph provenance is optional for Sources-first Scenes.
+            if payload.derived_from.entity_instance_id:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (scene)-[:DERIVED_FROM]->(entity)
+                    """,
+                    scene_id=scene_id,
+                    entity_instance_id=payload.derived_from.entity_instance_id,
+                )
 
             for relates in payload.relates_to:
                 await tx.run(
@@ -3338,6 +3357,10 @@ class OntologyInstanceService:
                         temporal_type: $temporal_type,
                         boundary_type: $boundary_type,
                         relates_to_json: $relates_to_json,
+                        source_id: $source_id,
+                        source_section_id: $source_section_id,
+                        source_markdown_asset_id: $source_markdown_asset_id,
+                        source_provenance_json: $source_provenance_json,
                         created_at: $created_at,
                         updated_at: $updated_at
                     })
@@ -3356,18 +3379,23 @@ class OntologyInstanceService:
                         [item.model_dump() for item in milestone.relates_to],
                         ensure_ascii=False,
                     ),
+                    source_id=milestone.derived_from.source_id,
+                    source_section_id=milestone.derived_from.section_id,
+                    source_markdown_asset_id=milestone.derived_from.markdown_asset_id,
+                    source_provenance_json=json.dumps(milestone.derived_from.model_dump(mode="json", exclude_none=True)),
                     created_at=now_str,
                     updated_at=now_str,
                 )
-                await tx.run(
-                    """
-                    MATCH (milestone:Milestone {id: $milestone_id})
-                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
-                    MERGE (milestone)-[:DERIVED_FROM]->(entity)
-                    """,
-                    milestone_id=milestone_id,
-                    entity_instance_id=milestone.derived_from.entity_instance_id,
-                )
+                if milestone.derived_from.entity_instance_id:
+                    await tx.run(
+                        """
+                        MATCH (milestone:Milestone {id: $milestone_id})
+                        MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                        MERGE (milestone)-[:DERIVED_FROM]->(entity)
+                        """,
+                        milestone_id=milestone_id,
+                        entity_instance_id=milestone.derived_from.entity_instance_id,
+                    )
                 for relates in milestone.relates_to:
                     await tx.run(
                         """

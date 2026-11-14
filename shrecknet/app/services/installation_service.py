@@ -14,7 +14,7 @@ from app.schemas.installation import InstallationModels, InstallationState, Inst
 
 JOB_TARGETS: dict[str, tuple[str, ...]] = {
     "elder": ("model_elder_planner", "model_elder_synthesis", "model_elder_character_incorporation"),
-    "architect": ("model_architect_scene_chunking", "model_architect_entity_proposal", "model_architect_milestone_proposal", "model_architect_entity_generation"),
+    "architect": ("model_architect_scene_chunking", "model_architect_entity_proposal", "model_architect_milestone_proposal", "model_architect_entity_generation", "model_architect_ontology_discovery", "model_architect_ontology_schema", "model_architect_ontology_reconciliation"),
     "novelist": ("model_novelist_analysis", "model_novelist_writer"),
     "librarian": ("model_librarian_planner", "model_librarian_synthesis", "model_librarian_character_incorporation"),
     "character_agent": ("model_character_agent_character_incorporation", "model_character_agent_scene_interpretation", "model_character_agent_psychological_interpretation", "model_character_agent_decision_making"),

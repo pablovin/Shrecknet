@@ -16,6 +16,7 @@ from app.services.book_map_contract import read_book_map
 from app.services.ontology_discovery_batches import build_discovery_batches
 from app.integrations.shreckllm import generate_shreckworld_structured_output
 from app.services import ontology_studio
+from app.services.ontology_run_reporting import progress
 
 logger = logging.getLogger(__name__)
 SCHEMA = {
@@ -50,28 +51,6 @@ def model(run: OntologyLearnRun, stage: str) -> ShreckWorldModelTarget:
     target = run.model_targets[stage]
     # Compatible with the ShreckWorld model-target contract and shared config projection.
     return ShreckWorldModelTarget.model_validate(target)
-
-def progress(db, run: OntologyLearnRun, percent: int, stage: str,
-             activity: dict | None = None) -> bool:
-    """Persist bounded structured progress snapshots without a SQLite migration.
-
-    The run's existing diagnostics JSON column stores progress events alongside
-    errors, while the API returns them as separate fields for the job monitor.
-    No secrets or full source text are recorded in these events.
-    """
-    db.refresh(run)
-    if run.status == "cancel_requested":
-        run.status, run.stage = "cancelled", "cancelled"
-        run.finished_at = datetime.now(timezone.utc)
-        db.commit()
-        return False
-    run.progress, run.stage = max(0, min(100, percent)), stage
-    if activity is not None:
-        event = {"kind": "progress", "stage": stage, "progress": run.progress,
-                 "at": datetime.now(timezone.utc).isoformat(), **activity}
-        run.diagnostics = [*(run.diagnostics or []), event][-250:]
-    db.commit()
-    return True
 
 def normalize(item: dict, evidence: dict) -> dict:
     kind = item["kind"]

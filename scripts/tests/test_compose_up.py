@@ -48,6 +48,38 @@ def test_launcher_uses_cpu_stack_when_auto_parser_has_no_gpu(tmp_path, monkeypat
     assert commands[-1] == ["docker", "compose", "-f", "docker-compose.yml", "up", "--build"]
 
 
+def test_launcher_applies_source_migration_only_when_requested(tmp_path, monkeypatch):
+    commands, _ = _fake_docker(monkeypatch, gpu_available=False)
+    config_path = tmp_path / "shrecknet/databases/service-config/shreckworld.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text('{"parser_device":"auto","embedding_device":"cpu"}')
+
+    assert compose_up.main(["--build", "--apply_source_migration"], root=tmp_path) == 0
+    assert commands[-2] == ["docker", "compose", "-f", "docker-compose.yml", "up", "--build", "-d"]
+    assert commands[-1] == [
+        "docker", "compose", "-f", "docker-compose.yml", "exec", "-T", "shreckworld_api",
+        "python", "scripts/migrate_graph_scene_sources.py", "--apply",
+    ]
+
+
+def test_launcher_does_not_apply_source_migration_after_failed_startup(tmp_path, monkeypatch):
+    commands, _ = _fake_docker(monkeypatch, gpu_available=False)
+    config_path = tmp_path / "shrecknet/databases/service-config/shreckworld.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text('{"parser_device":"auto","embedding_device":"cpu"}')
+    original_run = compose_up.subprocess.run
+
+    def fail_compose_up(command, **kwargs):
+        if command[:4] == ["docker", "compose", "-f", "docker-compose.yml"] and "up" in command:
+            commands.append(command)
+            return SimpleNamespace(returncode=1)
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(compose_up.subprocess, "run", fail_compose_up)
+    assert compose_up.main(["--build", "--apply_source_migration"], root=tmp_path) == 1
+    assert not any("exec" in command for command in commands)
+
+
 @pytest.mark.parametrize(
     ("runtime_config", "expected_setting"),
     [

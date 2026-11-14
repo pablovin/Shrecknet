@@ -19,6 +19,7 @@ COPY pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -c 'import re, subprocess, tomllib; project = tomllib.load(open("pyproject.toml", "rb"))["project"]; requirements = [item for group in (project["dependencies"], project["optional-dependencies"]["openvino"]) for item in group if re.match(r"^\s*([A-Za-z0-9_.-]+)", item).group(1).lower() not in {"torch", "torchvision"}]; subprocess.run(["pip", "install", "--prefer-binary", "--timeout", "120", "--retries", "10", *requirements], check=True)'
 COPY app ./app
+COPY scripts ./scripts
 RUN pip install --no-deps .
 
 EXPOSE 8120

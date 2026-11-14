@@ -45,6 +45,18 @@ python scripts/migrate_graph_scene_sources.py
 python scripts/migrate_graph_scene_sources.py --apply
 ```
 
+From the repository root, the same apply operation can be combined with a
+Compose build and startup:
+
+```bash
+./scripts/compose_up.py --build --apply_source_migration
+```
+
+This option starts Compose in detached mode if needed, then runs the operator
+script inside `shreckworld_api`. It exits with the migration command's status
+and prints its per-ontology Source and Scene/Milestone audit report. The option
+is explicit and is not part of normal startup.
+
 The apply run waits on its own interprocess lock. It resolves each legacy
 `DERIVED_FROM` entity to the deterministic Narrative collection entry, accepts
 only Source IDs that exist in ShreckWorld and belong to the same ontology, and

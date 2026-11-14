@@ -96,6 +96,14 @@ def main(argv: Sequence[str] | None = None, *, root: Path = ROOT) -> int:
         "--mineru", action="store_true",
         help="start the optional MinerU PDF parser service (requires Docker GPU access)",
     )
+    parser.add_argument(
+        "--apply_source_migration", "--apply-source-migration",
+        action="store_true",
+        help=(
+            "start the stack detached, then apply the ShreckWorld entity-to-Source "
+            "and Scene/Milestone Source-reference migrations"
+        ),
+    )
     options, args = parser.parse_known_args(raw_args)
     if not raw_args:
         args = ["--build", "-d"]
@@ -124,9 +132,36 @@ def main(argv: Sequence[str] | None = None, *, root: Path = ROOT) -> int:
         print("No Docker-accessible NVIDIA GPU detected; using the CPU Compose build.", flush=True)
 
     compose_args.extend(["up", *args])
+    if options.apply_source_migration and not any(
+        arg in {"-d", "--detach"} for arg in args
+    ):
+        compose_args.append("-d")
     compose_env = os.environ.copy()
     compose_env.setdefault("COMPOSE_BAKE", "true")
-    return subprocess.run(compose_args, cwd=root, env=compose_env, check=False).returncode
+    startup = subprocess.run(compose_args, cwd=root, env=compose_env, check=False)
+    if startup.returncode != 0 or not options.apply_source_migration:
+        return startup.returncode
+
+    print(
+        "Applying the ShreckWorld entity-to-Source and Scene/Milestone Source migrations...",
+        flush=True,
+    )
+    compose_files = ["docker", "compose", "-f", "docker-compose.yml"]
+    if mineru_enabled:
+        compose_files.extend(["--profile", "mineru"])
+    if gpu_available:
+        compose_files.extend(["-f", "docker-compose.gpu.yml"])
+    migration = subprocess.run(
+        [
+            *compose_files,
+            "exec", "-T", "shreckworld_api",
+            "python", "scripts/migrate_graph_scene_sources.py", "--apply",
+        ],
+        cwd=root,
+        env=compose_env,
+        check=False,
+    )
+    return migration.returncode
 
 
 if __name__ == "__main__":

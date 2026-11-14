@@ -78,6 +78,17 @@ The task reads Bookmap V3/V4 and persisted blocks without re-indexing.
 Combined entity/schema discovery and a separate reconciliation model produce evidence-backed proposals. Source blocks are visited once, grouped by Bookmap chapter, with subsection headings retained. Long chapters are divided into bounded, non-overlapping ~24,000-character windows. Text blocks beyond one window are fragmented without truncation.
 The task never writes approved entity definitions.
 
+### V2 compact extraction (no automatic retries)
+
+Discovery uses a strict symbolic contract with entity/property/relationship arrays and local numeric passage references. The model no longer returns long descriptions, confidence or block UUIDs. Python reconstructs canonical source/document/block/section provenance and human-reviewable proposal records. Each chapter is partitioned into smaller windows by conservative compact-prompt token estimates (approximately 3,000 tokens, including a fixed overhead), without losing any source characters. The output cap is 3,500 tokens, with explicit overflow and invalid-output validation. These are target budgets, not guarantees of provider tokenization.
+
+Every source/chapter/window writes a checkpoint to `shreckworld_ontology_learn_windows` (new additive table). Status is `pending`, `running`, `completed`, or `failed`. Accepted results and their evidence persist before the job continues. A new manually started run can reuse completed checkpoints for the identical source digest, contract version, prompt, input and selected model. Failed and incomplete outputs are never reused.
+
+The ShreckLLM `finish_reason` is propagated. A truncated, malformed, or explicitly overflowed model result is marked failed with a safe error code; **there is no automatic retry, JSON repair, or input splitting after a failure**. Existing successful windows stay available for a later manually started job. The `GET /runs/{id}/windows` endpoint reports window status, chapter, cache usage, input/output tokens, item counts and errors without returning generated source text.
+
+Reconciliation is optional and operation-only (`merge`, `rename`, `review` with numeric candidate positions); deterministic normalization handles exact duplicates and detects type conflicts. The reconciliation model is called only for plausible ambiguous candidates, never to regenerate full proposal descriptions. The V2 contract retains all approved ontology CRUD and human-review APIs. Descriptions are blank until explicitly edited by the user or a future opt-in enrichment step.
+
+
 Runs advance through `queued`, `running`, `awaiting_review`, and
 `succeeded`, or `cancelled`/`failed` with safe diagnostics.
 A queued cancellation is terminal immediately; a running job changes to

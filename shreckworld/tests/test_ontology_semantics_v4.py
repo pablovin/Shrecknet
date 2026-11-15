@@ -103,3 +103,29 @@ def test_v4_source_evidence_and_semantic_fields():
     with pytest.raises(CompactContractError) as exc:
         parse_discovery(content, lookup, base)
     assert exc.value.code == "invalid_current_value_type"
+
+
+def test_unparseable_metadata_is_retained_as_text_without_losing_valid_values():
+    lookup = {0: {"block_id": "b1", "section_id": "s1", "fragment_index": 0}}
+    base = {"source_id": "source", "document_id": "doc", "chapter_id": "chapter",
+            "chapter_title": "Skills", "content_digest": "digest"}
+    content = {"e": [{
+        "n": "Investigator", "d": "Playable character", "b": [0], "r": [],
+        "p": [{
+            "n": "spot_hidden", "t": "i", "s": "Skill", "d": "",
+            "m": [
+                {"n": "base_chance", "t": "i", "v": "25"},
+                {"n": "specialization", "t": "i", "v": "varies by edition"},
+                {"n": "maximum", "t": "f", "v": 99},
+            ],
+            "i": [], "b": [0],
+        }],
+    }], "overflow": False}
+
+    output = parse_discovery(content, lookup, base)
+    prop = next(p for p in output if p["kind"] == "property")
+    assert prop["definition"] == {
+        "base_chance": 25,
+        "specialization": "varies by edition",
+        "maximum": 99.0,
+    }

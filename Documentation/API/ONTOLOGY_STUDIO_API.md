@@ -128,8 +128,12 @@ Example compact discovery output (fragment):
 - Character-specific scores belong to instances, not to the shared definition.
   Derived statistics and formulas are deferred to the rules-extraction phase.
 
-The V4 response is bounded and validated strictly. Missing evidence, malformed
-metadata, mismatched `current_value` types and overflow fail the window. The
+The V4 response is bounded and validated. Missing evidence, malformed metadata
+structure, mismatched `current_value` types and overflow fail the window. For
+metadata whose value cannot be parsed as its declared scalar type, the worker
+keeps the original value as text and continues processing the other extracted
+definitions. This preserves source-grounded values such as edition-specific
+notes without treating them as numeric or boolean data. The
 worker reuses valid completed V4 windows only when the model, input, prompt,
 schema and source digest are unchanged; old V3 windows cannot satisfy it.
 The workflow uses one combined discovery/schema model call per input window,

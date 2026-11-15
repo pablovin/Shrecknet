@@ -293,14 +293,24 @@ def _metadata(items: object) -> dict:
             raise CompactContractError("invalid_compact_metadata")
         name = _valid_name(item["n"])
         code, raw = item["t"], item["v"]
-        if code not in {"s", "i", "f", "b"} or not isinstance(raw, str) or len(raw) > 300:
+        if code not in {"s", "i", "f", "b"}:
+            raise CompactContractError("invalid_compact_metadata")
+        # Structured output providers may return a scalar in its native JSON
+        # type even though the compact contract asks for text. Keep that value
+        # as text so one malformed metadata value does not discard the window.
+        if not isinstance(raw, str):
+            if raw is None or isinstance(raw, (dict, list)):
+                raise CompactContractError("invalid_compact_metadata")
+            raw = str(raw)
+        if len(raw) > 300:
             raise CompactContractError("invalid_compact_metadata")
         try:
             value = (raw if code == "s" else int(raw) if code == "i"
                      else float(raw) if code == "f" else
                      {"true": True, "false": False}[raw.lower()])
         except (ValueError, KeyError, OverflowError):
-            raise CompactContractError("invalid_compact_metadata") from None
+            # Retain unparseable source-grounded values verbatim as text.
+            value = raw
         if name in result and result[name] != value:
             raise CompactContractError("duplicate_compact_metadata")
         result[name] = value

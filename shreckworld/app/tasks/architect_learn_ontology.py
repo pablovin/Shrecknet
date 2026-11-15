@@ -27,6 +27,7 @@ from app.services.ontology_compact import (
     RECONCILIATION_SCHEMA,
     RECONCILIATION_PROMPT, CompactContractError, model_window, cache_fingerprint,
     parse_discovery, accumulate, ambiguous_groups, parse_discovery_response,
+    parse_model_response,
     proposal_counts,
     reconciliation_input, apply_reconciliation,
 )

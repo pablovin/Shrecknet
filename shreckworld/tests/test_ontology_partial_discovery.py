@@ -86,3 +86,35 @@ def test_existing_window_table_gets_diagnostics_column(tmp_path, monkeypatch):
         "shreckworld_ontology_learn_windows")}
     assert "validation_diagnostics" in columns
     engine.dispose()
+
+
+def test_reconciliation_parses_model_response_after_discovery(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///" + str(tmp_path / "reconciliation.db"))
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        run = OntologyLearnRun(
+            ontology_id=9, owner_id="owner", idempotency_key="reconcile-test",
+            input_sources=[], base_revision=0,
+            model_targets={"reconciliation": {"provider": "openrouter", "name": "dummy"}},
+        )
+        db.add(run)
+        db.commit()
+        monkeypatch.setattr(task.ontology_studio, "graph", lambda *_: {
+            "entities": [], "properties": [], "relationships": [],
+        })
+        monkeypatch.setattr(task, "ambiguous_groups", lambda *_args, **_kwargs: [[0, 1]])
+        monkeypatch.setattr(task, "model", lambda *_: "dummy")
+        monkeypatch.setattr(task, "generate_shreckworld_structured_output", lambda **_: SimpleNamespace(
+            text='{"merge":[],"rename":[],"review":[]}', finish_reason="stop",
+            input_tokens=12, output_tokens=7,
+        ))
+        candidates = {
+            "one": {"kind": "entity", "name": "Investigator", "description": "", "evidence": []},
+            "two": {"kind": "entity", "name": "Investigator", "description": "", "evidence": []},
+        }
+
+        result = task._reconcile(db, run, candidates)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "Investigator"
+        assert run.llm_calls == 1

@@ -1,9 +1,9 @@
-"""Architect Learn Ontology V4: world-scoped, evidence-bound single-pass discovery.
+"""Architect Learn Ontology V5: world-scoped, evidence-bound discovery.
 
-A normal Bookmap window gets one model call. On explicit overflow the worker
-adaptively subdivides the original source, checkpointing successful children
-and consolidating them into the original window. Non-overflow model failures
-still fail closed, without retries or hallucinated replacement definitions.
+Each Bookmap window gets one model call. Complete, valid output parts are kept;
+malformed entities, properties and relationships are skipped and reported in
+the run activity log. Each source window is processed once; partial results do
+not trigger source subdivision or a replacement model call.
 """
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ from app.models.document import ShreckWorldDocument, ShreckWorldDocumentBookMap,
 from app.models.shreckworld import ShreckWorldLibraryItem
 from app.schemas.shreckworld import ShreckWorldModelTarget
 from app.services.book_map_contract import read_book_map
-from app.services.ontology_discovery_batches import build_discovery_batches, split_discovery_batch
+from app.services.ontology_discovery_batches import build_discovery_batches
 from app.services.ontology_compact import (
-    CONTRACT_VERSION, DISCOVERY_SCHEMA, DISCOVERY_PROMPT, LEGACY_DISCOVERY_PROMPT,
+    CONTRACT_VERSION, DISCOVERY_SCHEMA, DISCOVERY_PROMPT,
     RECONCILIATION_SCHEMA,
     RECONCILIATION_PROMPT, CompactContractError, model_window, cache_fingerprint,
-    parse_discovery, accumulate, ambiguous_groups, parse_model_response,
+    parse_discovery, accumulate, ambiguous_groups, parse_discovery_response,
     proposal_counts,
     reconciliation_input, apply_reconciliation,
 )
@@ -100,76 +100,34 @@ def _prepare(db, run: OntologyLearnRun) -> list[tuple]:
     return planned
 
 
-MAX_ADAPTIVE_SPLIT_DEPTH = 5
-
-
-class AdaptiveDiscoveryCancelled(Exception):
-    """Cooperative stop between recursive child requests."""
-
-
-def _reusable_window(db, row: OntologyLearnWindow, *,
-                     model_input: str | None = None,
-                     discovery_target: dict | None = None) -> OntologyLearnWindow | None:
-    fingerprints = [row.fingerprint]
-    if model_input is not None and discovery_target is not None:
-        # Existing successful V4 windows remain valid: only capacity handling
-        # changed, not the property schema or evidence contract.
-        fingerprints.append(cache_fingerprint(
-            model_input, discovery_target, prompt=LEGACY_DISCOVERY_PROMPT
-        ))
+def _reusable_window(db, row: OntologyLearnWindow) -> OntologyLearnWindow | None:
     return db.scalar(select(OntologyLearnWindow).where(
         OntologyLearnWindow.ontology_id == row.ontology_id,
         OntologyLearnWindow.source_id == row.source_id,
         OntologyLearnWindow.content_digest == row.content_digest,
-        OntologyLearnWindow.fingerprint.in_(fingerprints),
+        OntologyLearnWindow.fingerprint == row.fingerprint,
         OntologyLearnWindow.contract_version == CONTRACT_VERSION,
         OntologyLearnWindow.status == "completed",
         OntologyLearnWindow.id != row.id,
     ).order_by(OntologyLearnWindow.finished_at.desc()).limit(1))
 
 
-def _split_checkpoints(db, run: OntologyLearnRun, item, doc, batch) -> list[tuple]:
-    """Persist child inputs before invoking the model, with distinct checkpoints."""
-    halves = split_discovery_batch(batch)
-    high = db.scalar(select(OntologyLearnWindow.window_index).where(
-        OntologyLearnWindow.run_id == run.id,
-        OntologyLearnWindow.source_id == item.id,
-        OntologyLearnWindow.chapter_id == batch["chapter_id"],
-    ).order_by(OntologyLearnWindow.window_index.desc()).limit(1)) or 0
-    children = []
-    for index, half in enumerate(halves, start=1):
-        content, lookup = model_window(half, item.title)
-        row = OntologyLearnWindow(
-            run_id=run.id, ontology_id=run.ontology_id,
-            source_id=item.id, document_id=doc.id,
-            content_digest=doc.source_sha256,
-            chapter_id=batch["chapter_id"], chapter_title=batch["chapter_title"],
-            window_index=high + index,
-            fingerprint=cache_fingerprint(content, run.model_targets["discovery"]),
-            contract_version=CONTRACT_VERSION, status="pending",
-        )
-        db.add(row)
-        children.append((half, content, lookup, row))
-    db.commit()
-    return children
-
-
 def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
                     lookup: dict, row: OntologyLearnWindow,
-                    stats: dict, *, depth: int = 0) -> list[dict]:
-    cached = _reusable_window(
-        db, row, model_input=content, discovery_target=run.model_targets["discovery"]
-    )
+                    stats: dict) -> list[dict]:
+    cached = _reusable_window(db, row)
     if cached is not None:
         row.proposals = cached.proposals
         row.status = "completed"
         row.cached = True
+        row.validation_diagnostics = cached.validation_diagnostics or []
         row.finished_at = datetime.now(timezone.utc)
         db.commit()
         stats.update(proposal_counts(cached.proposals or []))
         stats["metadata_warnings"] = sum(
             len(p.get("validation_warnings") or []) for p in cached.proposals or []
         )
+        stats["malformed_parts"] = list(row.validation_diagnostics)
         stats["cached"] = True
         return cached.proposals
     row.status = "running"
@@ -177,79 +135,26 @@ def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
     try:
         response = generate_shreckworld_structured_output(
             usage_tag="architect_ontology_discovery", system_prompt=DISCOVERY_PROMPT,
-            user_content=content, schema_name="architect_ontology_schema_v4",
+            user_content=content, schema_name="architect_ontology_schema_v5",
             response_schema=DISCOVERY_SCHEMA, max_tokens=8000,
             model_target=model(run, "discovery"))
         row.input_tokens = max(0, response.input_tokens or 0)
         row.output_tokens = max(0, response.output_tokens or 0)
         record_llm_usage(db, run, input_tokens=response.input_tokens,
                          output_tokens=response.output_tokens)
-        data = parse_model_response(response, stage="discovery")
+        data = parse_discovery_response(response, stats=stats)
         base = {
             "source_id": item.id, "document_id": doc.id,
             "content_digest": doc.source_sha256, "chapter_id": batch["chapter_id"],
             "chapter_title": batch["chapter_title"],
         }
-        if data.get("overflow") is True:
-            # The model is instructed to short-circuit and produce ONLY
-            # {"e":[],"overflow":true}. Never use a partial response.
-            if depth >= MAX_ADAPTIVE_SPLIT_DEPTH:
-                raise CompactContractError("compact_overflow_split_limit")
-            try:
-                children = _split_checkpoints(db, run, item, doc, batch)
-            except ValueError as exc:
-                raise CompactContractError("compact_overflow_unsplittable") from exc
-            stats["adaptive_splits"] = stats.get("adaptive_splits", 0) + 1
-            stats["overflow_calls"] = stats.get("overflow_calls", 0) + 1
-            stats["split_child_windows"] = stats.get("split_child_windows", 0) + len(children)
-            combined: dict = {}
-            for half, child_content, child_lookup, child_row in children:
-                # Check cancellation between calls, including recursive splits.
-                if not progress(db, run, run.progress, "discovering", {
-                    "event": "overflow_window_split",
-                    "chapter_id": batch["chapter_id"],
-                    "parent_window_index": row.window_index,
-                    "window_index": child_row.window_index,
-                    "split_depth": depth + 1,
-                    "split_child_windows": stats["split_child_windows"],
-                }):
-                    raise AdaptiveDiscoveryCancelled()
-                child_stats: dict = {}
-                proposals = _window_extract(
-                    db, run, item, doc, half, child_content, child_lookup,
-                    child_row, child_stats, depth=depth + 1
-                )
-                for candidate in proposals:
-                    accumulate(combined, candidate)
-                for name in ("adaptive_splits", "overflow_calls",
-                             "split_child_windows", "suppressed_instances",
-                             "unresolved_relationships"):
-                    stats[name] = stats.get(name, 0) + child_stats.get(name, 0)
-                stats["cached_child_windows"] = (
-                    stats.get("cached_child_windows", 0)
-                    + int(child_stats.get("cached", False))
-                    + child_stats.get("cached_child_windows", 0)
-                )
-            proposals = list(combined.values())
-            stats.update(proposal_counts(proposals))
-            stats["metadata_warnings"] = sum(
-                len(p.get("validation_warnings") or []) for p in proposals
-            )
-        else:
-            proposals = parse_discovery(data, lookup, base, stats=stats)
+        proposals = parse_discovery(data, lookup, base, stats=stats)
+        row.validation_diagnostics = list(stats.get("malformed_parts", []))[:100]
         row.proposals = proposals
         row.status = "completed"
         row.finished_at = datetime.now(timezone.utc)
         db.commit()
         return proposals
-    except AdaptiveDiscoveryCancelled:
-        db.rollback()
-        checkpoint = db.get(OntologyLearnWindow, row.id)
-        checkpoint.status = "failed"
-        checkpoint.error_code = "discovery_cancelled"
-        checkpoint.finished_at = datetime.now(timezone.utc)
-        db.commit()
-        raise
     except Exception as exc:
         db.rollback()
         checkpoint = db.get(OntologyLearnWindow, row.id)
@@ -412,9 +317,8 @@ def run_ontology_discovery(run_id: str) -> None:
                                     "window_suppressed_instances": window_stats.get("suppressed_instances", 0),
                                     "window_unresolved_relationships": window_stats.get("unresolved_relationships", 0),
                                     "window_metadata_warnings": window_stats.get("metadata_warnings", 0),
-                                    "window_adaptive_splits": window_stats.get("adaptive_splits", 0),
-                                    "window_split_children": window_stats.get("split_child_windows", 0),
-                                    "window_cached_children": window_stats.get("cached_child_windows", 0),
+                                    "malformed_parts_count": len(window_stats.get("malformed_parts", [])),
+                                    "malformed_parts": window_stats.get("malformed_parts", [])[:30],
                                     "cached": bool(checkpoint.cached),
                                     "window_input_tokens": checkpoint.input_tokens,
                                     "window_output_tokens": checkpoint.output_tokens,
@@ -444,12 +348,9 @@ def run_ontology_discovery(run_id: str) -> None:
                 "completed_windows": completed, "total_windows": total,
                 "at": datetime.now(timezone.utc).isoformat()}][-250:]
             db.commit()
-        except AdaptiveDiscoveryCancelled:
-            # progress() already persisted the cooperative cancellation state.
-            return
         except Exception as exc:
             db.rollback()
-            logger.exception("Architect ontology V4 failed for run %s", run_id)
+            logger.exception("Architect ontology V5 failed for run %s", run_id)
             run = db.get(OntologyLearnRun, run_id)
             if run:
                 run.status, run.stage = "failed", "failed"

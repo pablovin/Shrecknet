@@ -432,6 +432,7 @@ def list_run_windows(ontology_id: int, run_id: str,
              "contract_version": row.contract_version, "status": row.status,
              "cached": row.cached, "proposals_count": len(row.proposals or []),
              "schema_counts": proposal_counts(row.proposals or []),
+             "validation_diagnostics": row.validation_diagnostics or [],
              "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
              "error_code": row.error_code, "finished_at": row.finished_at}
             for row in rows]

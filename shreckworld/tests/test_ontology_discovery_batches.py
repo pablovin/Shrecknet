@@ -56,7 +56,7 @@ def test_short_subsections_in_same_chapter_share_one_model_request():
     assert batches[1]["chapter_title"] == "Character"
 
 
-def test_adaptive_split_preserves_all_text_once_and_never_mixes_chapters():
+def test_token_bounded_window_fragmentation_preserves_text_and_chapter_ownership():
     parsed = make_map()
     original = "Proficiency " * 80
     blocks = {row.id: row for row in [

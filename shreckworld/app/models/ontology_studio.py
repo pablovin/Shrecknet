@@ -129,6 +129,7 @@ class OntologyLearnWindow(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     proposals: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    validation_diagnostics: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

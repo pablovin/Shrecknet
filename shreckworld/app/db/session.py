@@ -84,6 +84,14 @@ def create_schema() -> None:
                     connection.execute(text(
                         f"ALTER TABLE shreckworld_ontology_runs ADD COLUMN {name} {definition}"
                     ))
+        if "shreckworld_ontology_learn_windows" in inspector.get_table_names():
+            columns = {column["name"] for column in inspector.get_columns(
+                "shreckworld_ontology_learn_windows")}
+            if "validation_diagnostics" not in columns:
+                connection.execute(text(
+                    "ALTER TABLE shreckworld_ontology_learn_windows "
+                    "ADD COLUMN validation_diagnostics JSON NOT NULL DEFAULT '[]'"
+                ))
         if "shreckworlds" in inspector.get_table_names():
             columns = {column["name"] for column in inspector.get_columns("shreckworlds")}
             if "shrecknet_world_id" not in columns:

@@ -73,8 +73,8 @@ IDs are UUIDs, not display names.
 chapters with indexed text in that source's active Book Map. The ShreckOS
 chapter picker defaults to all chapters and can submit a subset. `/sources`
 returns each source's chapter `id`, `title`, and `sent` flag. A chapter is shown as sent only after every window under the active
-`ontology-schema-v4` contract completed successfully in the same run, for the
-active document digest. Legacy V2 sends do not count as V3 extraction, and
+`ontology-schema-v5` contract completed successfully in the same run, for the
+active document digest. Legacy extraction checkpoints do not count as V5 extraction, and
 changing the document digest marks its chapters unsent. Window checkpoints are
 stored in the additive ShreckWorld table.
 
@@ -84,7 +84,7 @@ The task reads Bookmap V3/V4 and persisted blocks without re-indexing.
 Combined entity/schema discovery and a separate reconciliation model produce evidence-backed proposals. Source blocks are visited once, grouped by Bookmap chapter, with subsection headings retained. Long chapters are divided into bounded, non-overlapping ~3,000-token target windows. Text blocks beyond one window are fragmented without truncation.
 The task never writes approved entity definitions.
 
-### V4 world-local semantic ontology extraction
+### V5 world-local semantic ontology extraction
 
 This additive contract supersedes V3. **Every ontology belongs to its Shrecknet
 world** (`ontology_id`). The extractor may use cross-game examples to learn
@@ -112,7 +112,7 @@ Example compact discovery output (fragment):
       ],
       "b": [1]
     }], "r": []
-  }], "overflow": false
+  }]}
 }
 ```
 
@@ -128,48 +128,32 @@ Example compact discovery output (fragment):
 - Character-specific scores belong to instances, not to the shared definition.
   Derived statistics and formulas are deferred to the rules-extraction phase.
 
-### Single-call overflow preflight and adaptive splitting
+### Partial output and validation diagnostics
 
-Ontology extraction remains **one pass**: each normal Bookmap window makes
-one discovery LLM request. Within that same request the model first assesses
-whether the entire source excerpt can be represented in the bounded schema.
-It either emits the complete proposal envelope with `overflow:false`, or
-short-circuits to exactly `{"e":[],"overflow":true}`. This instruction
-avoids drafting an expensive incomplete response, though actual model behavior
-and token usage cannot be strictly guaranteed.
+Each extraction window uses one discovery model request. The response schema
+contains only the `e` entity list; there is no overflow field, preflight, or
+recursive source splitting. The model is asked to return as many complete,
+source-grounded definitions as fit.
 
-Only an explicit `overflow:true` triggers automatic subdivision. The worker
-splits on Bookmap subsection boundaries, then block boundaries, then text
-whitespace inside a single block. Child source text is nonoverlapping,
-collectively exhaustive, and retains original block IDs and split character
-spans. Each child uses the **same** V4 discovery schema and independent
-checkpoint, with a maximum of five levels of subdivision and a minimum source
-fragment size. A pathological window that still overflows fails with a
-specific `compact_overflow_split_limit` or `compact_overflow_unsplittable`
-diagnostic, rather than silently omitting concepts.
+The worker salvages complete entity objects from syntactically truncated JSON.
+Within parsed entities, it validates entity types, properties, relationships,
+and metadata independently. A malformed part is skipped while valid siblings
+are retained. Each window stores its `validation_diagnostics`, including the
+part path and validation code. `GET /runs/{run_id}/windows` returns these
+diagnostics in each window's `validation_diagnostics` field, and the run
+activity log includes a bounded summary for the completed window. ShreckWorld
+adds this JSON field to existing window tables during its normal schema startup
+migration. V4 checkpoints are retained but are not reused as V5 results. A
+window with valid partial results completes and remains
+available for review; a response with no recoverable complete entities also
+completes with diagnostics so the overall job can proceed.
 
-A successful parent becomes a completed checkpoint containing the merged child
-proposals, and children are also checkpointed individually. This permits
-re-use of completed children after partial failures and of whole completed
-parents on later runs. The worker preserves valid V4 checkpoints generated
-before the enhanced capacity instruction. Only overflowing windows incur
-additional LLM calls; non-overflow parse/validation errors still fail closed
-without automatic model retries. The job activity log exposes the number of
-split children and adaptive split operations.
-
-The V4 response is bounded and validated. Missing evidence, malformed
-metadata structures and mismatched `current_value` types still fail the window.
-Unparseable scalar metadata, including native JSON numbers supplied despite the
-compact string schema, is preserved as source-grounded text and flagged for human
-review instead of aborting the window. Explicit overflow triggers adaptive
-subdivision rather than immediately failing the whole job, until the bounded
-split depth or minimum useful fragment is reached. The worker reuses matching
-completed V4 windows when input and model constraints are unchanged and can
-also recognize valid pre-adaptive V4 checkpoints; old V3 windows remain separate.
-The workflow uses one combined discovery/schema model call per input window,
-followed by semantic reconciliation of plausible duplicates. Alias merges
-preserve evidence; incompatible types or definitions require explicit human
-review. Approved definitions are never silently retyped.
+Unparseable scalar metadata is preserved as source-grounded text and flagged
+for human review. Fatal provider refusal or transport errors still fail the
+window. The workflow uses one combined discovery/schema model call per input
+window, followed by semantic reconciliation of plausible duplicates. Alias
+merges preserve evidence; incompatible types or definitions require explicit
+human review. Approved definitions are never silently retyped.
 
 Existing property CRUD accepts `semantic_type`, `definition` and
 `value_schema`; these fields also appear in the graph and proposal review

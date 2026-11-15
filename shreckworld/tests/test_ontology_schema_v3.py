@@ -1,4 +1,4 @@
-"""RPG ontology schema-only V3 contract and checkpoint regression tests."""
+"""RPG ontology schema-only V5 contract and checkpoint regression tests."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -72,12 +72,12 @@ def example_response():
          "p": [{"n": "age", "t": "i", "b": [0]}, {"n": "luck", "t": "i", "b": [0]}],
          "r": [{"n": "HAS_SKILL", "t": "Skill", "b": [1]}]},
         {"n": "Skill", "b": [1], "p": [], "r": []},
-    ], "overflow": False}
+    ]}
 
 
 def test_v3_is_nested_schema_only_with_multigame_grounding():
-    assert CONTRACT_VERSION == "ontology-schema-v4"
-    assert set(DISCOVERY_SCHEMA["properties"]) == {"e", "overflow"}
+    assert CONTRACT_VERSION == "ontology-schema-v5"
+    assert set(DISCOVERY_SCHEMA["properties"]) == {"e"}
     shape = DISCOVERY_SCHEMA["properties"]["e"]["items"]
     assert set(shape["properties"]) == {"n", "d", "b", "p", "r"}
     assert "o" not in shape["properties"]["p"]["items"]["properties"]
@@ -123,7 +123,7 @@ def test_schema_only_filters_obvious_named_instances_and_dependent_fields():
             {"n": "hit_points", "t": "i", "b": [1]}], "r": []},
         {"n": "Spot Hidden", "b": [1], "p": [], "r": []},
         {"n": "Doctor of Medicine", "b": [1], "p": [], "r": []},
-    ], "overflow": False}
+    ]}
     stats = {}
     _, lookup = model_window(sample_batch(), "Call of Cthulhu")
     result = parse_discovery(input_data, lookup, supported(), stats=stats)
@@ -136,7 +136,7 @@ def test_relationship_with_missing_target_is_counted_not_misassigned():
     input_data = {"e": [
         {"n": "Investigator", "b": [0], "p": [],
          "r": [{"n": "HAS_SKILL", "t": "Skill", "b": [1]}]}
-    ], "overflow": False}
+    ]}
     _, lookup = model_window(sample_batch(), "Call of Cthulhu")
     stats = {}
     result = parse_discovery(input_data, lookup, supported(), stats=stats)
@@ -147,23 +147,34 @@ def test_relationship_with_missing_target_is_counted_not_misassigned():
     assert [p["target"] for p in result if p["kind"] == "relationship"] == ["skill"]
 
 
-@pytest.mark.parametrize("payload,code", [
-    ({"e": [], "overflow": True}, "compact_output_overflow"),
-    ({"e": [], "p": [], "r": [], "overflow": False}, "invalid_compact_envelope"),
-    ({"e": [{"n": "Investigator", "b": [999], "p": [], "r": []}],
-      "overflow": False}, "invalid_compact_evidence"),
-    ({"e": [{"n": "Investigator", "b": [0], "p": [
-        {"n": "age", "t": "BAD_TYPE", "b": [0]}], "r": []}],
-      "overflow": False}, "invalid_compact_type"),
-    ({"e": [{"n": "Investigator", "b": [0], "p": [
-        {"o": 3, "n": "age", "t": "i", "b": [0]}], "r": []}],
-      "overflow": False}, "invalid_compact_property"),
-])
-def test_invalid_responses_fail_closed_without_retries(payload, code):
+def test_invalid_parts_are_skipped_and_reported_while_valid_siblings_survive():
     _, lookup = model_window(sample_batch(), "Call of Cthulhu")
-    with pytest.raises(CompactContractError) as ex:
-        parse_discovery(payload, lookup, supported())
-    assert ex.value.code == code
+    stats = {}
+    payload = {"e": [{"n": "Investigator", "d": "", "b": [0], "p": [
+        {"n": "broken", "t": "BAD_TYPE", "s": "", "d": "", "m": [], "i": [], "b": [0]},
+        {"n": "age", "t": "i", "s": "", "d": "", "m": [], "i": [], "b": [0]},
+    ], "r": []}]}
+    result = parse_discovery(payload, lookup, supported(), stats=stats)
+    assert [item["name"] for item in result] == ["Investigator", "age"]
+    assert stats["malformed_parts"] == [{
+        "path": "e[0].p[0]", "code": "invalid_compact_type", "name": "broken",
+    }]
+
+
+def test_truncated_discovery_json_salvages_complete_entity_objects():
+    from app.services.ontology_compact import parse_discovery_response
+
+    response = SimpleNamespace(
+        text='{"e":[{"n":"Investigator","d":"","b":[0],"p":[],"r":[]},'
+             '{"n":"Skill","d":"incomplete"',
+        finish_reason="length",
+    )
+    stats = {}
+    value = parse_discovery_response(response, stats=stats)
+    assert [entity["n"] for entity in value["e"]] == ["Investigator"]
+    assert {warning["code"] for warning in stats["malformed_parts"]} >= {
+        "truncated_json_member", "partial_json_salvaged",
+    }
 
 
 def test_duplicate_type_names_merge_without_losing_source_evidence():
@@ -171,7 +182,7 @@ def test_duplicate_type_names_merge_without_losing_source_evidence():
     raw = {"e": [
         {"n": "Investigator", "b": [0], "p": [{"n": "age", "t": "i", "b": [0]}], "r": []},
         {"n": "investigator", "b": [1], "p": [{"n": "age", "t": "i", "b": [1]}], "r": []},
-    ], "overflow": False}
+    ]}
     proposals = parse_discovery(raw, lookup, supported())
     assert proposal_counts(proposals) == {"entity_types": 1, "properties": 1, "relationships": 0}
     assert [e["block_ids"] for e in proposals[0]["evidence"]] == [["real-uuid-1"], ["real-uuid-2"]]
@@ -237,8 +248,8 @@ def test_token_bounded_windows_retain_all_explanatory_text():
     assert "".join(pieces) == original
 
 
-def test_sqlite_window_uses_v3_version(tmp_path):
-    engine = create_engine("sqlite:///" + str(tmp_path / "v3.db"))
+def test_sqlite_window_uses_current_contract_version(tmp_path):
+    engine = create_engine("sqlite:///" + str(tmp_path / "v5.db"))
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         run = OntologyLearnRun(ontology_id=4, owner_id="owner", idempotency_key="k",
@@ -254,7 +265,7 @@ def test_sqlite_window_uses_v3_version(tmp_path):
         db.commit()
     with Session(engine) as db:
         item = db.query(OntologyLearnWindow).one()
-        assert item.contract_version == "ontology-schema-v4"
+        assert item.contract_version == "ontology-schema-v5"
         assert item.output_tokens == 150
     engine.dispose()
 

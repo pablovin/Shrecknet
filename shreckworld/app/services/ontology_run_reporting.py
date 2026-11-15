@@ -74,7 +74,7 @@ def run_response(run: OntologyLearnRun) -> dict:
         "llm_calls": run.llm_calls,
         "extraction_contract": next(
             (event["contract_version"] for event in reversed(activity_log)
-             if event.get("contract_version") in {"ontology-schema-v4", "ontology-schema-v3", "ontology-compact-v2"}),
+             if event.get("contract_version") in {"ontology-schema-v5", "ontology-schema-v4", "ontology-schema-v3", "ontology-compact-v2"}),
             "legacy",
         ),
         "model_summary": {

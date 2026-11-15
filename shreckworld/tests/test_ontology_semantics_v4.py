@@ -75,7 +75,7 @@ def test_instance_template_inherits_and_supports_extra_skill_state(db):
 
 
 def test_v4_source_evidence_and_semantic_fields():
-    assert CONTRACT_VERSION == "ontology-schema-v4"
+    assert CONTRACT_VERSION == "ontology-schema-v5"
     lookup = {0: {"block_id": "b1", "section_id": "s1", "fragment_index": 0}}
     base = {"source_id": "source", "document_id": "doc", "chapter_id": "chapter",
             "chapter_title": "Skills", "content_digest": "digest"}
@@ -88,7 +88,7 @@ def test_v4_source_evidence_and_semantic_fields():
                   {"n": "improvement_mark", "t": "b", "r": False}], "b": [0],
         }],
         "r": [],
-    }], "overflow": False}
+    }]}
     output = parse_discovery(content, lookup, base)
     prop = next(p for p in output if p["kind"] == "property")
     assert prop["definition"] == {"base_chance": 25}
@@ -100,9 +100,12 @@ def test_v4_source_evidence_and_semantic_fields():
     accumulate(found, {**prop, "evidence": [{**prop["evidence"][0], "block_ids": ["b2"]}]})
     assert len(next(iter(found.values()))["evidence"]) == 2
     content["e"][0]["p"][0]["i"][0]["t"] = "s"
-    with pytest.raises(CompactContractError) as exc:
-        parse_discovery(content, lookup, base)
-    assert exc.value.code == "invalid_current_value_type"
+    stats = {}
+    parsed = parse_discovery(content, lookup, base, stats=stats)
+    assert [candidate["kind"] for candidate in parsed] == ["entity"]
+    assert stats["malformed_parts"] == [{
+        "path": "e[0].p[0]", "code": "invalid_current_value_type", "name": "spot_hidden",
+    }]
 
 
 
@@ -141,7 +144,7 @@ def test_metadata_unparseable_field_cannot_be_auto_approved_and_survives_merge()
             ],
             "i": [{"n": "current_value", "t": "i", "r": True}], "b": [0],
         }], "r": [],
-    }], "overflow": False}
+    }]}
     stats = {}
     candidates = parse_discovery(response, lookup, base, stats=stats)
     prop = next(x for x in candidates if x["kind"] == "property")
@@ -190,18 +193,23 @@ def test_unparseable_metadata_is_retained_as_text_without_losing_valid_values():
                 {"n": "base_chance", "t": "i", "v": "25"},
                 {"n": "specialization", "t": "i", "v": "varies by edition"},
                 {"n": "maximum", "t": "f", "v": 99},
+                {"n": "malformed field"},
             ],
             "i": [], "b": [0],
         }],
-    }], "overflow": False}
+    }]}
 
-    output = parse_discovery(content, lookup, base)
+    stats = {}
+    output = parse_discovery(content, lookup, base, stats=stats)
     prop = next(p for p in output if p["kind"] == "property")
     assert prop["definition"] == {
         "base_chance": 25,
         "specialization": "varies by edition",
         "maximum": 99.0,
     }
+    assert stats["malformed_parts"] == [{
+        "path": "e[0].p[0].m[3]", "code": "invalid_compact_metadata",
+    }]
 
 
 def test_native_boolean_metadata_and_reviewed_type_mismatch():

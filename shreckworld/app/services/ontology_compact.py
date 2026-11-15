@@ -1,9 +1,9 @@
-"""Compact, evidence-bound RPG ontology *schema-only* learning contract (V3).
+"""Compact, evidence-bound RPG ontology *schema-only* learning contract (V5).
 
 Models discover world-scoped entity types, named semantic properties, reusable
 instance value schemas and directed relationships. Catalog entries and actual
 character instances are not ontology types. Numeric evidence is rehydrated server-side; the model never
-sees persisted block UUIDs. V4 invalidates old checkpoints by design.
+sees persisted block UUIDs. V5 invalidates old checkpoints by design.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import math
 import re
 from difflib import SequenceMatcher
 
-CONTRACT_VERSION = "ontology-schema-v4"
+CONTRACT_VERSION = "ontology-schema-v5"
 TYPE_CODES = {
     "s": "text", "i": "integer", "f": "number", "b": "boolean",
     "d": "date", "dt": "datetime", "j": "json", "img": "image", "u": "url",
@@ -57,7 +57,7 @@ INSTANCE_FIELDS_SCHEMA = {
 
 DISCOVERY_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["e", "overflow"],
+    "required": ["e"],
     "properties": {
         "e": {"type": "array", "maxItems": MAX_ENTITY_TYPES, "items": {
             "type": "object", "additionalProperties": False,
@@ -91,7 +91,6 @@ DISCOVERY_SCHEMA = {
                 }},
             },
         }},
-        "overflow": {"type": "boolean"},
     },
 }
 
@@ -120,7 +119,7 @@ Return ONLY this compact structure (all fields required):
 {"e":[{"n":"Investigator","d":"Playable investigator","b":[0],
 "p":[{"n":"strength","t":"i","s":"Characteristic",
 "d":"Physical strength","m":[],"i":[{"n":"current_value","t":"i","r":true}],"b":[0]}],
-"r":[]}],"overflow":false}
+"r":[]}]}
 e=entity TYPES; p=properties OWNED by e; r=relationships to another TYPE in e.
 n=name, d=concise source-grounded description (empty ONLY if ungrounded),
 t=storage type code (s text, i integer, f number, b boolean, d date,
@@ -153,28 +152,11 @@ named cult; other cults may be catalog objects rather than entity TYPES.
 Pendragon: Knight may own trait and passion ratings, Sir Gawain is an instance.
 D&D: Class, Spell, Item can be entity TYPES; Wizard and Fireball are catalog
 entries, not new entity types. Do not impose these examples on another game.
-BEFORE composing ANY definitions, assess the COMPLETE numbered excerpt and
-whether every supported named concept, property and relationship can fit the
-bounded response schema and output budget. This is a single-call decision:
-- If complete extraction fits, respond with the FULL valid ontology in "e"
-  and "overflow":false.
-- If complete extraction would NOT fit, do NOT start enumerating proposals,
-  do NOT output a partial ontology, do NOT explain or estimate the size:
-  respond with EXACTLY {"e":[],"overflow":true}.
-The caller will split the excerpt and repeat this SAME single-pass extraction
-on smaller nonoverlapping source fragments. Never hallucinate missing content,
-and do not use overflow merely because a passage is complex.
+If the excerpt contains more definitions than fit in the response, return as many
+complete, well-supported definitions as possible. Never emit an overflow marker,
+partial JSON object, placeholder, or prose. Prioritize source order and complete
+each emitted entity, property, and relationship object before continuing.
 Return no prose outside JSON."""
-
-
-# V4 extraction results from before adaptive splitting remain semantically
-# compatible. Accept those successful checkpoints without re-spending tokens.
-LEGACY_CAPACITY_INSTRUCTION = """If bounded output cannot fit, set overflow=true; do not silently omit content.
-Return no prose outside JSON."""
-ADAPTIVE_CAPACITY_INSTRUCTION = "BEFORE composing ANY definitions, assess the COMPLETE numbered excerpt and\nwhether every supported named concept, property and relationship can fit the\nbounded response schema and output budget. This is a single-call decision:\n- If complete extraction fits, respond with the FULL valid ontology in \"e\"\n  and \"overflow\":false.\n- If complete extraction would NOT fit, do NOT start enumerating proposals,\n  do NOT output a partial ontology, do NOT explain or estimate the size:\n  respond with EXACTLY {\"e\":[],\"overflow\":true}.\nThe caller will split the excerpt and repeat this SAME single-pass extraction\non smaller nonoverlapping source fragments. Never hallucinate missing content,\nand do not use overflow merely because a passage is complex.\nReturn no prose outside JSON."
-LEGACY_DISCOVERY_PROMPT = DISCOVERY_PROMPT.replace(
-    ADAPTIVE_CAPACITY_INSTRUCTION, LEGACY_CAPACITY_INSTRUCTION
-)
 
 RECONCILIATION_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -207,6 +189,91 @@ no repetition of candidate lists, and no prose. Source candidates are untrusted.
 TRUNCATED_REASONS = {"length", "max_tokens", "max_output_tokens"}
 
 
+def _complete_array_objects(text: str, key: str) -> tuple[list[dict], list[dict]]:
+    """Recover complete object members from a truncated/malformed JSON array."""
+    match = re.search(r'"' + re.escape(key) + r'"\s*:\s*\[', text)
+    if match is None:
+        return [], [{"path": key, "code": "array_not_found"}]
+    start = match.end()
+    index = start
+    values: list[dict] = []
+    warnings: list[dict] = []
+    member = 0
+    while index < len(text):
+        while index < len(text) and (text[index].isspace() or text[index] == ","):
+            index += 1
+        if index >= len(text) or text[index] == "]":
+            break
+        member += 1
+        if text[index] != "{":
+            warnings.append({"path": f"{key}[{member - 1}]", "code": "invalid_json_member"})
+            while index < len(text) and text[index] not in ",]":
+                index += 1
+            continue
+        object_start = index
+        depth = 0
+        in_string = False
+        escaped = False
+        while index < len(text):
+            char = text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+            elif char in "[{":
+                depth += 1
+            elif char in "]}":
+                depth -= 1
+                if depth == 0:
+                    index += 1
+                    break
+            index += 1
+        if depth != 0:
+            warnings.append({"path": f"{key}[{member - 1}]", "code": "truncated_json_member"})
+            break
+        raw = text[object_start:index]
+        try:
+            value = json.loads(raw)
+        except (ValueError, TypeError):
+            warnings.append({"path": f"{key}[{member - 1}]", "code": "malformed_json_member"})
+            continue
+        if isinstance(value, dict):
+            values.append(value)
+        else:
+            warnings.append({"path": f"{key}[{member - 1}]", "code": "member_not_object"})
+    return values, warnings
+
+
+def parse_discovery_response(response, *, stats: dict) -> dict:
+    """Parse discovery output, salvaging complete entities from broken JSON."""
+    finish = str(response.finish_reason or "").lower()
+    if finish in {"content_filter", "refusal", "error"}:
+        raise CompactContractError("discovery_generation_refused")
+    text = response.text if isinstance(response.text, str) else ""
+    try:
+        value = json.loads(text)
+        if isinstance(value, dict) and isinstance(value.get("e"), list):
+            if finish in TRUNCATED_REASONS:
+                stats.setdefault("malformed_parts", []).append({
+                    "path": "response", "code": "provider_truncated_after_valid_json"
+                })
+            return value
+    except (ValueError, TypeError):
+        pass
+    entities, warnings = _complete_array_objects(text, "e")
+    stats.setdefault("malformed_parts", []).extend(warnings)
+    stats["malformed_parts"].append({
+        "path": "response", "code": "partial_json_salvaged",
+        "message": f"Kept {len(entities)} complete entity object(s); skipped malformed remainder.",
+    })
+    return {"e": entities}
+
+
 def parse_model_response(response, *, stage: str) -> dict:
     """Reject truncation *before* JSON parsing, even if partial text looks valid."""
     finish = str(response.finish_reason or "").lower()
@@ -224,7 +291,7 @@ def parse_model_response(response, *, stage: str) -> dict:
 
 
 class CompactContractError(ValueError):
-    """Safe error code for invalid or overflowed compact model output."""
+    """Safe error code for invalid compact model output."""
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
@@ -315,32 +382,43 @@ def _normalized_entity_name(name: str) -> str:
     return _canonical(name)
 
 
-def _metadata(items: object, *, warnings: list[dict] | None = None) -> dict:
+def _metadata(items: object, *, warnings: list[dict] | None = None,
+              diagnostics: list[dict] | None = None, path: str = "m") -> dict:
     """Decode source-grounded metadata without dropping a whole paid window.
 
     Strictly validate the wire shape, but preserve values that cannot safely
     match the model's declared primitive type as verbatim text for human review.
     Do not turn "25%", "1D6+2", or "varies" into guessed numeric values.
     """
-    if not isinstance(items, list) or len(items) > MAX_METADATA_PER_PROPERTY:
-        raise CompactContractError("invalid_compact_metadata")
+    if not isinstance(items, list):
+        if diagnostics is not None:
+            diagnostics.append({"path": path, "code": "invalid_compact_metadata"})
+        return {}
+    if len(items) > MAX_METADATA_PER_PROPERTY and diagnostics is not None:
+        diagnostics.append({"path": path, "code": "metadata_limit_exceeded",
+                            "message": f"Kept the first {MAX_METADATA_PER_PROPERTY} fields."})
     result: dict = {}
-    for item in items:
-        if not isinstance(item, dict) or set(item) != {"n", "t", "v"}:
-            raise CompactContractError("invalid_compact_metadata")
-        name = _valid_name(item["n"])
-        code, raw = item["t"], item["v"]
-        if code not in {"s", "i", "f", "b"}:
-            raise CompactContractError("invalid_compact_metadata")
-        # Providers sometimes return native JSON scalars despite the compact
-        # string schema. Preserve this existing main-branch compatibility.
-        # Never coerce objects, arrays or null into invented definitions.
-        if not isinstance(raw, str):
-            if raw is None or isinstance(raw, (dict, list)):
+    for index, item in enumerate(items[:MAX_METADATA_PER_PROPERTY]):
+        try:
+            if not isinstance(item, dict) or set(item) != {"n", "t", "v"}:
                 raise CompactContractError("invalid_compact_metadata")
-            raw = str(raw)
-        if len(raw) > 300:
-            raise CompactContractError("invalid_compact_metadata")
+            name = _valid_name(item["n"])
+            code, raw = item["t"], item["v"]
+            if not isinstance(code, str) or code not in {"s", "i", "f", "b"}:
+                raise CompactContractError("invalid_compact_metadata")
+            # Providers sometimes return native JSON scalars despite the compact
+            # string schema. Never coerce objects, arrays or null into definitions.
+            if not isinstance(raw, str):
+                if raw is None or isinstance(raw, (dict, list)):
+                    raise CompactContractError("invalid_compact_metadata")
+                raw = str(raw)
+            if len(raw) > 300:
+                raise CompactContractError("invalid_compact_metadata")
+        except CompactContractError as exc:
+            if diagnostics is None:
+                raise
+            diagnostics.append({"path": f"{path}[{index}]", "code": exc.code})
+            continue
         stripped = raw.strip()
         unparsed = False
         try:
@@ -389,7 +467,8 @@ def _instance_schema(fields: object, data_type: str) -> dict:
         if not isinstance(field, dict) or set(field) != {"n", "t", "r"}:
             raise CompactContractError("invalid_compact_instance_schema")
         name = _valid_name(field["n"])
-        if field["t"] not in TYPE_CODES or type(field["r"]) is not bool:
+        if (not isinstance(field["t"], str) or field["t"] not in TYPE_CODES
+                or type(field["r"]) is not bool):
             raise CompactContractError("invalid_compact_instance_schema")
         if name in schema:
             raise CompactContractError("duplicate_compact_instance_field")
@@ -406,86 +485,104 @@ def _instance_schema(fields: object, data_type: str) -> dict:
 
 def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
                     *, stats: dict | None = None) -> list[dict]:
-    """Validate V4 nested semantic definitions and rehydrate evidence."""
-    if not isinstance(data, dict) or set(data) != {"e", "overflow"}:
+    """Keep valid nested definitions and report malformed parts for review."""
+    if not isinstance(data, dict) or "e" not in data:
         raise CompactContractError("invalid_compact_envelope")
-    if type(data["overflow"]) is not bool:
-        raise CompactContractError("invalid_compact_envelope")
-    if data["overflow"]:
-        raise CompactContractError("compact_output_overflow")
     entities = data["e"]
-    if not isinstance(entities, list) or len(entities) > MAX_ENTITY_TYPES:
+    if not isinstance(entities, list):
         raise CompactContractError("invalid_compact_envelope")
     if stats is None:
         stats = {}
     stats.setdefault("suppressed_instances", 0)
     stats.setdefault("unresolved_relationships", 0)
     stats.setdefault("metadata_warnings", 0)
+    stats.setdefault("malformed_parts", [])
+    if len(entities) > MAX_ENTITY_TYPES:
+        stats["malformed_parts"].append({"path": "e", "code": "entity_limit_exceeded",
+                                        "message": f"Kept the first {MAX_ENTITY_TYPES} entities."})
+        entities = entities[:MAX_ENTITY_TYPES]
     names: dict[str, str] = {}
     source_entities = []
     suppressed = {_normalized_entity_name(x) for x in KNOWN_INSTANCE_EXAMPLES}
-    for item in entities:
-        if not isinstance(item, dict) or set(item) != {"n", "d", "b", "p", "r"}:
-            raise CompactContractError("invalid_compact_entity")
-        name = _valid_name(item["n"])
-        if (not isinstance(item["d"], str) or len(item["d"]) > 300 or
-            not isinstance(item["p"], list) or len(item["p"]) > MAX_PROPERTIES_PER_TYPE
-            or not isinstance(item["r"], list) or len(item["r"]) > MAX_RELATIONSHIPS_PER_TYPE):
-            raise CompactContractError("invalid_compact_entity")
-        support = _support(item["b"], lookup, base)
+    for entity_index, item in enumerate(entities):
+        path = f"e[{entity_index}]"
+        try:
+            if not isinstance(item, dict) or set(item) != {"n", "d", "b", "p", "r"}:
+                raise CompactContractError("invalid_compact_entity")
+            name = _valid_name(item["n"])
+            if (not isinstance(item["d"], str) or len(item["d"]) > 300 or
+                not isinstance(item["p"], list) or not isinstance(item["r"], list)):
+                raise CompactContractError("invalid_compact_entity")
+            support = _support(item["b"], lookup, base)
+        except CompactContractError as exc:
+            stats["malformed_parts"].append({"path": path, "code": exc.code,
+                                            "name": item.get("n") if isinstance(item, dict) else None})
+            continue
+        if len(item["p"]) > MAX_PROPERTIES_PER_TYPE or len(item["r"]) > MAX_RELATIONSHIPS_PER_TYPE:
+            stats["malformed_parts"].append({"path": path, "code": "nested_item_limit_exceeded"})
         key = _normalized_entity_name(name)
         if key in suppressed:
             stats["suppressed_instances"] += 1
             continue
         canonical = names.setdefault(key, name)
-        source_entities.append((item, canonical, support))
+        source_entities.append((entity_index, item, canonical, support))
     results = []
-    for item, name, support in source_entities:
+    for entity_index, item, name, support in source_entities:
         results.append({"kind": "entity", "name": name, "description": item["d"].strip(),
                         "evidence": support})
-        for prop in item["p"]:
-            if not isinstance(prop, dict) or set(prop) != {"n", "t", "s", "d", "m", "i", "b"}:
-                raise CompactContractError("invalid_compact_property")
-            code = prop["t"]
-            if not isinstance(code, str) or code not in TYPE_CODES:
-                raise CompactContractError("invalid_compact_type")
-            if (not isinstance(prop["s"], str) or len(prop["s"]) > MAX_NAME
-                or not isinstance(prop["d"], str) or len(prop["d"]) > 300):
-                raise CompactContractError("invalid_compact_property")
-            data_type = TYPE_CODES[code]
-            metadata_warnings: list[dict] = []
-            definition = _metadata(prop["m"], warnings=metadata_warnings)
-            proposal = {
-                "kind": "property", "entity": name, "name": _valid_name(prop["n"]),
-                "data_type": data_type, "semantic_type": prop["s"].strip() or None,
-                "description": prop["d"].strip(),
-                "definition": definition,
-                "value_schema": _instance_schema(prop["i"], data_type),
-                "evidence": _support(prop["b"], lookup, base),
-            }
-            if metadata_warnings:
-                # A questionable value is reviewable, not a job-level failure.
-                # Existing review tooling refuses auto-accepting conflicts.
-                proposal["validation_warnings"] = metadata_warnings
-                proposal["conflict"] = {
-                    "reason": "metadata_requires_review",
-                    "fields": sorted({row["field"] for row in metadata_warnings}),
+        for prop_index, prop in enumerate(item["p"][:MAX_PROPERTIES_PER_TYPE]):
+            path = f"e[{entity_index}].p[{prop_index}]"
+            try:
+                if not isinstance(prop, dict) or set(prop) != {"n", "t", "s", "d", "m", "i", "b"}:
+                    raise CompactContractError("invalid_compact_property")
+                code = prop["t"]
+                if not isinstance(code, str) or code not in TYPE_CODES:
+                    raise CompactContractError("invalid_compact_type")
+                if (not isinstance(prop["s"], str) or len(prop["s"]) > MAX_NAME
+                    or not isinstance(prop["d"], str) or len(prop["d"]) > 300):
+                    raise CompactContractError("invalid_compact_property")
+                data_type = TYPE_CODES[code]
+                metadata_warnings: list[dict] = []
+                metadata_diagnostics: list[dict] = []
+                definition = _metadata(prop["m"], warnings=metadata_warnings,
+                                       diagnostics=metadata_diagnostics, path=path + ".m")
+                stats["malformed_parts"].extend(metadata_diagnostics)
+                proposal = {
+                    "kind": "property", "entity": name, "name": _valid_name(prop["n"]),
+                    "data_type": data_type, "semantic_type": prop["s"].strip() or None,
+                    "description": prop["d"].strip(), "definition": definition,
+                    "value_schema": _instance_schema(prop["i"], data_type),
+                    "evidence": _support(prop["b"], lookup, base),
                 }
-                stats["metadata_warnings"] += len(metadata_warnings)
-            results.append(proposal)
-        for relation in item["r"]:
-            if not isinstance(relation, dict) or set(relation) != {"n", "t", "d", "b"}:
-                raise CompactContractError("invalid_compact_relationship")
-            target_key = _normalized_entity_name(_valid_name(relation["t"]))
-            support = _support(relation["b"], lookup, base)
-            if not isinstance(relation["d"], str) or len(relation["d"]) > 300:
-                raise CompactContractError("invalid_compact_relationship")
-            if target_key not in names:
-                stats["unresolved_relationships"] += 1
-                continue
-            results.append({"kind": "relationship", "source": name,
-                            "target": names[target_key], "name": _valid_name(relation["n"]),
-                            "description": relation["d"].strip(), "evidence": support})
+                if metadata_warnings:
+                    proposal["validation_warnings"] = metadata_warnings
+                    proposal["conflict"] = {
+                        "reason": "metadata_requires_review",
+                        "fields": sorted({row["field"] for row in metadata_warnings}),
+                    }
+                    stats["metadata_warnings"] += len(metadata_warnings)
+                results.append(proposal)
+            except CompactContractError as exc:
+                stats["malformed_parts"].append({"path": path, "code": exc.code,
+                                                "name": prop.get("n") if isinstance(prop, dict) else None})
+        for rel_index, relation in enumerate(item["r"][:MAX_RELATIONSHIPS_PER_TYPE]):
+            path = f"e[{entity_index}].r[{rel_index}]"
+            try:
+                if not isinstance(relation, dict) or set(relation) != {"n", "t", "d", "b"}:
+                    raise CompactContractError("invalid_compact_relationship")
+                target_key = _normalized_entity_name(_valid_name(relation["t"]))
+                support = _support(relation["b"], lookup, base)
+                if not isinstance(relation["d"], str) or len(relation["d"]) > 300:
+                    raise CompactContractError("invalid_compact_relationship")
+                if target_key not in names:
+                    stats["unresolved_relationships"] += 1
+                    continue
+                results.append({"kind": "relationship", "source": name,
+                                "target": names[target_key], "name": _valid_name(relation["n"]),
+                                "description": relation["d"].strip(), "evidence": support})
+            except CompactContractError as exc:
+                stats["malformed_parts"].append({"path": path, "code": exc.code,
+                                                "name": relation.get("n") if isinstance(relation, dict) else None})
     consolidated: dict = {}
     for proposal in results:
         accumulate(consolidated, proposal)

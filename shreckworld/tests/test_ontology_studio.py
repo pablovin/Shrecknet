@@ -143,3 +143,57 @@ def test_active_run_cannot_be_deleted(db):
     with pytest.raises(HTTPException) as error:
         studio.delete_run(db, run)
     assert error.value.status_code == 409
+
+def test_human_draft_proposals_are_revisioned_and_removable(db, monkeypatch):
+    # API router package initializes the document pipeline, which is optional in focused CI.
+    pytest.importorskip("fitz")
+    from app.api.routers import ontology_studio as router
+    monkeypatch.setattr(router, "auth", lambda *_: None)
+    run = OntologyLearnRun(ontology_id=15, owner_id="admin", idempotency_key=str(uuid4()),
+        input_sources=[], base_revision=0, model_targets={}, status="awaiting_review",
+        proposals=[{"id": "entity", "kind": "entity", "name": "Skill", "evidence": []},
+                   {"id": "prop", "kind": "property", "name": "value", "entity": "Skill",
+                    "data_type": "integer", "evidence": []},
+                   {"id": "edge", "kind": "relationship", "name": "LEARNED",
+                    "source": "Skill", "target": "Skill", "evidence": []}])
+    db.add(run)
+    db.commit()
+    created = router.create_proposal(15, run.id,
+        router.ProposalCreate(expected_proposal_revision=0, kind="entity", name="Investigator"),
+        token="testing", db=db)
+    assert created["proposal_revision"] == 1
+    new_id = next(p["id"] for p in created["proposals"] if p["name"] == "Investigator")
+    assert next(p for p in created["proposals"] if p["id"] == new_id)["created_by_human"]
+    with pytest.raises(HTTPException) as stale:
+        router.create_proposal(15, run.id,
+            router.ProposalCreate(expected_proposal_revision=0, kind="entity", name="Actor"),
+            token="testing", db=db)
+    assert stale.value.status_code == 409
+    updated = router.edit_proposal(15, run.id, "entity",
+        router.ProposalEdit(expected_proposal_revision=1, name="Ability"),
+        token="testing", db=db)
+    by_id = {p["id"]: p for p in updated["proposals"]}
+    assert by_id["prop"]["entity"] == "Ability"
+    assert by_id["edge"]["source"] == "Ability"
+    assert by_id["edge"]["target"] == "Ability"
+    with pytest.raises(HTTPException) as extracted:
+        router.delete_proposal(15, run.id, "entity", expected_proposal_revision=2,
+                               token="testing", db=db)
+    assert extracted.value.status_code == 422
+    result = router.delete_proposal(15, run.id, new_id, expected_proposal_revision=2,
+                                    token="testing", db=db)
+    assert new_id not in {p["id"] for p in result["proposals"]}
+
+
+def test_accepted_definitions_cannot_reference_rejected_entities(db):
+    run = OntologyLearnRun(ontology_id=19, owner_id="admin", idempotency_key=str(uuid4()),
+        input_sources=[], base_revision=0, model_targets={}, status="awaiting_review",
+        proposals=[{"id": "entity", "kind": "entity", "name": "Skill", "evidence": []},
+                   {"id": "property", "kind": "property", "name": "value",
+                    "entity": "Skill", "data_type": "integer", "evidence": []}])
+    db.add(run)
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        studio.apply_proposals(db, run, {"entity": "reject", "property": "accept"}, 0, "admin")
+    assert error.value.status_code == 422
+    assert studio.graph(db, 19)["entities"] == []

@@ -330,7 +330,16 @@ def _metadata(items: object, *, warnings: list[dict] | None = None) -> dict:
             raise CompactContractError("invalid_compact_metadata")
         name = _valid_name(item["n"])
         code, raw = item["t"], item["v"]
-        if code not in {"s", "i", "f", "b"} or not isinstance(raw, str) or len(raw) > 300:
+        if code not in {"s", "i", "f", "b"}:
+            raise CompactContractError("invalid_compact_metadata")
+        # Providers sometimes return native JSON scalars despite the compact
+        # string schema. Preserve this existing main-branch compatibility.
+        # Never coerce objects, arrays or null into invented definitions.
+        if not isinstance(raw, str):
+            if raw is None or isinstance(raw, (dict, list)):
+                raise CompactContractError("invalid_compact_metadata")
+            raw = str(raw)
+        if len(raw) > 300:
             raise CompactContractError("invalid_compact_metadata")
         stripped = raw.strip()
         unparsed = False

@@ -157,10 +157,15 @@ additional LLM calls; non-overflow parse/validation errors still fail closed
 without automatic model retries. The job activity log exposes the number of
 split children and adaptive split operations.
 
-The V4 response is bounded and validated strictly. Missing evidence, malformed
-metadata, mismatched `current_value` types and overflow fail the window. The
-worker reuses valid completed V4 windows only when the model, input, prompt,
-schema and source digest are unchanged; old V3 windows cannot satisfy it.
+The V4 response is bounded and validated. Missing evidence, malformed
+metadata structures and mismatched `current_value` types still fail the window.
+Unparseable scalar metadata, including native JSON numbers supplied despite the
+compact string schema, is preserved as source-grounded text and flagged for human
+review instead of aborting the window. Explicit overflow triggers adaptive
+subdivision rather than immediately failing the whole job, until the bounded
+split depth or minimum useful fragment is reached. The worker reuses matching
+completed V4 windows when input and model constraints are unchanged and can
+also recognize valid pre-adaptive V4 checkpoints; old V3 windows remain separate.
 The workflow uses one combined discovery/schema model call per input window,
 followed by semantic reconciliation of plausible duplicates. Alias merges
 preserve evidence; incompatible types or definitions require explicit human

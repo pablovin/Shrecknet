@@ -27,6 +27,8 @@ MAX_INSTANCE_FIELDS = 12
 # as entity TYPES. Named statistics and skills MUST be discovered as properties.
 KNOWN_INSTANCE_EXAMPLES = frozenset({
     "cthulhu", "nyarlathotep", "harvey walters", "sir gawain", "orlanth",
+    "spot hidden", "fireball", "doctor of medicine",
+    "str", "con", "dex", "app", "pow", "siz", "int", "edu",
 })
 
 EVIDENCE_SCHEMA = {"type": "array", "minItems": 1, "maxItems": 3,

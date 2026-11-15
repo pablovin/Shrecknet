@@ -166,6 +166,16 @@ on smaller nonoverlapping source fragments. Never hallucinate missing content,
 and do not use overflow merely because a passage is complex.
 Return no prose outside JSON."""
 
+
+# V4 extraction results from before adaptive splitting remain semantically
+# compatible. Accept those successful checkpoints without re-spending tokens.
+LEGACY_CAPACITY_INSTRUCTION = """If bounded output cannot fit, set overflow=true; do not silently omit content.
+Return no prose outside JSON."""
+ADAPTIVE_CAPACITY_INSTRUCTION = "BEFORE composing ANY definitions, assess the COMPLETE numbered excerpt and\nwhether every supported named concept, property and relationship can fit the\nbounded response schema and output budget. This is a single-call decision:\n- If complete extraction fits, respond with the FULL valid ontology in \"e\"\n  and \"overflow\":false.\n- If complete extraction would NOT fit, do NOT start enumerating proposals,\n  do NOT output a partial ontology, do NOT explain or estimate the size:\n  respond with EXACTLY {\"e\":[],\"overflow\":true}.\nThe caller will split the excerpt and repeat this SAME single-pass extraction\non smaller nonoverlapping source fragments. Never hallucinate missing content,\nand do not use overflow merely because a passage is complex.\nReturn no prose outside JSON."
+LEGACY_DISCOVERY_PROMPT = DISCOVERY_PROMPT.replace(
+    ADAPTIVE_CAPACITY_INSTRUCTION, LEGACY_CAPACITY_INSTRUCTION
+)
+
 RECONCILIATION_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["merge", "rename", "review"],
@@ -236,6 +246,9 @@ def model_window(batch: dict, source_title: str) -> tuple[str, dict[int, dict]]:
                 "block_id": block["id"], "section_id": section["section_id"],
                 "fragment_index": block.get("fragment_index", 0),
             }
+            if "fragment_char_offset" in block:
+                lookup[number]["char_start"] = block["fragment_char_offset"]
+                lookup[number]["char_end"] = block["fragment_char_offset"] + len(block["text"])
             fragments.append({"i": number, "x": block["text"]})
         if fragments:
             sections.append({"h": " > ".join(section["heading_path"][-2:]), "b": fragments})
@@ -243,10 +256,13 @@ def model_window(batch: dict, source_title: str) -> tuple[str, dict[int, dict]]:
     return compact_json(payload), lookup
 
 
-def cache_fingerprint(model_input: str, model_target: dict) -> str:
+def cache_fingerprint(model_input: str, model_target: dict,
+                      *, prompt: str | None = None) -> str:
     """Canonical digest excludes untrusted output and locks a model+contract."""
     value = {"v": CONTRACT_VERSION, "input": model_input,
-             "target": model_target, "prompt": DISCOVERY_PROMPT, "schema": DISCOVERY_SCHEMA}
+             "target": model_target,
+             "prompt": DISCOVERY_PROMPT if prompt is None else prompt,
+             "schema": DISCOVERY_SCHEMA}
     return hashlib.sha256(compact_json(value).encode("utf-8")).hexdigest()
 
 
@@ -286,8 +302,12 @@ def _support(indices: object, lookup: dict[int, dict], base: dict) -> list[dict]
     evidence = dict(base)
     evidence["block_ids"] = list(dict.fromkeys(item["block_id"] for item in selected))
     evidence["section_ids"] = list(dict.fromkeys(item["section_id"] for item in selected))
-    evidence["fragments"] = [{"block_id": item["block_id"], "index": item["fragment_index"]}
-                             for item in selected]
+    evidence["fragments"] = [
+        {**{"block_id": item["block_id"], "index": item["fragment_index"]},
+         **({"char_start": item["char_start"], "char_end": item["char_end"]}
+            if "char_start" in item else {})}
+        for item in selected
+    ]
     return [evidence]
 
 

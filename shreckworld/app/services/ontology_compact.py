@@ -282,15 +282,55 @@ def _normalized_entity_name(name: str) -> str:
     return _canonical(name)
 
 
+def _metadata(items: object) -> dict:
+    if not isinstance(items, list) or len(items) > MAX_METADATA_PER_PROPERTY:
+        raise CompactContractError("invalid_compact_metadata")
+    result: dict = {}
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {"n", "t", "v"}:
+            raise CompactContractError("invalid_compact_metadata")
+        name = _valid_name(item["n"])
+        code, raw = item["t"], item["v"]
+        if code not in {"s", "i", "f", "b"} or not isinstance(raw, str) or len(raw) > 300:
+            raise CompactContractError("invalid_compact_metadata")
+        try:
+            value = (raw if code == "s" else int(raw) if code == "i"
+                     else float(raw) if code == "f" else
+                     {"true": True, "false": False}[raw.lower()])
+        except (ValueError, KeyError, OverflowError):
+            raise CompactContractError("invalid_compact_metadata") from None
+        if name in result and result[name] != value:
+            raise CompactContractError("duplicate_compact_metadata")
+        result[name] = value
+    return result
+
+
+def _instance_schema(fields: object, data_type: str) -> dict:
+    if not isinstance(fields, list) or len(fields) > MAX_INSTANCE_FIELDS:
+        raise CompactContractError("invalid_compact_instance_schema")
+    schema: dict = {}
+    for field in fields:
+        if not isinstance(field, dict) or set(field) != {"n", "t", "r"}:
+            raise CompactContractError("invalid_compact_instance_schema")
+        name = _valid_name(field["n"])
+        if field["t"] not in TYPE_CODES or type(field["r"]) is not bool:
+            raise CompactContractError("invalid_compact_instance_schema")
+        if name in schema:
+            raise CompactContractError("duplicate_compact_instance_field")
+        schema[name] = {"type": TYPE_CODES[field["t"]], "required": field["r"],
+                        "nullable": True}
+    # Every property definition describes an instance-facing value slot.
+    # It is nullable before the world-specific initialization rules run.
+    if "current_value" in schema and schema["current_value"]["type"] != data_type:
+        raise CompactContractError("invalid_current_value_type")
+    schema.setdefault("current_value", {"type": data_type, "required": True, "nullable": True})
+    schema["current_value"]["required"] = True
+    return schema
+
+
 def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
                     *, stats: dict | None = None) -> list[dict]:
-    """Convert V3 nested schema into standard review proposals.
-
-    Malformed evidence or types fail closed. Obvious named examples are
-    suppressed with explicit counters; unresolved cross-type relations are
-    also counted rather than bringing down an otherwise valid window.
-    No model-generated instances are persisted.
-    """
+    """Validate V4 nested semantic definitions and rehydrate evidence."""
     if not isinstance(data, dict) or set(data) != {"e", "overflow"}:
         raise CompactContractError("invalid_compact_envelope")
     if type(data["overflow"]) is not bool:
@@ -306,66 +346,94 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
     stats.setdefault("unresolved_relationships", 0)
     names: dict[str, str] = {}
     source_entities = []
+    suppressed = {_normalized_entity_name(x) for x in KNOWN_INSTANCE_EXAMPLES}
     for item in entities:
-        if not isinstance(item, dict) or set(item) != {"n", "b", "p", "r"}:
+        if not isinstance(item, dict) or set(item) != {"n", "d", "b", "p", "r"}:
             raise CompactContractError("invalid_compact_entity")
         name = _valid_name(item["n"])
-        if (not isinstance(item["p"], list) or len(item["p"]) > MAX_PROPERTIES_PER_TYPE
+        if (not isinstance(item["d"], str) or len(item["d"]) > 300 or
+            not isinstance(item["p"], list) or len(item["p"]) > MAX_PROPERTIES_PER_TYPE
             or not isinstance(item["r"], list) or len(item["r"]) > MAX_RELATIONSHIPS_PER_TYPE):
             raise CompactContractError("invalid_compact_entity")
-        key = _normalized_entity_name(name)
-        # Duplicated type labels are recoverable: consolidate definitions
-        # and their evidence deterministically, rather than losing a whole
-        # paid window because the model repeated a class name.
-        # Validate evidence even for suppressed obvious instances, so the
-        # generator cannot return pointers that never existed in the input.
         support = _support(item["b"], lookup, base)
-        if key in {_normalized_entity_name(example) for example in KNOWN_INSTANCE_EXAMPLES}:
+        key = _normalized_entity_name(name)
+        if key in suppressed:
             stats["suppressed_instances"] += 1
             continue
         canonical = names.setdefault(key, name)
         source_entities.append((item, canonical, support))
     results = []
     for item, name, support in source_entities:
-        results.append({"kind": "entity", "name": name, "description": "",
+        results.append({"kind": "entity", "name": name, "description": item["d"].strip(),
                         "evidence": support})
         for prop in item["p"]:
-            if not isinstance(prop, dict) or set(prop) != {"n", "t", "b"}:
+            if not isinstance(prop, dict) or set(prop) != {"n", "t", "s", "d", "m", "i", "b"}:
                 raise CompactContractError("invalid_compact_property")
             code = prop["t"]
             if not isinstance(code, str) or code not in TYPE_CODES:
                 raise CompactContractError("invalid_compact_type")
-            results.append({"kind": "property", "entity": name,
-                            "name": _valid_name(prop["n"]), "data_type": TYPE_CODES[code],
-                            "description": "", "evidence": _support(prop["b"], lookup, base)})
+            if (not isinstance(prop["s"], str) or len(prop["s"]) > MAX_NAME
+                or not isinstance(prop["d"], str) or len(prop["d"]) > 300):
+                raise CompactContractError("invalid_compact_property")
+            data_type = TYPE_CODES[code]
+            results.append({
+                "kind": "property", "entity": name, "name": _valid_name(prop["n"]),
+                "data_type": data_type, "semantic_type": prop["s"].strip() or None,
+                "description": prop["d"].strip(),
+                "definition": _metadata(prop["m"]),
+                "value_schema": _instance_schema(prop["i"], data_type),
+                "evidence": _support(prop["b"], lookup, base),
+            })
         for relation in item["r"]:
-            if not isinstance(relation, dict) or set(relation) != {"n", "t", "b"}:
+            if not isinstance(relation, dict) or set(relation) != {"n", "t", "d", "b"}:
                 raise CompactContractError("invalid_compact_relationship")
             target_key = _normalized_entity_name(_valid_name(relation["t"]))
             support = _support(relation["b"], lookup, base)
+            if not isinstance(relation["d"], str) or len(relation["d"]) > 300:
+                raise CompactContractError("invalid_compact_relationship")
             if target_key not in names:
                 stats["unresolved_relationships"] += 1
                 continue
             results.append({"kind": "relationship", "source": name,
                             "target": names[target_key], "name": _valid_name(relation["n"]),
-                            "description": "", "evidence": support})
-    consolidated = {}
+                            "description": relation["d"].strip(), "evidence": support})
+    consolidated: dict = {}
     for proposal in results:
         accumulate(consolidated, proposal)
     stats.update(proposal_counts(consolidated.values()))
     return list(consolidated.values())
 
 
+def _merge_definition(target: dict, source: dict) -> None:
+    """Preserve evidence and surface semantic mismatches for human review."""
+    if not target.get("description") and source.get("description"):
+        target["description"] = source["description"]
+    for key in ("data_type", "semantic_type"):
+        if target.get(key) and source.get(key) and target[key] != source[key]:
+            target["conflict"] = {"reason": "inconsistent_source_" + key,
+                                  "alternatives": sorted({str(target[key]), str(source[key])})}
+        elif not target.get(key) and source.get(key):
+            target[key] = source[key]
+    for key in ("definition", "value_schema"):
+        old, new = target.get(key) or {}, source.get(key) or {}
+        overlap = set(old) & set(new)
+        if any(old[k] != new[k] for k in overlap):
+            target["conflict"] = {"reason": "inconsistent_source_" + key}
+        target[key] = {**new, **old}
+    if target.get("kind") == "property":
+        schema = target.setdefault("value_schema", {})
+        schema.setdefault("current_value", {"type": target["data_type"],
+                                             "required": True, "nullable": True})
+
+
 def accumulate(found: dict, proposal: dict) -> None:
-    """Deterministic de-duplication preserves all distinct provenance evidence."""
+    """Merge exact-name candidates, preserving provenance and detecting conflicts."""
     key = proposal_key(proposal)
     if key not in found:
         found[key] = dict(proposal)
         return
     old = found[key]
-    if old["kind"] == "property" and old["data_type"] != proposal["data_type"]:
-        old["conflict"] = {"reason": "inconsistent_source_property_type",
-                           "alternatives": sorted({old["data_type"], proposal["data_type"]})}
+    _merge_definition(old, proposal)
     evidence = {compact_json(v): v for v in old.get("evidence", [])}
     evidence.update({compact_json(v): v for v in proposal.get("evidence", [])})
     old["evidence"] = list(evidence.values())
@@ -436,7 +504,7 @@ def ambiguous_groups(candidates: list[dict], known: list[dict] | None = None) ->
 def reconciliation_input(candidates: list[dict], indices: list[int],
                          known: list[dict] | None = None) -> str:
     context = [
-        {"k": entry["kind"], "n": entry["name"], "o": entry.get("entity", ""),
+        {"k": entry["kind"], "n": entry["name"], "semantic": entry.get("semantic_type"), "o": entry.get("entity", ""),
          "s": entry.get("source", ""), "t": entry.get("target", "")}
         for entry in (known or [])
         if any(_comparable(candidates[idx], entry) and
@@ -446,6 +514,7 @@ def reconciliation_input(candidates: list[dict], indices: list[int],
     ][:20]
     return compact_json({"c": [
         {"i": idx, "k": candidates[idx]["kind"], "n": candidates[idx]["name"],
+         "semantic": candidates[idx].get("semantic_type"), "description": candidates[idx].get("description", ""),
          "o": candidates[idx].get("entity", ""),
          "s": candidates[idx].get("source", ""),
          "t": candidates[idx].get("target", "")}
@@ -483,14 +552,19 @@ def apply_reconciliation(candidates: list[dict], indices: list[int], operations:
             raise CompactContractError("invalid_reconciliation_merge")
         if not _comparable(candidates[origin], candidates[target]):
             raise CompactContractError("invalid_reconciliation_merge")
-        if candidates[origin]["kind"] == "property" and candidates[origin]["data_type"] != candidates[target]["data_type"]:
-            candidates[target]["conflict"] = {"reason": "inconsistent_source_property_type",
-                                              "alternatives": sorted({candidates[origin]["data_type"],
-                                                                      candidates[target]["data_type"]})}
+        if candidates[origin]["kind"] == "property" and (
+            candidates[origin].get("data_type") != candidates[target].get("data_type") or
+            candidates[origin].get("semantic_type") != candidates[target].get("semantic_type") or
+            any(candidates[origin].get(k, {}).get(field) != candidates[target].get(k, {}).get(field)
+                for k in ("value_schema", "definition")
+                for field in set(candidates[origin].get(k, {})) & set(candidates[target].get(k, {})))
+        ):
+            candidates[target]["conflict"] = {"reason": "incompatible_property_definitions"}
             continue
         evidence = {compact_json(e): e for e in candidates[target].get("evidence", [])}
         evidence.update({compact_json(e): e for e in candidates[origin].get("evidence", [])})
         candidates[target]["evidence"] = list(evidence.values())
+        _merge_definition(candidates[target], candidates[origin])
         candidates[target]["aliases"] = sorted(set(candidates[target].get("aliases", []) +
                                                    [candidates[origin]["name"]]))
         if candidates[origin]["kind"] == "entity":

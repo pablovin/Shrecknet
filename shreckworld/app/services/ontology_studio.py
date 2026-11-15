@@ -321,6 +321,19 @@ def apply_proposals(session: Session, run: OntologyLearnRun, decisions: dict,
         raise HTTPException(422, "Resolve conflicting proposals before accepting them")
     by_name = {e.name.casefold(): e for e in session.scalars(select(OntologyEntity).where(
         OntologyEntity.root_id == owner.id, OntologyEntity.deleted.is_(False)))}
+    # Never silently discard accepted fields or relationships whose entity types were rejected.
+    available_names = set(by_name)
+    available_names.update(p["name"].casefold() for p in run.proposals
+                           if p["kind"] == "entity" and decisions[p["id"]] == "accept")
+    for proposal in run.proposals:
+        if decisions[proposal["id"]] != "accept":
+            continue
+        refs = ([proposal.get("entity", "")] if proposal["kind"] == "property"
+                else [proposal.get("source", ""), proposal.get("target", "")]
+                if proposal["kind"] == "relationship" else [])
+        if any(not isinstance(ref, str) or ref.casefold() not in available_names for ref in refs):
+            raise HTTPException(422, "Accepted proposal references a missing or rejected entity")
+
     # Entity types first: source order must never prevent property/edge creation.
     ordered = sorted(run.proposals, key=lambda p: {"entity": 0, "property": 1, "relationship": 2}[p["kind"]])
     for p in ordered:

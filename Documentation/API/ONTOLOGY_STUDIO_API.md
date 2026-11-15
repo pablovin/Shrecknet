@@ -48,6 +48,7 @@ Neo4j mutations are performed by Learn Ontology.
 | POST | `/runs/{id}/review` | Explicitly accept/reject every proposal |
 | GET | `/ontology` | World-local definition graph |
 | GET | `/revisions` | Historical graph snapshots |
+| GET | `/entities/{entity_id}/instance-template` | Preview world-scoped instance value schema |
 | POST/PATCH/DELETE | `/entities[/id]` | Entity CRUD |
 | POST | `/entities/{id}/properties` | Add typed property |
 | PATCH/DELETE | `/properties/{id}` | Property edits |
@@ -72,7 +73,7 @@ IDs are UUIDs, not display names.
 chapters with indexed text in that source's active Book Map. The ShreckOS
 chapter picker defaults to all chapters and can submit a subset. `/sources`
 returns each source's chapter `id`, `title`, and `sent` flag. A chapter is shown as sent only after every window under the active
-`ontology-schema-v3` contract completed successfully in the same run, for the
+`ontology-schema-v4` contract completed successfully in the same run, for the
 active document digest. Legacy V2 sends do not count as V3 extraction, and
 changing the document digest marks its chapters unsent. Window checkpoints are
 stored in the additive ShreckWorld table.
@@ -83,25 +84,65 @@ The task reads Bookmap V3/V4 and persisted blocks without re-indexing.
 Combined entity/schema discovery and a separate reconciliation model produce evidence-backed proposals. Source blocks are visited once, grouped by Bookmap chapter, with subsection headings retained. Long chapters are divided into bounded, non-overlapping ~3,000-token target windows. Text blocks beyond one window are fragmented without truncation.
 The task never writes approved entity definitions.
 
-### V3 RPG schema-only extraction (no automatic retries)
+### V4 world-local semantic ontology extraction
 
-**Scope:** The first pass discovers reusable entity TYPES, scalar PROPERTIES, and directed RELATIONSHIPS—not individual catalog entries, characters, skills, occupations, spells, creatures, scenes, or game algorithms. The RPG rulebook's terminology determines the schema.
+This additive contract supersedes V3. **Every ontology belongs to its Shrecknet
+world** (`ontology_id`). The extractor may use cross-game examples to learn
+classification patterns but must never import concepts or semantics from a
+different world. The approved SQLite graph remains the source of truth.
 
-Discovery returns one compact *nested* response per Bookmap window:
+The first pass discovers reusable entity types, their **named properties**
+(including named skills and characteristics), semantic types, property metadata
+and instance value-field schemas. It does not create a character, spell, item,
+occupation catalog record, or executable game rule. Any entity type — not only
+characters — can own a stateful property.
+
+Example compact discovery output (fragment):
 
 ```json
-{"e":[{"n":"Investigator","b":[0],"p":[{"n":"age","t":"i","b":[1]}],"r":[{"n":"HAS_SKILL","t":"Skill","b":[2]}]},{"n":"Skill","b":[2],"p":[],"r":[]}],"overflow":false}
+{
+  "e": [{
+    "n": "Investigator", "d": "A playable character", "b": [0],
+    "p": [{
+      "n": "spot_hidden", "t": "i", "s": "Skill", "d": "Noticing hidden details",
+      "m": [{"n": "base_chance", "t": "i", "v": "25"}],
+      "i": [
+        {"n": "current_value", "t": "i", "r": true},
+        {"n": "improvement_mark", "t": "b", "r": false}
+      ],
+      "b": [1]
+    }], "r": []
+  }], "overflow": false
+}
 ```
 
-Properties have **implicit ownership**, removing the fragile V2 numeric owner indexes. Directed relationships reference target entity type *names* rather than numeric entity indexes. Unresolved targets are omitted and explicitly counted, never attached to an arbitrary type. All numeric evidence indexes resolve to the original pinned source/document/chapter/section/block references.
+- `s` is a source-grounded, **world-local** semantic type (Skill,
+  Characteristic, Passion, Rune, Resource, etc.). The set is open, not global.
+- `m` provides evidence-backed, typed *definition* metadata: base chance,
+  associated characteristic, bounded ranges, and specialized descriptions.
+- `i` defines fields each implementing instance receives. All properties
+  receive a required but initially nullable `current_value` slot with a type
+  matching the property. Extra state fields are discovered as needed.
+- `d` provides source-grounded concise descriptions. Provenance is
+  reconstituted from numbered Bookmap blocks and remains available for review.
+- Character-specific scores belong to instances, not to the shared definition.
+  Derived statistics and formulas are deferred to the rules-extraction phase.
 
-The discovery prompt includes short classification contrasts from **Call of Cthulhu, RuneQuest, Pendragon and D&D**. Investigator, Skill, Occupation, Cult, Knight and Class are potential reusable TYPES; Harvey Walters, Spot Hidden, Orlanth, Sir Gawain, Fireball and individual occupations/spells are example INSTANCES or catalog entries. These are guidance only: do not emit them unless evidenced in the selected RPG source. A narrow deterministic safety net suppresses explicitly enumerated named example instances, but this is not a universal semantic classifier; human review remains necessary.
+The V4 response is bounded and validated strictly. Missing evidence, malformed
+metadata, mismatched `current_value` types and overflow fail the window. The
+worker reuses valid completed V4 windows only when the model, input, prompt,
+schema and source digest are unchanged; old V3 windows cannot satisfy it.
+The workflow uses one combined discovery/schema model call per input window,
+followed by semantic reconciliation of plausible duplicates. Alias merges
+preserve evidence; incompatible types or definitions require explicit human
+review. Approved definitions are never silently retyped.
 
-Text is grouped by Bookmap chapter and bounded by conservative ~3,000-token input windows. The output ceiling stays at 3,500 tokens. The `ontology-schema-v3` contract version changes the checkpoint fingerprint, so old V2 outputs are **not** reused. Each successful window is stored in `shreckworld_ontology_learn_windows` with full provenance and remains available on a later manual run if the source revision, model and contract match.
-
-Failed/truncated, invalid JSON, invalid evidence, and overflowed responses are rejected. **There are no automatic retries or JSON repairs.** The job stops at the failed window and keeps completed window checkpoints. Per-window counts split entity types/properties/relationships; run progress also counts excluded known examples and unresolved relationships.
-
-Reconciliation stays operation-only (`merge`, `rename`, `review`) with deterministic evidence merging and only targets plausible duplicate definitions. No descriptions are generated in first-pass discovery; the existing Ontology Studio review and editor remain the canonical place for human descriptions and approvals.
+Existing property CRUD accepts `semantic_type`, `definition` and
+`value_schema`; these fields also appear in the graph and proposal review
+APIs. Legacy property rows migrate additively, with no old values discarded.
+`GET /entities/{entity_id}/instance-template` previews the fields of an
+instance including inherited properties (all values begin as `null`).
+It does not yet persist real gameplay instances or execute learned rules.
 
 
 Runs advance through `queued`, `running`, `awaiting_review`, and

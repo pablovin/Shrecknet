@@ -12,6 +12,71 @@ TYPES = {"text", "integer", "number", "boolean", "date", "datetime", "json", "im
 CARDINALITY = {"one", "many"}
 
 
+def validate_property_spec(data: dict) -> None:
+    """Validate world-local semantic metadata and instance value fields."""
+    from fastapi import HTTPException
+    data_type = data.get("data_type")
+    if data_type not in TYPES:
+        raise HTTPException(422, "Invalid property data_type")
+    semantic = data.get("semantic_type")
+    if semantic is not None and (not isinstance(semantic, str) or len(semantic) > 100):
+        raise HTTPException(422, "Invalid semantic_type")
+    for field in ("definition", "value_schema"):
+        if not isinstance(data.get(field) or {}, dict):
+            raise HTTPException(422, "Invalid " + field)
+    spec = data.get("value_schema") or {}
+    current = spec.get("current_value")
+    if current is None:
+        return  # Legacy definition; new stateful definitions add the slot below.
+    if (not isinstance(current, dict) or current.get("type") != data_type or
+        current.get("required") is not True):
+        raise HTTPException(422, "current_value must be required and match property data_type")
+    allowed = TYPES | {"array", "object", "reference", "enum"}
+    for field, item in spec.items():
+        if (not isinstance(field, str) or not field or not isinstance(item, dict)
+            or item.get("type") not in allowed or
+            not isinstance(item.get("required", False), bool)
+            or not isinstance(item.get("nullable", True), bool)):
+            raise HTTPException(422, "Invalid instance field schema")
+
+
+def normalized_property_data(data: dict) -> dict:
+    """Default a value slot for all new properties while keeping legacy reads safe."""
+    result = dict(data)
+    validate_property_spec(result)
+    spec = dict(result.get("value_schema") or {})
+    spec.setdefault("current_value", {"type": result["data_type"],
+                                       "required": True, "nullable": True})
+    result["value_schema"] = spec
+    result.setdefault("definition", {})
+    return result
+
+
+def instantiate_entity_properties(graph_data: dict, entity_id: str) -> dict:
+    """Materialize the world-defined property fields, without writing a graph instance."""
+    entities = {e["id"]: e for e in graph_data["entities"]}
+    if entity_id not in entities:
+        raise HTTPException(404, "Entity type not found")
+    parents = []
+    seen = set()
+    current = entity_id
+    while current:
+        if current in seen or current not in entities:
+            raise HTTPException(422, "Invalid entity inheritance")
+        seen.add(current)
+        parents.insert(0, current)
+        current = entities[current].get("parent_id")
+    fields = {}
+    for p in graph_data["properties"]:
+        if p["entity_id"] not in parents:
+            continue
+        spec = p.get("value_schema") or {"current_value": {
+            "type": p["data_type"], "required": True, "nullable": True}}
+        fields[p["name"]] = {name: None for name in spec}
+    return fields
+
+
+
 def delete_run(db: Session, run: OntologyLearnRun) -> dict[str, int]:
     """Delete a terminal run and invalidate every reusable window it established."""
     from app.models.ontology_studio import OntologyLearnChapter
@@ -118,7 +183,11 @@ def restore_review(db: Session, run: OntologyLearnRun, author: str) -> OntologyL
             id=prop["id"], entity_id=prop["entity_id"], name=prop["name"],
             data_type=prop["data_type"], required=prop.get("required", False),
             cardinality=prop.get("cardinality", "one"), description=prop.get("description", ""),
-            constraints=prop.get("constraints", {}), evidence=prop.get("evidence", []),
+            constraints=prop.get("constraints", {}),
+            semantic_type=prop.get("semantic_type"),
+            definition=prop.get("definition", {}),
+            value_schema=prop.get("value_schema", {}),
+            evidence=prop.get("evidence", []),
         ))
     for relation in previous.get("relationships", []):
         db.add(OntologyRelationship(
@@ -199,7 +268,9 @@ def graph(session: Session, ontology_id: int) -> dict:
                       "parent_id": e.parent_id, "evidence": e.evidence, "review_status": e.review_status} for e in entities],
         "properties": [{"id": p.id, "entity_id": p.entity_id, "name": p.name, "data_type": p.data_type,
                         "required": p.required, "cardinality": p.cardinality, "description": p.description,
-                        "constraints": p.constraints, "evidence": p.evidence} for p in props],
+                        "constraints": p.constraints, "semantic_type": p.semantic_type,
+                        "definition": p.definition or {}, "value_schema": p.value_schema or {},
+                        "evidence": p.evidence} for p in props],
         "relationships": [{"id": r.id, "source_id": r.source_id, "target_id": r.target_id,
                            "name": r.name, "description": r.description, "cardinality": r.cardinality,
                            "inverse_name": r.inverse_name, "evidence": r.evidence} for r in rels
@@ -289,7 +360,7 @@ def create_property(session: Session, ontology_id: int, entity_id: str, data: di
     resolve_entity(session, owner, entity_id)
     if data["data_type"] not in TYPES or data.get("cardinality", "one") not in CARDINALITY:
         raise HTTPException(422, "Invalid property type or cardinality")
-    p = OntologyProperty(entity_id=entity_id, **data)
+    p = OntologyProperty(entity_id=entity_id, **normalized_property_data(data))
     session.add(p)
     snapshot(session, owner, author)
     session.commit()
@@ -303,6 +374,9 @@ def update_property(session: Session, ontology_id: int, property_id: str, data: 
     if p is None:
         raise HTTPException(404, "Property not found")
     resolve_entity(session, owner, p.entity_id)
+    updated = {**{"data_type": p.data_type, "semantic_type": p.semantic_type,
+                  "definition": p.definition, "value_schema": p.value_schema}, **data}
+    validate_property_spec(updated)
     for k,v in data.items():
         setattr(p,k,v)
     if p.data_type not in TYPES or p.cardinality not in CARDINALITY:
@@ -417,8 +491,15 @@ def apply_proposals(session: Session, run: OntologyLearnRun, decisions: dict,
                 if existing is not None and existing.data_type != p["data_type"]:
                     raise HTTPException(409, "Property type conflict; edit the existing property explicitly")
                 if existing is None:
-                    session.add(OntologyProperty(entity_id=e.id, name=p["name"], data_type=p["data_type"],
-                        description=p.get("description", ""), evidence=p.get("evidence", [])))
+                    values = normalized_property_data({
+                        "name": p["name"], "data_type": p["data_type"],
+                        "description": p.get("description", ""),
+                        "semantic_type": p.get("semantic_type"),
+                        "definition": p.get("definition") or {},
+                        "value_schema": p.get("value_schema") or {},
+                        "evidence": p.get("evidence", []),
+                    })
+                    session.add(OntologyProperty(entity_id=e.id, **values))
         elif p["kind"] == "relationship":
             source, target = by_name.get(p["source"].casefold()), by_name.get(p["target"].casefold())
             if source and target:

@@ -51,6 +51,9 @@ class PropertyCreate(Versioned):
     required: bool = False
     cardinality: str = "one"
     constraints: dict = Field(default_factory=dict)
+    semantic_type: str | None = None
+    definition: dict = Field(default_factory=dict)
+    value_schema: dict = Field(default_factory=dict)
 
 class PropertyPatch(Versioned):
     name: str | None = None
@@ -59,6 +62,9 @@ class PropertyPatch(Versioned):
     required: bool | None = None
     cardinality: str | None = None
     constraints: dict | None = None
+    semantic_type: str | None = None
+    definition: dict | None = None
+    value_schema: dict | None = None
 
 class RelationshipCreate(Versioned):
     name: str = Field(min_length=1, max_length=200)
@@ -89,6 +95,9 @@ class ProposalEdit(Strict):
     source: str | None = None
     target: str | None = None
     data_type: str | None = None
+    semantic_type: str | None = None
+    definition: dict | None = None
+    value_schema: dict | None = None
 
 class ProposalCreate(Strict):
     expected_proposal_revision: int = Field(ge=0)
@@ -99,6 +108,9 @@ class ProposalCreate(Strict):
     source: str | None = None
     target: str | None = None
     data_type: str | None = None
+    semantic_type: str | None = None
+    definition: dict = Field(default_factory=dict)
+    value_schema: dict = Field(default_factory=dict)
 
 class ProposalDelete(Strict):
     expected_proposal_revision: int = Field(ge=0)
@@ -123,6 +135,8 @@ def _validate_proposal_shape(candidate: dict) -> None:
         raise HTTPException(422, "Proposal references must not be blank")
     if kind == "property" and candidate["data_type"] not in service.TYPES:
         raise HTTPException(422, "Invalid property type")
+    if kind == "property":
+        service.validate_property_spec(candidate)
     incompatible = ({"source", "target"} if kind != "relationship" else set())
     if kind != "property":
         incompatible |= {"entity", "data_type"}
@@ -489,12 +503,13 @@ def edit_proposal(ontology_id: int, run_id: str, proposal_id: str, payload: Prop
     changes = payload.model_dump(exclude={"expected_proposal_revision"}, exclude_unset=True)
     allowed = {"name", "description"}
     if target["kind"] == "property":
-        allowed |= {"entity", "data_type"}
+        allowed |= {"entity", "data_type", "semantic_type", "definition", "value_schema"}
     if target["kind"] == "relationship":
         allowed |= {"source", "target"}
     if set(changes) - allowed:
         raise HTTPException(422, "Fields cannot be edited for this proposal type")
-    if any(not isinstance(v, str) or not v.strip() for k,v in changes.items() if k != "description"):
+    if any(not isinstance(v, str) or not v.strip() for k,v in changes.items()
+           if k in {"name", "entity", "source", "target", "data_type"}):
         raise HTTPException(422, "Proposal references must not be blank")
     if "data_type" in changes and changes["data_type"] not in service.TYPES:
         raise HTTPException(422, "Invalid property type")
@@ -511,6 +526,8 @@ def edit_proposal(ontology_id: int, run_id: str, proposal_id: str, payload: Prop
                 for endpoint in ("source", "target"):
                     if proposal.get(endpoint, "").casefold() == old_name.casefold():
                         proposal[endpoint] = new_name
+    if target["kind"] == "property":
+        service.validate_property_spec({**target, **changes})
     target.update(changes)
     target.pop("conflict", None)
     target["edited_by_human"] = True

@@ -39,6 +39,7 @@ Neo4j mutations are performed by Learn Ontology.
 | POST | `/learn` | Queue background discovery for selected chapters and pin current documents |
 | GET | `/runs` | Most recent ontology discovery runs |
 | GET | `/runs/{id}` | Status, stage, detailed progress, activity log, proposals and diagnostics |
+| DELETE | `/runs/{id}` | Delete a terminal run and its proposal history; clear chapter checkpoints for a full re-extraction |
 | GET | `/runs/{id}/windows` | Detailed extraction-window checkpoints |
 | POST | `/runs/{id}/recover-proposals` | Restore an empty review from saved extraction-window candidates |
 | POST | `/runs/{id}/discard-proposals` | Undo the latest approved run revision and reopen its proposals |
@@ -140,6 +141,8 @@ accept/reject decisions, and records a new immutable revision for the restore.
 The operation is rejected with 409 if the ontology has changed since approval,
 so later edits cannot be silently removed. The run records `applied_revision`;
 existing databases receive this nullable integer column additively at startup.
+
+`DELETE /runs/{id}` removes a terminal run, its proposals, and source-learning history tied to that run. It also removes all extraction-window checkpoints for the run’s source, document digest, and chapter, plus same-source checkpoints with matching content fingerprints that could otherwise satisfy cache lookup. This clears the chapter `Sent before` state and guarantees the next run sends those matching windows to the discovery model again. A run is not deletable while it is queued, running, or cancellation-requested; deletion also returns 409 if another active run includes any of its chapters. The endpoint does not undo schema changes already applied by a successful review; use `POST /runs/{id}/discard-proposals` before deletion when those changes should be reverted. The response reports `deleted_runs`, `cleared_checkpoints`, and `cleared_chapters`.
 
  The user
 must review all proposals before successful adoption.

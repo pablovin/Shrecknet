@@ -5,11 +5,12 @@ from pathlib import Path
 from uuid import uuid4
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from app.db.base import Base
 from app.models.ontology_studio import (WorldOntology, OntologyEntity, OntologyProperty,
-    OntologyRelationship, OntologyLearnRun, OntologyLearnSource)
+    OntologyRelationship, OntologyLearnRun, OntologyLearnSource, OntologyLearnWindow,
+    OntologyLearnChapter)
 from app.services import ontology_studio as studio
 
 
@@ -97,6 +98,51 @@ def test_incomplete_review_cannot_mutate(db):
     assert error.value.status_code == 422
     assert studio.graph(db, 9)["entities"] == []
 
+
+def test_deleting_run_clears_its_chapter_checkpoints_and_reuse_cache(db):
+    run = OntologyLearnRun(ontology_id=11, owner_id="admin", idempotency_key="delete-me",
+        input_sources=[{"source_id": "source", "document_id": "doc", "content_digest": "a" * 64,
+                        "chapter_ids": ["chapter"]}], base_revision=0, model_targets={},
+        status="awaiting_review", proposals=[{"id": "proposal", "kind": "entity", "name": "Skill"}])
+    other = OntologyLearnRun(ontology_id=11, owner_id="admin", idempotency_key="keep-me",
+        input_sources=[], base_revision=0, model_targets={}, status="failed", proposals=[])
+    other_chapter_run = OntologyLearnRun(ontology_id=11, owner_id="admin", idempotency_key="same-content",
+        input_sources=[], base_revision=0, model_targets={}, status="failed", proposals=[])
+    db.add_all([run, other, other_chapter_run])
+    db.flush()
+    for owner_run in (run, other):
+        db.add(OntologyLearnWindow(run_id=owner_run.id, ontology_id=11, source_id="source",
+            document_id="doc", content_digest="a" * 64, chapter_id="chapter",
+            chapter_title="Chapter", window_index=1, fingerprint="f" * 64,
+            contract_version="ontology-schema-v3", status="completed", proposals=[]))
+    db.add(OntologyLearnWindow(run_id=other_chapter_run.id, ontology_id=11, source_id="source",
+        document_id="doc", content_digest="a" * 64, chapter_id="duplicate-content-chapter",
+        chapter_title="Duplicate content", window_index=1, fingerprint="f" * 64,
+        contract_version="ontology-schema-v3", status="completed", proposals=[]))
+    db.add(OntologyLearnChapter(ontology_id=11, source_id="source", document_id="doc",
+        content_digest="a" * 64, chapter_id="chapter", chapter_title="Chapter"))
+    db.commit()
+
+    result = studio.delete_run(db, run)
+
+    assert result == {"deleted_runs": 1, "cleared_checkpoints": 3, "cleared_chapters": 1}
+    assert db.get(OntologyLearnRun, run.id) is None
+    assert list(db.scalars(select(OntologyLearnWindow).where(
+        OntologyLearnWindow.ontology_id == 11))) == []
+    assert list(db.scalars(select(OntologyLearnChapter).where(
+        OntologyLearnChapter.ontology_id == 11))) == []
+    assert db.get(OntologyLearnRun, other.id) is not None
+    assert db.get(OntologyLearnRun, other_chapter_run.id) is not None
+
+
+def test_active_run_cannot_be_deleted(db):
+    run = OntologyLearnRun(ontology_id=12, owner_id="admin", idempotency_key="active",
+        input_sources=[], base_revision=0, model_targets={}, status="running", proposals=[])
+    db.add(run)
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        studio.delete_run(db, run)
+    assert error.value.status_code == 409
 
 def test_human_draft_proposals_are_revisioned_and_removable(db, monkeypatch):
     # API router package initializes the document pipeline, which is optional in focused CI.

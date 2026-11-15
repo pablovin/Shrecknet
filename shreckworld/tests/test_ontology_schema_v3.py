@@ -127,9 +127,8 @@ def test_schema_only_filters_obvious_named_instances_and_dependent_fields():
     stats = {}
     _, lookup = model_window(sample_batch(), "Call of Cthulhu")
     result = parse_discovery(input_data, lookup, supported(), stats=stats)
-    assert [row["name"] for row in result if row["kind"] == "entity"] == ["Investigator", "Spot Hidden"]
-    assert stats["suppressed_instances"] == 2
-    assert any(p["name"] == "Spot Hidden" and p["kind"] == "entity" for p in result)
+    assert [row["name"] for row in result] == ["Investigator"]
+    assert stats["suppressed_instances"] == 3
     assert stats["unresolved_relationships"] == 1
 
 

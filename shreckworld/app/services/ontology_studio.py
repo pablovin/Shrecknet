@@ -2,7 +2,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 from app.models.ontology_studio import (WorldOntology, OntologyEntity, OntologyProperty,
     OntologyRelationship, OntologyRevision, OntologyLearnRun, OntologyLearnSource,
@@ -10,6 +10,66 @@ from app.models.ontology_studio import (WorldOntology, OntologyEntity, OntologyP
 
 TYPES = {"text", "integer", "number", "boolean", "date", "datetime", "json", "image", "url"}
 CARDINALITY = {"one", "many"}
+
+
+def delete_run(db: Session, run: OntologyLearnRun) -> dict[str, int]:
+    """Delete a terminal run and invalidate every reusable window it established."""
+    from app.models.ontology_studio import OntologyLearnChapter
+
+    if run.status in {"queued", "running", "cancel_requested"}:
+        raise HTTPException(409, "Active runs cannot be deleted")
+
+    windows = list(db.scalars(select(OntologyLearnWindow).where(
+        OntologyLearnWindow.run_id == run.id,
+        OntologyLearnWindow.ontology_id == run.ontology_id,
+    )))
+    chapter_keys = {
+        (row.source_id, row.document_id, row.content_digest, row.chapter_id)
+        for row in windows
+    }
+
+    active_runs = list(db.scalars(select(OntologyLearnRun).where(
+        OntologyLearnRun.ontology_id == run.ontology_id,
+        OntologyLearnRun.id != run.id,
+        OntologyLearnRun.status.in_({"queued", "running", "cancel_requested"}),
+    )))
+    for source_id, _document_id, digest, chapter_id in chapter_keys:
+        for active in active_runs:
+            for source in active.input_sources or []:
+                if source.get("source_id") != source_id or source.get("content_digest") != digest:
+                    continue
+                selected = source.get("chapter_ids")
+                if selected is None or chapter_id in selected:
+                    raise HTTPException(409, "Another active run is processing one of this run's chapters")
+
+    # Delete every checkpoint for these chapters and every matching fingerprint
+    # copy, since cache lookup is content-based and can cross chapter boundaries.
+    removed_checkpoints = 0
+    for source_id, _document_id, digest, chapter_id in chapter_keys:
+        fingerprints = {row.fingerprint for row in windows
+                        if row.source_id == source_id and row.content_digest == digest
+                        and row.chapter_id == chapter_id}
+        removed_checkpoints += db.query(OntologyLearnWindow).filter(
+            OntologyLearnWindow.ontology_id == run.ontology_id,
+            OntologyLearnWindow.source_id == source_id,
+            OntologyLearnWindow.content_digest == digest,
+            or_(OntologyLearnWindow.chapter_id == chapter_id,
+                OntologyLearnWindow.fingerprint.in_(fingerprints)),
+        ).delete(synchronize_session=False)
+
+    for source_id, _document_id, digest, chapter_id in chapter_keys:
+        db.query(OntologyLearnChapter).filter(
+            OntologyLearnChapter.ontology_id == run.ontology_id,
+            OntologyLearnChapter.source_id == source_id,
+            OntologyLearnChapter.content_digest == digest,
+            OntologyLearnChapter.chapter_id == chapter_id,
+        ).delete(synchronize_session=False)
+    db.query(OntologyLearnSource).filter(OntologyLearnSource.run_id == run.id).delete(
+        synchronize_session=False)
+    db.delete(run)
+    db.commit()
+    return {"deleted_runs": 1, "cleared_checkpoints": removed_checkpoints,
+            "cleared_chapters": len(chapter_keys)}
 
 
 def restore_review(db: Session, run: OntologyLearnRun, author: str) -> OntologyLearnRun:

@@ -315,6 +315,17 @@ def get_run(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
     return payload
 
 
+@router.delete("/runs/{run_id}")
+def delete_run(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
+               _: ShrecknetPrincipal = Depends(require_world_manager),
+               db: Session = Depends(get_db)):
+    auth(ontology_id, token)
+    run = db.get(OntologyLearnRun, run_id)
+    if run is None or run.ontology_id != ontology_id:
+        raise HTTPException(404, "Run not found")
+    return service.delete_run(db, run)
+
+
 @router.post("/runs/{run_id}/recover-proposals")
 def recover_proposals(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
                    user: ShrecknetPrincipal = Depends(require_world_manager),

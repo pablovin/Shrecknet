@@ -128,6 +128,35 @@ Example compact discovery output (fragment):
 - Character-specific scores belong to instances, not to the shared definition.
   Derived statistics and formulas are deferred to the rules-extraction phase.
 
+### Single-call overflow preflight and adaptive splitting
+
+Ontology extraction remains **one pass**: each normal Bookmap window makes
+one discovery LLM request. Within that same request the model first assesses
+whether the entire source excerpt can be represented in the bounded schema.
+It either emits the complete proposal envelope with `overflow:false`, or
+short-circuits to exactly `{"e":[],"overflow":true}`. This instruction
+avoids drafting an expensive incomplete response, though actual model behavior
+and token usage cannot be strictly guaranteed.
+
+Only an explicit `overflow:true` triggers automatic subdivision. The worker
+splits on Bookmap subsection boundaries, then block boundaries, then text
+whitespace inside a single block. Child source text is nonoverlapping,
+collectively exhaustive, and retains original block IDs and split character
+spans. Each child uses the **same** V4 discovery schema and independent
+checkpoint, with a maximum of five levels of subdivision and a minimum source
+fragment size. A pathological window that still overflows fails with a
+specific `compact_overflow_split_limit` or `compact_overflow_unsplittable`
+diagnostic, rather than silently omitting concepts.
+
+A successful parent becomes a completed checkpoint containing the merged child
+proposals, and children are also checkpointed individually. This permits
+re-use of completed children after partial failures and of whole completed
+parents on later runs. The worker preserves valid V4 checkpoints generated
+before the enhanced capacity instruction. Only overflowing windows incur
+additional LLM calls; non-overflow parse/validation errors still fail closed
+without automatic model retries. The job activity log exposes the number of
+split children and adaptive split operations.
+
 The V4 response is bounded and validated strictly. Missing evidence, malformed
 metadata, mismatched `current_value` types and overflow fail the window. The
 worker reuses valid completed V4 windows only when the model, input, prompt,

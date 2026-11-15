@@ -110,7 +110,7 @@ def test_adaptive_overflow_short_circuits_and_merges_children(world, monkeypatch
             data = {"e": [], "overflow": True}
         else:
             props = [{
-                "n": "skill_" + str(i) + "_" + str(len(fragments)),
+                "n": "skill_" + frag["x"].split()[0].lower() + "_" + str(i),
                 "t": "i", "s": "Skill", "d": "Rulebook skill", "m": [], "i": [],
                 "b": [i],
             } for i, _ in enumerate(fragments)]

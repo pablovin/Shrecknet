@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from difflib import SequenceMatcher
 
@@ -284,7 +285,13 @@ def _normalized_entity_name(name: str) -> str:
     return _canonical(name)
 
 
-def _metadata(items: object) -> dict:
+def _metadata(items: object, *, warnings: list[dict] | None = None) -> dict:
+    """Decode source-grounded metadata without dropping a whole paid window.
+
+    Strictly validate the wire shape, but preserve values that cannot safely
+    match the model's declared primitive type as verbatim text for human review.
+    Do not turn "25%", "1D6+2", or "varies" into guessed numeric values.
+    """
     if not isinstance(items, list) or len(items) > MAX_METADATA_PER_PROPERTY:
         raise CompactContractError("invalid_compact_metadata")
     result: dict = {}
@@ -295,14 +302,42 @@ def _metadata(items: object) -> dict:
         code, raw = item["t"], item["v"]
         if code not in {"s", "i", "f", "b"} or not isinstance(raw, str) or len(raw) > 300:
             raise CompactContractError("invalid_compact_metadata")
+        stripped = raw.strip()
+        unparsed = False
         try:
-            value = (raw if code == "s" else int(raw) if code == "i"
-                     else float(raw) if code == "f" else
-                     {"true": True, "false": False}[raw.lower()])
+            if code == "s":
+                value = raw
+            elif code == "i":
+                value = int(stripped)
+            elif code == "f":
+                value = float(stripped)
+                if not math.isfinite(value):
+                    raise ValueError("nonfinite numeric metadata")
+            else:
+                value = {
+                    "true": True, "false": False,
+                    "yes": True, "no": False,
+                    "1": True, "0": False,
+                }[stripped.casefold()]
         except (ValueError, KeyError, OverflowError):
-            raise CompactContractError("invalid_compact_metadata") from None
-        if name in result and result[name] != value:
-            raise CompactContractError("duplicate_compact_metadata")
+            value = raw  # Keep the complete source/model value; do not guess.
+            unparsed = True
+        if unparsed and warnings is not None:
+            warnings.append({
+                "code": "metadata_value_unparsed",
+                "field": name, "declared_type": TYPE_CODES[code],
+                "raw_value": raw,
+            })
+        if name in result:
+            if result[name] != value and warnings is not None:
+                warnings.append({
+                    "code": "duplicate_metadata_value",
+                    "field": name, "declared_type": TYPE_CODES[code],
+                    "raw_value": raw,
+                })
+            # The first value is retained; conflicting alternatives remain
+            # visible in warnings and must be resolved during human review.
+            continue
         result[name] = value
     return result
 
@@ -346,6 +381,7 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
         stats = {}
     stats.setdefault("suppressed_instances", 0)
     stats.setdefault("unresolved_relationships", 0)
+    stats.setdefault("metadata_warnings", 0)
     names: dict[str, str] = {}
     source_entities = []
     suppressed = {_normalized_entity_name(x) for x in KNOWN_INSTANCE_EXAMPLES}
@@ -378,14 +414,26 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
                 or not isinstance(prop["d"], str) or len(prop["d"]) > 300):
                 raise CompactContractError("invalid_compact_property")
             data_type = TYPE_CODES[code]
-            results.append({
+            metadata_warnings: list[dict] = []
+            definition = _metadata(prop["m"], warnings=metadata_warnings)
+            proposal = {
                 "kind": "property", "entity": name, "name": _valid_name(prop["n"]),
                 "data_type": data_type, "semantic_type": prop["s"].strip() or None,
                 "description": prop["d"].strip(),
-                "definition": _metadata(prop["m"]),
+                "definition": definition,
                 "value_schema": _instance_schema(prop["i"], data_type),
                 "evidence": _support(prop["b"], lookup, base),
-            })
+            }
+            if metadata_warnings:
+                # A questionable value is reviewable, not a job-level failure.
+                # Existing review tooling refuses auto-accepting conflicts.
+                proposal["validation_warnings"] = metadata_warnings
+                proposal["conflict"] = {
+                    "reason": "metadata_requires_review",
+                    "fields": sorted({row["field"] for row in metadata_warnings}),
+                }
+                stats["metadata_warnings"] += len(metadata_warnings)
+            results.append(proposal)
         for relation in item["r"]:
             if not isinstance(relation, dict) or set(relation) != {"n", "t", "d", "b"}:
                 raise CompactContractError("invalid_compact_relationship")
@@ -436,6 +484,17 @@ def accumulate(found: dict, proposal: dict) -> None:
         return
     old = found[key]
     _merge_definition(old, proposal)
+    warnings = {compact_json(v): v for v in old.get("validation_warnings", [])}
+    warnings.update({compact_json(v): v for v in proposal.get("validation_warnings", [])})
+    if warnings:
+        old["validation_warnings"] = list(warnings.values())
+        # Keep review required even when another window contains a valid
+        # primitive value for the same named definition.
+        if not old.get("conflict"):
+            old["conflict"] = {
+                "reason": "metadata_requires_review",
+                "fields": sorted({v["field"] for v in warnings.values()}),
+            }
     evidence = {compact_json(v): v for v in old.get("evidence", [])}
     evidence.update({compact_json(v): v for v in proposal.get("evidence", [])})
     old["evidence"] = list(evidence.values())

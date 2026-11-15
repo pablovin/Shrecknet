@@ -99,6 +99,8 @@ def test_incomplete_review_cannot_mutate(db):
 
 
 def test_human_draft_proposals_are_revisioned_and_removable(db, monkeypatch):
+    # API router package initializes the document pipeline, which is optional in focused CI.
+    pytest.importorskip("fitz")
     from app.api.routers import ontology_studio as router
     monkeypatch.setattr(router, "auth", lambda *_: None)
     run = OntologyLearnRun(ontology_id=15, owner_id="admin", idempotency_key=str(uuid4()),

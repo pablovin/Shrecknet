@@ -500,6 +500,23 @@ def apply_proposals(session: Session, run: OntologyLearnRun, decisions: dict,
                         "evidence": p.get("evidence", []),
                     })
                     session.add(OntologyProperty(entity_id=e.id, **values))
+                else:
+                    # Preserve human-defined values; fill only missing extracted metadata.
+                    if not existing.description and p.get("description"):
+                        existing.description = p["description"]
+                    if not existing.semantic_type and p.get("semantic_type"):
+                        existing.semantic_type = p["semantic_type"]
+                    existing.definition = {**(p.get("definition") or {}),
+                                           **(existing.definition or {})}
+                    existing.value_schema = {**(p.get("value_schema") or {}),
+                                             **(existing.value_schema or {})}
+                    existing.value_schema = normalized_property_data({
+                        "data_type": existing.data_type,
+                        "value_schema": existing.value_schema,
+                    })["value_schema"]
+                    existing.evidence = list(existing.evidence or []) + [
+                        x for x in p.get("evidence", []) if x not in (existing.evidence or [])
+                    ]
         elif p["kind"] == "relationship":
             source, target = by_name.get(p["source"].casefold()), by_name.get(p["target"].casefold())
             if source and target:

@@ -489,6 +489,19 @@ def edit_proposal(ontology_id: int, run_id: str, proposal_id: str, payload: Prop
         raise HTTPException(422, "Proposal references must not be blank")
     if "data_type" in changes and changes["data_type"] not in service.TYPES:
         raise HTTPException(422, "Invalid property type")
+    if target["kind"] == "entity" and "name" in changes and target["name"].casefold() != changes["name"].casefold():
+        old_name, new_name = target["name"], changes["name"]
+        if any(p["kind"] == "entity" and p["id"] != target["id"]
+               and p["name"].casefold() == new_name.casefold() for p in proposals):
+            raise HTTPException(409, "Entity name already proposed")
+        # Renaming a type must not orphan any properties or graph edges in this review.
+        for proposal in proposals:
+            if proposal["kind"] == "property" and proposal.get("entity", "").casefold() == old_name.casefold():
+                proposal["entity"] = new_name
+            elif proposal["kind"] == "relationship":
+                for endpoint in ("source", "target"):
+                    if proposal.get(endpoint, "").casefold() == old_name.casefold():
+                        proposal[endpoint] = new_name
     target.update(changes)
     target.pop("conflict", None)
     target["edited_by_human"] = True

@@ -61,6 +61,17 @@ def create_schema() -> None:
             }.items():
                 if name not in columns:
                     connection.execute(text(f"ALTER TABLE shreckworld_embedding_jobs ADD COLUMN {name} {definition}"))
+        if "shreckworld_ontology_properties" in inspector.get_table_names():
+            columns = {column["name"] for column in inspector.get_columns("shreckworld_ontology_properties")}
+            for name, definition in {
+                "semantic_type": "VARCHAR(100)",
+                "definition": "JSON NOT NULL DEFAULT '{}'",
+                "value_schema": "JSON NOT NULL DEFAULT '{}'",
+            }.items():
+                if name not in columns:
+                    connection.execute(text(
+                        f"ALTER TABLE shreckworld_ontology_properties ADD COLUMN {name} {definition}"
+                    ))
         if "shreckworld_ontology_runs" in inspector.get_table_names():
             columns = {column["name"] for column in inspector.get_columns("shreckworld_ontology_runs")}
             for name, definition in {

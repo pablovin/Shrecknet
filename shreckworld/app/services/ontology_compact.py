@@ -412,7 +412,7 @@ def _merge_definition(target: dict, source: dict) -> None:
         target["description"] = source["description"]
     for key in ("data_type", "semantic_type"):
         if target.get(key) and source.get(key) and target[key] != source[key]:
-            target["conflict"] = {"reason": "inconsistent_source_" + key,
+            target["conflict"] = {"reason": "inconsistent_source_" + ("property_type" if key == "data_type" else key),
                                   "alternatives": sorted({str(target[key]), str(source[key])})}
         elif not target.get(key) and source.get(key):
             target[key] = source[key]
@@ -449,7 +449,9 @@ def _comparable(a: dict, b: dict) -> bool:
     if a["kind"] != b["kind"]:
         return False
     if a["kind"] == "property":
-        return a.get("entity", "").casefold() == b.get("entity", "").casefold()
+        return (a.get("entity", "").casefold() == b.get("entity", "").casefold()
+                and (not a.get("semantic_type") or not b.get("semantic_type")
+                     or a.get("semantic_type", "").casefold() == b.get("semantic_type", "").casefold()))
     if a["kind"] == "relationship":
         return (a.get("source", "").casefold(), a.get("target", "").casefold()) == (
             b.get("source", "").casefold(), b.get("target", "").casefold())
@@ -465,7 +467,14 @@ def ambiguous_groups(candidates: list[dict], known: list[dict] | None = None) ->
             if not _comparable(left, right):
                 continue
             name_a, name_b = _canonical(left["name"]), _canonical(right["name"])
-            if name_a == name_b or (
+            # Group likely aliases for review, but never merge automatically.
+            # base_value / base_percentage / base_chance are common RPG duplicates.
+            same_base_family = (
+                left["kind"] == "property" and
+                left["name"].casefold().startswith("base_") and
+                right["name"].casefold().startswith("base_")
+            )
+            if name_a == name_b or same_base_family or (
                 min(len(name_a), len(name_b)) >= 5 and
                 SequenceMatcher(None, name_a, name_b).ratio() >= .75
             ):

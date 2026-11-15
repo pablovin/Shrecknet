@@ -10,12 +10,40 @@ from app.db.base import Base
 from app.models.ontology_studio import OntologyLearnRun, OntologyLearnWindow
 from app.services.ontology_compact import (
     CONTRACT_VERSION, DISCOVERY_SCHEMA, DISCOVERY_PROMPT, CompactContractError,
-    model_window, cache_fingerprint, parse_discovery, proposal_counts,
+    model_window, cache_fingerprint, parse_discovery as parse_discovery_v4, proposal_counts,
     accumulate, ambiguous_groups, reconciliation_input, apply_reconciliation,
     parse_model_response,
 )
 from app.services.ontology_discovery_batches import MAX_INPUT_TOKENS, build_discovery_batches
 from test_ontology_discovery_batches import make_map, block
+
+
+def _v4_fixture(payload):
+    """Upgrade legacy fixture shortcuts into the full strict V4 wire envelope."""
+    result = dict(payload)
+    if not isinstance(result.get("e"), list):
+        return result
+    result["e"] = []
+    for entity in payload["e"]:
+        row = dict(entity)
+        row.setdefault("d", "")
+        if isinstance(row.get("p"), list):
+            row["p"] = []
+            for prop in entity["p"]:
+                item = dict(prop)
+                item.setdefault("s", "")
+                item.setdefault("d", "")
+                item.setdefault("m", [])
+                item.setdefault("i", [])
+                row["p"].append(item)
+        if isinstance(row.get("r"), list):
+            row["r"] = [{**r, "d": r.get("d", "")} for r in entity["r"]]
+        result["e"].append(row)
+    return result
+
+
+def parse_discovery(data, lookup, base, **kwargs):
+    return parse_discovery_v4(_v4_fixture(data), lookup, base, **kwargs)
 
 
 def sample_batch():
@@ -48,17 +76,18 @@ def example_response():
 
 
 def test_v3_is_nested_schema_only_with_multigame_grounding():
-    assert CONTRACT_VERSION == "ontology-schema-v3"
+    assert CONTRACT_VERSION == "ontology-schema-v4"
     assert set(DISCOVERY_SCHEMA["properties"]) == {"e", "overflow"}
     shape = DISCOVERY_SCHEMA["properties"]["e"]["items"]
-    assert set(shape["properties"]) == {"n", "b", "p", "r"}
+    assert set(shape["properties"]) == {"n", "d", "b", "p", "r"}
     assert "o" not in shape["properties"]["p"]["items"]["properties"]
-    assert set(shape["properties"]["r"]["items"]["properties"]) == {"n", "t", "b"}
+    assert {"s", "d", "m", "i"} <= set(shape["properties"]["p"]["items"]["properties"])
+    assert set(shape["properties"]["r"]["items"]["properties"]) == {"n", "t", "d", "b"}
     for game in ("Call of Cthulhu", "RuneQuest", "Pendragon", "D&D"):
         assert game in DISCOVERY_PROMPT
     for forbidden in ("instances", "catalog", "description", "source"):
         assert forbidden in DISCOVERY_PROMPT.lower()
-    assert "WITHOUT SOURCE EVIDENCE" in DISCOVERY_PROMPT
+    assert "WITHOUT SOURCE EVIDENCE" in DISCOVERY_PROMPT.upper()
     assert "Wizard and Fireball" in DISCOVERY_PROMPT
 
 
@@ -75,6 +104,7 @@ def test_nested_properties_have_implicit_owner_and_named_relationship_targets():
     props = [p for p in proposals if p["kind"] == "property"]
     assert all(p["entity"] == "Investigator" for p in props)
     assert all(p["data_type"] == "integer" for p in props)
+    assert all(p["value_schema"]["current_value"]["required"] for p in props)
     relationship = next(p for p in proposals if p["kind"] == "relationship")
     assert relationship["source"] == "Investigator"
     assert relationship["target"] == "Skill"
@@ -97,8 +127,9 @@ def test_schema_only_filters_obvious_named_instances_and_dependent_fields():
     stats = {}
     _, lookup = model_window(sample_batch(), "Call of Cthulhu")
     result = parse_discovery(input_data, lookup, supported(), stats=stats)
-    assert [row["name"] for row in result] == ["Investigator"]
-    assert stats["suppressed_instances"] == 3
+    assert [row["name"] for row in result if row["kind"] == "entity"] == ["Investigator", "Spot Hidden"]
+    assert stats["suppressed_instances"] == 2
+    assert any(p["name"] == "Spot Hidden" and p["kind"] == "entity" for p in result)
     assert stats["unresolved_relationships"] == 1
 
 
@@ -224,7 +255,7 @@ def test_sqlite_window_uses_v3_version(tmp_path):
         db.commit()
     with Session(engine) as db:
         item = db.query(OntologyLearnWindow).one()
-        assert item.contract_version == "ontology-schema-v3"
+        assert item.contract_version == "ontology-schema-v4"
         assert item.output_tokens == 150
     engine.dispose()
 

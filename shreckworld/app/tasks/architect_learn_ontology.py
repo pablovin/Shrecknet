@@ -122,6 +122,9 @@ def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
         row.finished_at = datetime.now(timezone.utc)
         db.commit()
         stats.update(proposal_counts(cached.proposals or []))
+        stats["metadata_warnings"] = sum(
+            len(p.get("validation_warnings") or []) for p in cached.proposals or []
+        )
         stats["cached"] = True
         return cached.proposals
     row.status = "running"
@@ -308,6 +311,7 @@ def run_ontology_discovery(run_id: str) -> None:
                                     **counts,
                                     "window_suppressed_instances": window_stats.get("suppressed_instances", 0),
                                     "window_unresolved_relationships": window_stats.get("unresolved_relationships", 0),
+                                    "window_metadata_warnings": window_stats.get("metadata_warnings", 0),
                                     "cached": bool(checkpoint.cached),
                                     "window_input_tokens": checkpoint.input_tokens,
                                     "window_output_tokens": checkpoint.output_tokens,
@@ -319,6 +323,9 @@ def run_ontology_discovery(run_id: str) -> None:
             if not progress(db, run, 95, "persisting", {
                 "event": "proposals_ready", "proposals_discovered": len(proposals),
                 **proposal_counts(proposals),
+                "metadata_warnings": sum(
+                    len(p.get("validation_warnings") or []) for p in proposals
+                ),
                 "completed_windows": completed, "total_windows": total,
             }):
                 return

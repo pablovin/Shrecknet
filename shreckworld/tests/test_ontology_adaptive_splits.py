@@ -113,7 +113,7 @@ def test_adaptive_overflow_short_circuits_and_merges_children(world, monkeypatch
                 "n": "skill_" + frag["x"].split()[0].lower() + "_" + str(i),
                 "t": "i", "s": "Skill", "d": "Rulebook skill", "m": [], "i": [],
                 "b": [i],
-            } for i, _ in enumerate(fragments)]
+            } for i, frag in enumerate(fragments)]
             data = {"e": [{
                 "n": "Investigator", "d": "Player actor", "b": [0], "p": props, "r": [],
             }], "overflow": False}

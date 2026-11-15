@@ -153,7 +153,17 @@ named cult; other cults may be catalog objects rather than entity TYPES.
 Pendragon: Knight may own trait and passion ratings, Sir Gawain is an instance.
 D&D: Class, Spell, Item can be entity TYPES; Wizard and Fireball are catalog
 entries, not new entity types. Do not impose these examples on another game.
-If bounded output cannot fit, set overflow=true; do not silently omit content.
+BEFORE composing ANY definitions, assess the COMPLETE numbered excerpt and
+whether every supported named concept, property and relationship can fit the
+bounded response schema and output budget. This is a single-call decision:
+- If complete extraction fits, respond with the FULL valid ontology in "e"
+  and "overflow":false.
+- If complete extraction would NOT fit, do NOT start enumerating proposals,
+  do NOT output a partial ontology, do NOT explain or estimate the size:
+  respond with EXACTLY {"e":[],"overflow":true}.
+The caller will split the excerpt and repeat this SAME single-pass extraction
+on smaller nonoverlapping source fragments. Never hallucinate missing content,
+and do not use overflow merely because a passage is complex.
 Return no prose outside JSON."""
 
 RECONCILIATION_SCHEMA = {

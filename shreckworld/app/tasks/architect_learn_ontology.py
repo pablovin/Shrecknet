@@ -129,8 +129,8 @@ def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
     try:
         response = generate_shreckworld_structured_output(
             usage_tag="architect_ontology_discovery", system_prompt=DISCOVERY_PROMPT,
-            user_content=content, schema_name="architect_ontology_schema_v3",
-            response_schema=DISCOVERY_SCHEMA, max_tokens=3500,
+            user_content=content, schema_name="architect_ontology_schema_v4",
+            response_schema=DISCOVERY_SCHEMA, max_tokens=8000,
             model_target=model(run, "discovery"))
         # Account for paid tokens even when the model exhausts its limit.
         row.input_tokens = max(0, response.input_tokens or 0)
@@ -165,6 +165,7 @@ def _reconcile(db, run: OntologyLearnRun, found: dict) -> list[dict] | None:
     entity_names = {row["id"]: row["name"] for row in approved["entities"]}
     known = [{"kind": "entity", "name": row["name"]} for row in approved["entities"]]
     known.extend({"kind": "property", "name": row["name"],
+                  "semantic_type": row.get("semantic_type"),
                   "entity": entity_names.get(row["entity_id"], "")}
                  for row in approved["properties"])
     known.extend({"kind": "relationship", "name": row["name"],
@@ -233,6 +234,10 @@ def _change_labels(db, run: OntologyLearnRun, candidates: list[dict]) -> list[di
                               if old["data_type"] != item["data_type"] else "update")
             if old is not None and old["data_type"] != item["data_type"]:
                 item["conflict"] = {"reason": "existing_property_type_mismatch"}
+            elif old is not None and old.get("semantic_type") and item.get("semantic_type") and (
+                old["semantic_type"] != item["semantic_type"]
+            ):
+                item["conflict"] = {"reason": "existing_property_semantic_mismatch"}
         else:
             key = (item["source"].casefold(), item["target"].casefold(), item["name"].casefold())
             item["change"] = "update" if key in relationships else "new"
@@ -331,7 +336,7 @@ def run_ontology_discovery(run_id: str) -> None:
             db.commit()
         except Exception as exc:
             db.rollback()
-            logger.exception("Architect ontology V2 failed for run %s", run_id)
+            logger.exception("Architect ontology V4 failed for run %s", run_id)
             run = db.get(OntologyLearnRun, run_id)
             if run:
                 run.status, run.stage = "failed", "failed"

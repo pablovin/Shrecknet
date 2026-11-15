@@ -128,14 +128,44 @@ Example compact discovery output (fragment):
 - Character-specific scores belong to instances, not to the shared definition.
   Derived statistics and formulas are deferred to the rules-extraction phase.
 
-The V4 response is bounded and validated. Missing evidence, malformed metadata
-structure, mismatched `current_value` types and overflow fail the window. For
-metadata whose value cannot be parsed as its declared scalar type, the worker
-keeps the original value as text and continues processing the other extracted
-definitions. This preserves source-grounded values such as edition-specific
-notes without treating them as numeric or boolean data. The
-worker reuses valid completed V4 windows only when the model, input, prompt,
-schema and source digest are unchanged; old V3 windows cannot satisfy it.
+### Single-call overflow preflight and adaptive splitting
+
+Ontology extraction remains **one pass**: each normal Bookmap window makes
+one discovery LLM request. Within that same request the model first assesses
+whether the entire source excerpt can be represented in the bounded schema.
+It either emits the complete proposal envelope with `overflow:false`, or
+short-circuits to exactly `{"e":[],"overflow":true}`. This instruction
+avoids drafting an expensive incomplete response, though actual model behavior
+and token usage cannot be strictly guaranteed.
+
+Only an explicit `overflow:true` triggers automatic subdivision. The worker
+splits on Bookmap subsection boundaries, then block boundaries, then text
+whitespace inside a single block. Child source text is nonoverlapping,
+collectively exhaustive, and retains original block IDs and split character
+spans. Each child uses the **same** V4 discovery schema and independent
+checkpoint, with a maximum of five levels of subdivision and a minimum source
+fragment size. A pathological window that still overflows fails with a
+specific `compact_overflow_split_limit` or `compact_overflow_unsplittable`
+diagnostic, rather than silently omitting concepts.
+
+A successful parent becomes a completed checkpoint containing the merged child
+proposals, and children are also checkpointed individually. This permits
+re-use of completed children after partial failures and of whole completed
+parents on later runs. The worker preserves valid V4 checkpoints generated
+before the enhanced capacity instruction. Only overflowing windows incur
+additional LLM calls; non-overflow parse/validation errors still fail closed
+without automatic model retries. The job activity log exposes the number of
+split children and adaptive split operations.
+
+The V4 response is bounded and validated. Missing evidence, malformed
+metadata structures and mismatched `current_value` types still fail the window.
+Unparseable scalar metadata, including native JSON numbers supplied despite the
+compact string schema, is preserved as source-grounded text and flagged for human
+review instead of aborting the window. Explicit overflow triggers adaptive
+subdivision rather than immediately failing the whole job, until the bounded
+split depth or minimum useful fragment is reached. The worker reuses matching
+completed V4 windows when input and model constraints are unchanged and can
+also recognize valid pre-adaptive V4 checkpoints; old V3 windows remain separate.
 The workflow uses one combined discovery/schema model call per input window,
 followed by semantic reconciliation of plausible duplicates. Alias merges
 preserve evidence; incompatible types or definitions require explicit human

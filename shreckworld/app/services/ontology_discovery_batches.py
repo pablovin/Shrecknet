@@ -256,3 +256,68 @@ def build_discovery_batches(
             fragment_index += 1
     flush()
     return batches
+
+
+
+# Only overflowing extraction windows are recursively subdivided. The original
+# Bookmap chapter, section headings and block provenance remain unchanged.
+MIN_ADAPTIVE_FRAGMENT_CHARS = 96
+
+
+def split_discovery_batch(batch: dict, *, min_fragment_chars: int = MIN_ADAPTIVE_FRAGMENT_CHARS
+                          ) -> tuple[dict, dict]:
+    """Split one dense discovery batch without losing/duplicating source text.
+
+    Prefer subsection boundaries; then persisted blocks; only split inside a
+    single source fragment if no structural boundaries remain. A child is a
+    normal discovery batch and can itself be split on a later overflow.
+    """
+    sections = batch["sections"]
+    if not sections:
+        raise ValueError("empty_discovery_batch")
+
+    def chars(section: dict) -> int:
+        return sum(len(block["text"]) for block in section["blocks"])
+
+    def best_boundary(weights: list[int]) -> int:
+        total, prefix = sum(weights), 0
+        choices = []
+        for index, weight in enumerate(weights[:-1], start=1):
+            prefix += weight
+            choices.append((abs(total - 2 * prefix), index))
+        return min(choices)[1]
+
+    def child(parts: list[dict]) -> dict:
+        return {"chapter_id": batch["chapter_id"], "chapter_title": batch["chapter_title"],
+                "sections": parts}
+
+    if len(sections) > 1:
+        cut = best_boundary([chars(section) for section in sections])
+        return child(sections[:cut]), child(sections[cut:])
+
+    section = sections[0]
+    blocks = section["blocks"]
+    if not blocks:
+        raise ValueError("empty_discovery_section")
+    if len(blocks) > 1:
+        cut = best_boundary([len(block["text"]) for block in blocks])
+        return child([{**section, "blocks": blocks[:cut]}]), child(
+            [{**section, "blocks": blocks[cut:]}])
+
+    block = blocks[0]
+    text = block["text"]
+    if len(text) < 2 * min_fragment_chars:
+        raise ValueError("discovery_fragment_too_small_to_split")
+
+    midpoint = len(text) // 2
+    # Prefer nearby paragraph/word boundaries without making a very small child.
+    lower, upper = min_fragment_chars, len(text) - min_fragment_chars
+    candidates = [pos + 1 for pos, letter in enumerate(text)
+                  if letter.isspace() and lower <= pos + 1 <= upper]
+    cut = min(candidates, key=lambda pos: abs(pos - midpoint)) if candidates else midpoint
+    if not (0 < cut < len(text)):
+        raise ValueError("discovery_fragment_too_small_to_split")
+    offset = block.get("fragment_char_offset", 0)
+    left = {**block, "text": text[:cut], "fragment_char_offset": offset}
+    right = {**block, "text": text[cut:], "fragment_char_offset": offset + cut}
+    return child([{**section, "blocks": [left]}]), child([{**section, "blocks": [right]}])

@@ -105,6 +105,79 @@ def test_v4_source_evidence_and_semantic_fields():
     assert exc.value.code == "invalid_current_value_type"
 
 
+
+@pytest.mark.parametrize("declared,raw,expected", [
+    ("i", "25%", "25%"),
+    ("i", "1D6+2", "1D6+2"),
+    ("i", "varies", "varies"),
+    ("f", "NaN", "NaN"),
+    ("b", "sometimes", "sometimes"),
+])
+def test_unparseable_metadata_is_reviewable_not_a_failed_window(declared, raw, expected):
+    from app.services.ontology_compact import _metadata
+    warnings = []
+    metadata = _metadata([{"n": "base_chance", "t": declared, "v": raw}],
+                         warnings=warnings)
+    assert metadata == {"base_chance": expected}
+    assert warnings == [{
+        "code": "metadata_value_unparsed",
+        "field": "base_chance",
+        "declared_type": {"i": "integer", "f": "number", "b": "boolean"}[declared],
+        "raw_value": raw,
+    }]
+
+
+def test_metadata_unparseable_field_cannot_be_auto_approved_and_survives_merge():
+    lookup = {0: {"block_id": "b1", "section_id": "s1", "fragment_index": 0}}
+    base = {"source_id": "book", "document_id": "doc", "chapter_id": "4",
+            "chapter_title": "Skills", "content_digest": "digest"}
+    response = {"e": [{
+        "n": "Investigator", "d": "Player character", "b": [0],
+        "p": [{
+            "n": "dodge", "t": "i", "s": "Skill", "d": "Avoid danger",
+            "m": [
+                {"n": "base_chance", "t": "i", "v": "DEX/2"},
+                {"n": "skill_category", "t": "s", "v": "Combat"},
+            ],
+            "i": [{"n": "current_value", "t": "i", "r": True}], "b": [0],
+        }], "r": [],
+    }], "overflow": False}
+    stats = {}
+    candidates = parse_discovery(response, lookup, base, stats=stats)
+    prop = next(x for x in candidates if x["kind"] == "property")
+    assert prop["definition"] == {"base_chance": "DEX/2", "skill_category": "Combat"}
+    assert prop["conflict"]["reason"] == "metadata_requires_review"
+    assert prop["conflict"]["fields"] == ["base_chance"]
+    assert prop["validation_warnings"][0]["raw_value"] == "DEX/2"
+    assert prop["evidence"][0]["block_ids"] == ["b1"]
+    assert stats["metadata_warnings"] == 1
+    found = {}
+    accumulate(found, prop)
+    accumulate(found, {**prop, "definition": {"base_chance": "DEX/2"},
+                       "validation_warnings": [], "conflict": None,
+                       "evidence": [{**prop["evidence"][0], "block_ids": ["b2"]}]})
+    stored = next(iter(found.values()))
+    assert stored["conflict"]["reason"] == "metadata_requires_review"
+    assert len(stored["evidence"]) == 2
+
+
+def test_boolean_metadata_normalizes_common_unambiguous_literal_values():
+    from app.services.ontology_compact import _metadata
+    for literal, result in [("true", True), ("FALSE", False),
+                            ("yes", True), ("no", False), ("1", True), ("0", False)]:
+        warnings = []
+        parsed = _metadata([{"n": "available", "t": "b", "v": literal}], warnings=warnings)
+        assert parsed["available"] is result
+        assert not warnings
+
+
+def test_incompatible_metadata_envelope_remains_strict():
+    from app.services.ontology_compact import _metadata
+    with pytest.raises(CompactContractError) as error:
+        _metadata([{"n": "chance", "t": "i", "v": {"untrusted": "object"}}], warnings=[])
+    assert error.value.code == "invalid_compact_metadata"
+
+
 def test_unparseable_metadata_is_retained_as_text_without_losing_valid_values():
     lookup = {0: {"block_id": "b1", "section_id": "s1", "fragment_index": 0}}
     base = {"source_id": "source", "document_id": "doc", "chapter_id": "chapter",
@@ -129,3 +202,18 @@ def test_unparseable_metadata_is_retained_as_text_without_losing_valid_values():
         "specialization": "varies by edition",
         "maximum": 99.0,
     }
+
+
+def test_native_boolean_metadata_and_reviewed_type_mismatch():
+    from app.services.ontology_compact import _metadata
+    warnings = []
+    value = _metadata([
+        {"n": "enabled", "t": "b", "v": True},
+        {"n": "numeric", "t": "i", "v": 15},
+        {"n": "invalid_integer", "t": "i", "v": False},
+    ], warnings=warnings)
+    assert value["enabled"] is True
+    assert value["numeric"] == 15
+    assert value["invalid_integer"] == "False"
+    assert len(warnings) == 1
+    assert warnings[0]["field"] == "invalid_integer"

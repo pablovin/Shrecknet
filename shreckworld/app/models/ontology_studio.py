@@ -40,6 +40,11 @@ class OntologyProperty(Base):
     cardinality: Mapped[str] = mapped_column(String(16), default="one", nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     constraints: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    # Definitions belong to this entity's world; never shared across ontologies.
+    semantic_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    definition: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    # Describes fields each implementing instance must expose, not instance data.
+    value_schema: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     evidence: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     __table_args__ = (UniqueConstraint("entity_id", "name", name="uq_world_ontology_property_name"),)
 

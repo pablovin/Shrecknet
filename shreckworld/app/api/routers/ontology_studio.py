@@ -90,6 +90,46 @@ class ProposalEdit(Strict):
     target: str | None = None
     data_type: str | None = None
 
+
+class ProposalCreate(Strict):
+    expected_proposal_revision: int = Field(ge=0)
+    kind: str
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    entity: str | None = None
+    source: str | None = None
+    target: str | None = None
+    data_type: str | None = None
+
+class ProposalDelete(Strict):
+    expected_proposal_revision: int = Field(ge=0)
+
+def _editable_run(db: Session, ontology_id: int, run_id: str, expected: int) -> OntologyLearnRun:
+    run = db.get(OntologyLearnRun, run_id)
+    if run is None or run.ontology_id != ontology_id:
+        raise HTTPException(404, "Run not found")
+    if run.status != "awaiting_review":
+        raise HTTPException(409, "Run is not awaiting review")
+    if run.proposal_revision != expected:
+        raise HTTPException(409, "Proposal revision conflict")
+    return run
+
+def _validate_proposal_shape(candidate: dict) -> None:
+    kind = candidate.get("kind")
+    if kind not in {"entity", "property", "relationship"}:
+        raise HTTPException(422, "Invalid proposal kind")
+    required = {"entity": ("name",), "property": ("name", "entity", "data_type"),
+                "relationship": ("name", "source", "target")}[kind]
+    if any(not isinstance(candidate.get(key), str) or not candidate[key].strip() for key in required):
+        raise HTTPException(422, "Proposal references must not be blank")
+    if kind == "property" and candidate["data_type"] not in service.TYPES:
+        raise HTTPException(422, "Invalid property type")
+    incompatible = ({"source", "target"} if kind != "relationship" else set())
+    if kind != "property":
+        incompatible |= {"entity", "data_type"}
+    if any(candidate.get(key) for key in incompatible):
+        raise HTTPException(422, "Fields do not belong to this proposal type")
+
 class ReviewRequest(Versioned):
     decisions: dict[str, str]
 
@@ -369,6 +409,56 @@ def cancel(ontology_id: int, run_id: str, token: str = Depends(oauth2_scheme),
         raise HTTPException(404, "Run not found")
     if not cancel_run(db, run):
         raise HTTPException(409, "Run cannot be cancelled")
+    return run_response(run)
+
+
+@router.post("/runs/{run_id}/proposals")
+def create_proposal(ontology_id: int, run_id: str, payload: ProposalCreate,
+                    token: str = Depends(oauth2_scheme),
+                    _: ShrecknetPrincipal = Depends(require_world_manager),
+                    db: Session = Depends(get_db)):
+    """Create a human-authored proposal; never bypass review by editing the approved graph."""
+    auth(ontology_id, token)
+    run = _editable_run(db, ontology_id, run_id, payload.expected_proposal_revision)
+    candidate = payload.model_dump(exclude={"expected_proposal_revision"}, exclude_none=True)
+    _validate_proposal_shape(candidate)
+    candidate = {key: value.strip() if isinstance(value, str) else value
+                 for key, value in candidate.items()}
+    proposals = [dict(p) for p in run.proposals]
+    signature = (candidate["kind"], candidate["name"].casefold(),
+                 (candidate.get("entity") or candidate.get("source") or "").casefold(),
+                 (candidate.get("target") or "").casefold())
+    for proposal in proposals:
+        other = (proposal["kind"], proposal["name"].casefold(),
+                 (proposal.get("entity") or proposal.get("source") or "").casefold(),
+                 (proposal.get("target") or "").casefold())
+        if signature == other:
+            raise HTTPException(409, "Proposal already exists")
+    candidate.update(id=str(uuid4()), evidence=[], change="new",
+                     edited_by_human=True, created_by_human=True)
+    proposals.append(candidate)
+    run.proposals = proposals
+    run.proposal_revision += 1
+    db.commit()
+    return run_response(run)
+
+@router.delete("/runs/{run_id}/proposals/{proposal_id}")
+def delete_proposal(ontology_id: int, run_id: str, proposal_id: str,
+                    expected_proposal_revision: int = Query(ge=0),
+                    token: str = Depends(oauth2_scheme),
+                    _: ShrecknetPrincipal = Depends(require_world_manager),
+                    db: Session = Depends(get_db)):
+    """Only new human-created proposals can be removed; extracted proposals must be rejected."""
+    auth(ontology_id, token)
+    run = _editable_run(db, ontology_id, run_id, expected_proposal_revision)
+    match = next((p for p in run.proposals if p["id"] == proposal_id), None)
+    if match is None:
+        raise HTTPException(404, "Proposal not found")
+    if not match.get("created_by_human"):
+        raise HTTPException(422, "Extracted proposals must be rejected, not deleted")
+    run.proposals = [dict(p) for p in run.proposals if p["id"] != proposal_id]
+    run.proposal_revision += 1
+    db.commit()
     return run_response(run)
 
 @router.patch("/runs/{run_id}/proposals/{proposal_id}")

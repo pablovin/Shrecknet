@@ -575,21 +575,63 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
     return list(consolidated.values())
 
 
+def _record_conflict(target: dict, source: dict, reason: str, field: str,
+                     retained: object, incoming: object) -> None:
+    """Keep both field variants and provenance for visual human review.
+
+    Previous versions replaced conflicting values with a reason-only flag,
+    making the review UI unable to explain the discrepancy. Preserve the first
+    canonical value and every distinct later alternative without a quota.
+    """
+    existing = target.get("conflict") or {}
+    conflict = dict(existing)
+    previous_reason = conflict.get("reason")
+    if previous_reason and previous_reason not in (reason, "multiple_source_conflicts"):
+        reasons = list(conflict.get("reasons") or [previous_reason])
+        if reason not in reasons:
+            reasons.append(reason)
+        conflict["reasons"] = reasons
+        conflict["reason"] = "multiple_source_conflicts"
+    else:
+        conflict["reason"] = previous_reason or reason
+    fields = list(conflict.get("fields") or [])
+    if field not in fields:
+        fields.append(field)
+    conflict["fields"] = fields
+    alternatives = list(conflict.get("alternatives") or [])
+    alternative = {
+        "field": field,
+        "retained": retained,
+        "incoming": incoming,
+        "retained_evidence": list(target.get("evidence") or []),
+        "incoming_evidence": list(source.get("evidence") or []),
+    }
+    # Repeated extraction of the same disagreement does not duplicate options.
+    signature = compact_json({"field": field, "retained": retained, "incoming": incoming})
+    if not any(isinstance(entry, dict) and
+               compact_json({key: entry.get(key) for key in ("field", "retained", "incoming")}) == signature
+               for entry in alternatives):
+        alternatives.append(alternative)
+    conflict["alternatives"] = alternatives
+    target["conflict"] = conflict
+
+
 def _merge_definition(target: dict, source: dict) -> None:
-    """Preserve evidence and surface semantic mismatches for human review."""
+    """Preserve evidence and all conflicting field variants for human review."""
     if not target.get("description") and source.get("description"):
         target["description"] = source["description"]
     for key in ("data_type", "semantic_type"):
         if target.get(key) and source.get(key) and target[key] != source[key]:
-            target["conflict"] = {"reason": "inconsistent_source_" + ("property_type" if key == "data_type" else key),
-                                  "alternatives": sorted({str(target[key]), str(source[key])})}
+            reason = "inconsistent_source_" + ("property_type" if key == "data_type" else key)
+            _record_conflict(target, source, reason, key, target[key], source[key])
         elif not target.get(key) and source.get(key):
             target[key] = source[key]
     for key in ("definition", "value_schema"):
         old, new = target.get(key) or {}, source.get(key) or {}
-        overlap = set(old) & set(new)
-        if any(old[k] != new[k] for k in overlap):
-            target["conflict"] = {"reason": "inconsistent_source_" + key}
+        for field in sorted(set(old) & set(new)):
+            if old[field] != new[field]:
+                _record_conflict(target, source, "inconsistent_source_" + key,
+                                 key + "." + field, old[field], new[field])
         target[key] = {**new, **old}
     if target.get("kind") == "property":
         schema = target.setdefault("value_schema", {})

@@ -274,3 +274,26 @@ def test_multiple_source_disagreements_preserve_every_field_option():
     assert conflict["reason"] == "multiple_source_conflicts"
     assert set(conflict["fields"]) == {"semantic_type", "value_schema.current_value"}
     assert len(conflict["alternatives"]) == 2
+
+
+def test_incoming_chapter_conflict_is_not_lost_when_property_already_known():
+    base = {
+        "kind": "property", "entity": "Investigator", "name": "luck",
+        "data_type": "integer", "semantic_type": "Resource",
+        "definition": {"base_roll": "3D6 x 5"},
+        "value_schema": {"current_value": {"type": "integer", "required": True}},
+        "evidence": [{"chapter_title": "Creating Investigators", "block_ids": ["a"]}],
+    }
+    found = {}
+    accumulate(found, base)
+    accumulate(found, {
+        **base,
+        "conflict": {"reason": "metadata_requires_review",
+                     "fields": ["base_roll"], "alternatives": ["3D6 x 5", "3D6×5"]},
+        "evidence": [{"chapter_title": "Game System", "block_ids": ["b"]}],
+    })
+    row = next(iter(found.values()))
+    assert row["conflict"]["reason"] == "metadata_requires_review"
+    assert row["conflict"]["fields"] == ["base_roll"]
+    assert row["conflict"]["alternatives"] == ["3D6 x 5", "3D6×5"]
+    assert len(row["evidence"]) == 2

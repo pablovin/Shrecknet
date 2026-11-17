@@ -225,3 +225,52 @@ def test_native_boolean_metadata_and_reviewed_type_mismatch():
     assert value["invalid_integer"] == "False"
     assert len(warnings) == 1
     assert warnings[0]["field"] == "invalid_integer"
+
+
+def test_reconciled_conflicts_keep_field_variants_and_source_provenance():
+    first = {
+        "kind": "property", "entity": "Investigator", "name": "appraise",
+        "data_type": "integer", "semantic_type": "Skill",
+        "definition": {"base_chance": 5, "category": "Perception"},
+        "value_schema": {"current_value": {"type": "integer", "required": True}},
+        "evidence": [{"chapter_title": "3. Creating Investigators", "block_ids": ["book-block-a"]}],
+    }
+    later = {
+        **first,
+        "definition": {"base_chance": 1, "category": "Perception"},
+        "evidence": [{"chapter_title": "4. Skills", "block_ids": ["book-block-b"]}],
+    }
+    found = {}
+    accumulate(found, first)
+    accumulate(found, later)
+    accumulate(found, later)  # Replayed stages must not add the same option again.
+    row = next(iter(found.values()))
+    assert row["definition"]["base_chance"] == 5
+    assert row["conflict"]["reason"] == "inconsistent_source_definition"
+    assert row["conflict"]["fields"] == ["definition.base_chance"]
+    assert len(row["conflict"]["alternatives"]) == 1
+    alternative = row["conflict"]["alternatives"][0]
+    assert alternative["field"] == "definition.base_chance"
+    assert alternative["retained"] == 5 and alternative["incoming"] == 1
+    assert alternative["retained_evidence"][0]["block_ids"] == ["book-block-a"]
+    assert alternative["incoming_evidence"][0]["block_ids"] == ["book-block-b"]
+    assert len(row["evidence"]) == 2
+
+
+def test_multiple_source_disagreements_preserve_every_field_option():
+    found = {}
+    base = {
+        "kind": "property", "entity": "Investigator", "name": "skill",
+        "data_type": "integer", "semantic_type": "Skill",
+        "definition": {"base_chance": 5}, "value_schema": {"current_value": {
+            "type": "integer", "required": True, "nullable": True}},
+        "evidence": [],
+    }
+    accumulate(found, base)
+    accumulate(found, {**base, "semantic_type": "Derived",
+        "value_schema": {"current_value": {
+            "type": "integer", "required": True, "nullable": False}}})
+    conflict = next(iter(found.values()))["conflict"]
+    assert conflict["reason"] == "multiple_source_conflicts"
+    assert set(conflict["fields"]) == {"semantic_type", "value_schema.current_value"}
+    assert len(conflict["alternatives"]) == 2

@@ -214,10 +214,11 @@ class StructuredOutputResult:
 
 def generate_shreckworld_structured_output(
     *, usage_tag: str, system_prompt: str, user_content: str,
-    schema_name: str, response_schema: dict[str, Any], max_tokens: int,
+    schema_name: str, response_schema: dict[str, Any], max_tokens: int | None = None,
     model_target: ShreckWorldModelTarget,
+    messages: list[dict[str, str]] | None = None,
 ) -> StructuredOutputResult:
-    """Run a bounded ShreckLLM structured-output job for ShreckWorld agent stages."""
+    """Run a ShreckLLM stage with optional explicit history and output budget."""
     settings = get_settings()
     headers = {}
     internal_token = os.getenv("SHRECKLLM_INTERNAL_SERVICE_TOKEN", "").strip()
@@ -229,7 +230,7 @@ def generate_shreckworld_structured_output(
         "reasoning": model_target.reasoning,
         "reasoning_effort": model_target.reasoning_effort,
         "web_search_enabled": model_target.web_search_enabled,
-        "messages": [
+        "messages": messages if messages is not None else [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
@@ -244,6 +245,8 @@ def generate_shreckworld_structured_output(
             },
         },
     }
+    if max_tokens is None:
+        payload.pop("max_tokens", None)
     deadline = time.monotonic() + settings.synthesis_timeout_seconds
     try:
         with httpx.Client(base_url=settings.shreckllm_base_url.rstrip("/"), headers=headers) as client:

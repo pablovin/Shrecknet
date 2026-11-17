@@ -143,3 +143,11 @@ Companion retrieval uses the existing `single` evidence strategy for an individu
 planned question and reserves `planned` for explicit deep research. Companion
 owns cross-source evidence review and public-Web recovery. See the
 [Companion execution contract](../Documentation/Agents/Companion/Companion.md#evidence-first-query-pipeline).
+
+
+Ontology Studio learns RPG schemas through complete, sequential chapter conversations:
+entity types, properties, relationships and source-backed validation. Each chapter
+extends the canonical registry from earlier chapters. Discovery imposes no content
+or item quotas; provider limits still apply, and incomplete output fails visibly.
+See the [Ontology Studio contract](../Documentation/API/ONTOLOGY_STUDIO_API.md)
+for review, checkpoints, model configuration and deployment.

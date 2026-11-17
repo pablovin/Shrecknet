@@ -1,14 +1,13 @@
-"""Architect Learn Ontology V5: world-scoped, evidence-bound discovery.
+"""Architect V6: sequential, evidence-bound chapter conversations.
 
-Each Bookmap window gets one model call. Complete, valid output parts are kept;
-malformed entities, properties and relationships are skipped and reported in
-the run activity log. Each source window is processed once; partial results do
-not trigger source subdivision or a replacement model call.
+The service owns stage contracts and canonical reconciliation; this task owns
+authorization-pinned inputs, checkpoints, cancellation and persisted job reporting.
 """
 from __future__ import annotations
 
 import json
 import logging
+import hashlib
 from datetime import datetime, timezone
 from uuid import uuid4
 from collections import Counter
@@ -23,13 +22,12 @@ from app.schemas.shreckworld import ShreckWorldModelTarget
 from app.services.book_map_contract import read_book_map
 from app.services.ontology_discovery_batches import build_discovery_batches
 from app.services.ontology_compact import (
-    CONTRACT_VERSION, DISCOVERY_SCHEMA, DISCOVERY_PROMPT,
-    RECONCILIATION_SCHEMA,
-    RECONCILIATION_PROMPT, CompactContractError, model_window, cache_fingerprint,
-    parse_discovery, accumulate, ambiguous_groups, parse_discovery_response,
-    parse_model_response,
-    proposal_counts,
-    reconciliation_input, apply_reconciliation,
+    CONTRACT_VERSION, CompactContractError, model_window, cache_fingerprint,
+    accumulate, compact_json, proposal_counts,
+)
+from app.services.ontology_sequential import (
+    SYSTEM_PROMPT, STAGES, DUPLICATE_PROMPT, DUPLICATE_SCHEMA, DiscoveryCancelled,
+    discover_chapter, graph_registry, reconcile, registry_payload,
 )
 from app.integrations.shreckllm import generate_shreckworld_structured_output
 from app.services import ontology_studio
@@ -80,8 +78,8 @@ def _prepare(db, run: OntologyLearnRun) -> list[tuple]:
             if not set(selected_chapters) <= {b["chapter_id"] for b in batches}:
                 raise ValueError("pinned_chapter_unavailable")
             batches = [b for b in batches if b["chapter_id"] in set(selected_chapters)]
-        # Window numbers reset per chapter. This also supports stable
-        # checkpoints when a chapter has multiple token-bounded windows.
+        # V6 stores one complete chapter in each window checkpoint.
+        # Numbering remains compatible with historical window records.
         indices: dict[str, int] = {}
         for batch in batches:
             chapter = batch["chapter_id"]
@@ -113,111 +111,91 @@ def _reusable_window(db, row: OntologyLearnWindow) -> OntologyLearnWindow | None
     ).order_by(OntologyLearnWindow.finished_at.desc()).limit(1))
 
 
+def _ask(db, run, row=None):
+    def ask(stage, prompt, content, schema, messages):
+        if not progress(db, run, run.progress, "discovering" if stage != "reconciliation" else "reconciling",
+                        {"event": "stage_started", "discovery_stage": stage,
+                         **({"chapter_id": row.chapter_id} if row is not None else {})}):
+            raise DiscoveryCancelled()
+        response = generate_shreckworld_structured_output(
+            usage_tag="architect_ontology_" + stage, system_prompt=prompt,
+            user_content=content, messages=messages,
+            schema_name="architect_ontology_v6_" + stage,
+            response_schema=schema, max_tokens=None,
+            model_target=model(run, "reconciliation" if stage == "reconciliation" else "discovery"))
+        if row is not None:
+            row.input_tokens = (row.input_tokens or 0) + max(0, response.input_tokens or 0)
+            row.output_tokens = (row.output_tokens or 0) + max(0, response.output_tokens or 0)
+        record_llm_usage(db, run, input_tokens=response.input_tokens,
+                         output_tokens=response.output_tokens)
+        if not progress(db, run, run.progress, run.stage,
+                        {"event": "stage_response_received", "discovery_stage": stage}):
+            raise DiscoveryCancelled()
+        return response
+    return ask
+
+
 def _window_extract(db, run: OntologyLearnRun, item, doc, batch, content: str,
-                    lookup: dict, row: OntologyLearnWindow,
-                    stats: dict) -> list[dict]:
+                    lookup: dict, row: OntologyLearnWindow, stats: dict,
+                    known=None, decisions=None) -> list[dict]:
+    known = known if known is not None else graph_registry(ontology_studio.graph(db, run.ontology_id))
+    # Chapter output depends on the whole prior registry, both model targets,
+    # stage contracts AND evidence mapping. Source-only V5 caches are invalid.
+    row.fingerprint = hashlib.sha256(compact_json({
+        "version": CONTRACT_VERSION, "content": content, "lookup": lookup,
+        "registry": registry_payload(known), "models": run.model_targets,
+        "system": SYSTEM_PROMPT, "stages": STAGES,
+        "duplicate_prompt": DUPLICATE_PROMPT, "duplicate_schema": DUPLICATE_SCHEMA,
+    }).encode("utf-8")).hexdigest()
     cached = _reusable_window(db, row)
     if cached is not None:
         row.proposals = cached.proposals
-        row.status = "completed"
-        row.cached = True
+        row.status, row.cached = "completed", True
         row.validation_diagnostics = cached.validation_diagnostics or []
         row.finished_at = datetime.now(timezone.utc)
         db.commit()
         stats.update(proposal_counts(cached.proposals or []))
-        stats["metadata_warnings"] = sum(
-            len(p.get("validation_warnings") or []) for p in cached.proposals or []
-        )
-        stats["malformed_parts"] = list(row.validation_diagnostics)
         stats["cached"] = True
-        return cached.proposals
+        return cached.proposals or []
     row.status = "running"
     db.commit()
+
+    def checkpoint(proposals, stage):
+        row.proposals = proposals
+        row.validation_diagnostics = list(stats.get("malformed_parts", []))
+        db.commit()
+        if not progress(db, run, run.progress, "discovering", {
+            "event": "stage_completed", "discovery_stage": stage,
+            "chapter_id": row.chapter_id, **proposal_counts(proposals),
+        }):
+            raise DiscoveryCancelled()
+
     try:
-        response = generate_shreckworld_structured_output(
-            usage_tag="architect_ontology_discovery", system_prompt=DISCOVERY_PROMPT,
-            user_content=content, schema_name="architect_ontology_schema_v5",
-            response_schema=DISCOVERY_SCHEMA, max_tokens=8000,
-            model_target=model(run, "discovery"))
-        row.input_tokens = max(0, response.input_tokens or 0)
-        row.output_tokens = max(0, response.output_tokens or 0)
-        record_llm_usage(db, run, input_tokens=response.input_tokens,
-                         output_tokens=response.output_tokens)
-        data = parse_discovery_response(response, stats=stats)
-        base = {
+        proposals = discover_chapter(content, lookup, {
             "source_id": item.id, "document_id": doc.id,
             "content_digest": doc.source_sha256, "chapter_id": batch["chapter_id"],
             "chapter_title": batch["chapter_title"],
-        }
-        proposals = parse_discovery(data, lookup, base, stats=stats)
-        row.validation_diagnostics = list(stats.get("malformed_parts", []))[:100]
+        }, known, _ask(db, run, row), checkpoint, stats, decisions)
         row.proposals = proposals
         row.status = "completed"
         row.finished_at = datetime.now(timezone.utc)
         db.commit()
+        stats.update(proposal_counts(proposals))
         return proposals
     except Exception as exc:
         db.rollback()
-        checkpoint = db.get(OntologyLearnWindow, row.id)
-        checkpoint.status = "failed"
-        checkpoint.error_code = (
-            exc.code if isinstance(exc, CompactContractError) else "model_request_failed"
-        )
-        checkpoint.finished_at = datetime.now(timezone.utc)
+        row.status = "cancelled" if isinstance(exc, DiscoveryCancelled) else "failed"
+        row.error_code = exc.code if isinstance(exc, CompactContractError) else (
+            "cancelled" if isinstance(exc, DiscoveryCancelled) else "model_request_failed")
+        row.validation_diagnostics = list(stats.get("malformed_parts", []))
+        row.finished_at = datetime.now(timezone.utc)
         db.commit()
         raise
 
 
-def _reconcile(db, run: OntologyLearnRun, found: dict) -> list[dict] | None:
-    candidates = list(found.values())
-    approved = ontology_studio.graph(db, run.ontology_id)
-    entity_names = {row["id"]: row["name"] for row in approved["entities"]}
-    known = [{"kind": "entity", "name": row["name"]} for row in approved["entities"]]
-    known.extend({"kind": "property", "name": row["name"],
-                  "semantic_type": row.get("semantic_type"),
-                  "entity": entity_names.get(row["entity_id"], "")}
-                 for row in approved["properties"])
-    known.extend({"kind": "relationship", "name": row["name"],
-                  "source": entity_names.get(row["source_id"], ""),
-                  "target": entity_names.get(row["target_id"], "")}
-                 for row in approved["relationships"])
-    groups = ambiguous_groups(candidates, known=known)
-    discarded: set[int] = set()
-    if not progress(db, run, 75, "reconciling", {
-        "event": "reconciliation_started", "total_groups": len(groups),
-        "proposals_discovered": len(candidates),
-    }):
-        return None
-    for position, indices in enumerate(groups):
-        if not progress(db, run, 75 + int(19 * position / len(groups)), "reconciling", {
-            "event": "reconciliation_group_started",
-            "group_index": position + 1, "total_groups": len(groups),
-            "proposals_discovered": len(candidates),
-        }):
-            return None
-        response = generate_shreckworld_structured_output(
-            usage_tag="architect_ontology_reconciliation",
-            system_prompt=RECONCILIATION_PROMPT,
-            user_content=reconciliation_input(candidates, indices, known=known),
-            schema_name="architect_ontology_reconcile_ops_v2",
-            response_schema=RECONCILIATION_SCHEMA,
-            max_tokens=900, model_target=model(run, "reconciliation"))
-        record_llm_usage(db, run, input_tokens=response.input_tokens,
-                         output_tokens=response.output_tokens)
-        data = parse_model_response(response, stage="reconciliation")
-        discarded.update(apply_reconciliation(candidates, indices, data))
-        if not progress(db, run, 75 + int(19 * (position + 1) / len(groups)), "reconciling", {
-            "event": "reconciliation_group_completed", "group_index": position + 1,
-            "total_groups": len(groups),
-        }):
-            return None
-    # Merged/renamed entities may produce duplicate dependent proposals. Combine
-    # again deterministically so their evidence remains complete.
-    final: dict = {}
-    for index, candidate in enumerate(candidates):
-        if index not in discarded:
-            accumulate(final, candidate)
-    return list(final.values())
+def _reconcile(db, run: OntologyLearnRun, found: dict, known=None, decisions=None) -> list[dict]:
+    known = known if known is not None else graph_registry(ontology_studio.graph(db, run.ontology_id))
+    return reconcile(list(found.values()), known, _ask(db, run), decisions)
 
 
 def _change_labels(db, run: OntologyLearnRun, candidates: list[dict]) -> list[dict]:
@@ -273,6 +251,8 @@ def run_ontology_discovery(run_id: str) -> None:
             if run.status == "cancelled":
                 return
             found: dict = {}
+            known = graph_registry(ontology_studio.graph(db, run.ontology_id))
+            decisions: dict = {}
             total = len(planned)
             remaining_by_chapter = Counter((row.source_id, row.chapter_id)
                                            for *_, row in planned)
@@ -297,15 +277,16 @@ def run_ontology_discovery(run_id: str) -> None:
                     return
                 window_stats: dict = {}
                 discovered = _window_extract(db, run, item, doc, batch,
-                                             content, lookup, checkpoint, window_stats)
+                                             content, lookup, checkpoint, window_stats,
+                                             [*known, *found.values()], decisions)
                 for candidate in discovered:
                     accumulate(found, candidate)
                 completed += 1
                 chapter_key = (checkpoint.source_id, checkpoint.chapter_id)
                 remaining_by_chapter[chapter_key] -= 1
                 if remaining_by_chapter[chapter_key] == 0:
-                    # A chapter is "sent" only after every one of its bounded
-                    # windows produced a valid, persisted extraction.
+                    # A chapter is "sent" only after its complete sequential
+                    # conversation produced a validated, persisted extraction.
                     _chapter_sent(db, run, item, doc, batch)
                     db.commit()
                 # Distinguish reusable schema elements from total proposal count.
@@ -319,13 +300,13 @@ def run_ontology_discovery(run_id: str) -> None:
                                     "window_unresolved_relationships": window_stats.get("unresolved_relationships", 0),
                                     "window_metadata_warnings": window_stats.get("metadata_warnings", 0),
                                     "malformed_parts_count": len(window_stats.get("malformed_parts", [])),
-                                    "malformed_parts": window_stats.get("malformed_parts", [])[:30],
+                                    "malformed_parts": window_stats.get("malformed_parts", []),
                                     "cached": bool(checkpoint.cached),
                                     "window_input_tokens": checkpoint.input_tokens,
                                     "window_output_tokens": checkpoint.output_tokens,
                                 }):
                     return
-            proposals = _reconcile(db, run, found)
+            proposals = _reconcile(db, run, found, known, decisions)
             if proposals is None:
                 return
             if not progress(db, run, 95, "persisting", {
@@ -349,9 +330,11 @@ def run_ontology_discovery(run_id: str) -> None:
                 "completed_windows": completed, "total_windows": total,
                 "at": datetime.now(timezone.utc).isoformat()}][-250:]
             db.commit()
+        except DiscoveryCancelled:
+            return
         except Exception as exc:
             db.rollback()
-            logger.exception("Architect ontology V5 failed for run %s", run_id)
+            logger.exception("Architect ontology V6 failed for run %s", run_id)
             run = db.get(OntologyLearnRun, run_id)
             if run:
                 run.status, run.stage = "failed", "failed"

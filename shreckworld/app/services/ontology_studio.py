@@ -19,7 +19,7 @@ def validate_property_spec(data: dict) -> None:
     if data_type not in TYPES:
         raise HTTPException(422, "Invalid property data_type")
     semantic = data.get("semantic_type")
-    if semantic is not None and (not isinstance(semantic, str) or len(semantic) > 100):
+    if semantic is not None and (not isinstance(semantic, str)):
         raise HTTPException(422, "Invalid semantic_type")
     for field in ("definition", "value_schema"):
         if not isinstance(data.get(field) or {}, dict):

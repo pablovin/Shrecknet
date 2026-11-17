@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import json
+import pytest
+from app.services.ontology_compact import CONTRACT_VERSION, CompactContractError
 
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session
@@ -13,7 +16,7 @@ from app.services.ontology_compact import cache_fingerprint, model_window
 from app.tasks import architect_learn_ontology as task
 
 
-def test_window_keeps_valid_parts_logs_invalid_parts_and_does_not_split(tmp_path, monkeypatch):
+def test_window_keeps_prior_stages_but_invalid_properties_fail(tmp_path, monkeypatch):
     engine = create_engine("sqlite:///" + str(tmp_path / "partial.db"))
     Base.metadata.create_all(engine)
     with Session(engine) as db:
@@ -36,7 +39,7 @@ def test_window_keeps_valid_parts_logs_invalid_parts_and_does_not_split(tmp_path
             content_digest=doc.source_sha256, chapter_id=batch["chapter_id"],
             chapter_title=batch["chapter_title"], window_index=1,
             fingerprint=cache_fingerprint(content, target),
-            contract_version="ontology-schema-v5", status="pending",
+            contract_version=CONTRACT_VERSION, status="pending",
         )
         db.add(checkpoint)
         db.commit()
@@ -48,18 +51,20 @@ def test_window_keeps_valid_parts_logs_invalid_parts_and_does_not_split(tmp_path
 
         def response(**kwargs):
             calls.append(kwargs)
-            return SimpleNamespace(text=body, finish_reason="stop", input_tokens=12, output_tokens=7)
+            stage = kwargs["schema_name"].rsplit("_", 1)[-1]
+            data = ({"e": [{"n": "Investigator", "d": "", "b": [0]}]} if stage == "entities"
+                    else {"e": [{"n": "Investigator", "p": json.loads(body)["e"][0]["p"]}]})
+            return SimpleNamespace(text=json.dumps(data), finish_reason="stop", input_tokens=12, output_tokens=7)
 
         monkeypatch.setattr(task, "generate_shreckworld_structured_output", response)
         monkeypatch.setattr(task, "model", lambda *_: "dummy")
         stats = {}
-        proposals = task._window_extract(
-            db, run, book, doc, batch, content, lookup, checkpoint, stats
-        )
-
-        assert len(calls) == 1
-        assert {proposal["name"] for proposal in proposals} == {"Investigator", "spot_hidden"}
-        assert checkpoint.status == "completed"
+        with pytest.raises(CompactContractError, match="properties_invalid_definitions"):
+            task._window_extract(db, run, book, doc, batch, content, lookup, checkpoint, stats)
+        assert len(calls) == 2
+        assert {proposal["name"] for proposal in checkpoint.proposals} == {"Investigator"}
+        assert checkpoint.status == "failed"
+        assert checkpoint.error_code == "properties_invalid_definitions"
         assert checkpoint.validation_diagnostics == [{
             "path": "e[0].p[0]", "code": "invalid_compact_type", "name": "broken",
         }]
@@ -102,15 +107,14 @@ def test_reconciliation_parses_model_response_after_discovery(tmp_path, monkeypa
         monkeypatch.setattr(task.ontology_studio, "graph", lambda *_: {
             "entities": [], "properties": [], "relationships": [],
         })
-        monkeypatch.setattr(task, "ambiguous_groups", lambda *_args, **_kwargs: [[0, 1]])
         monkeypatch.setattr(task, "model", lambda *_: "dummy")
         monkeypatch.setattr(task, "generate_shreckworld_structured_output", lambda **_: SimpleNamespace(
-            text='{"merge":[],"rename":[],"review":[]}', finish_reason="stop",
+            text='{"same":[true]}', finish_reason="stop",
             input_tokens=12, output_tokens=7,
         ))
         candidates = {
             "one": {"kind": "entity", "name": "Investigator", "description": "", "evidence": []},
-            "two": {"kind": "entity", "name": "Investigator", "description": "", "evidence": []},
+            "two": {"kind": "entity", "name": "Investigators", "description": "", "evidence": []},
         }
 
         result = task._reconcile(db, run, candidates)

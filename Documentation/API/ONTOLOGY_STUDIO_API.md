@@ -14,11 +14,11 @@ API prefix: `/api/v1/ontology-studio/worlds/{ontology_id}`.
 
 ## Configure the Architect
 
-Shrecknet Setup exposes the Architect ontology targets. The active extraction pipeline uses **two model calls types**, not three consecutive readings:
+Shrecknet Setup exposes the Architect ontology targets. The V6 extraction pipeline uses two model targets:
 
-- `model_architect_ontology_discovery`: **combined discovery + schema extraction** per Bookmap chapter/window (entity types, typed properties, relationships and evidence in one response).
-- `model_architect_ontology_reconciliation`: normalize and compare proposed definitions with the existing ontology.
-- `model_architect_ontology_schema`: retained as a compatibility setting for existing configurations; the active combined pipeline does not invoke it.
+- `model_architect_ontology_discovery`: four sequential stages per complete chapter: entity types, properties, relationships and source-backed coverage validation.
+- `model_architect_ontology_reconciliation`: classify ambiguous duplicate pairs with boolean-only batches; the backend owns identity mapping.
+- `model_architect_ontology_schema`: retained as a compatibility setting for existing configurations; the active sequential pipeline does not invoke it.
 
 Each choice uses the normal target contract: `provider`, `name`,
 `reasoning`, `reasoning_effort`, and `web_search_enabled`. Defaults use
@@ -73,20 +73,25 @@ IDs are UUIDs, not display names.
 chapters with indexed text in that source's active Book Map. The ShreckOS
 chapter picker defaults to all chapters and can submit a subset. `/sources`
 returns each source's chapter `id`, `title`, and `sent` flag. A chapter is shown as sent only after every window under the active
-`ontology-schema-v5` contract completed successfully in the same run, for the
-active document digest. Legacy extraction checkpoints do not count as V5 extraction, and
+`ontology-schema-v6` contract completed successfully in the same run, for the
+active document digest. Legacy extraction checkpoints do not count as V6 extraction, and
 changing the document digest marks its chapters unsent. Window checkpoints are
 stored in the additive ShreckWorld table.
 
 The server verifies all selected Sources are **explanatory** and have a
 current active Bookmap. It pins document IDs and content digests before queueing.
 The task reads Bookmap V3/V4 and persisted blocks without re-indexing.
-Combined entity/schema discovery and a separate reconciliation model produce evidence-backed proposals. Source blocks are visited once, grouped by Bookmap chapter, with subsection headings retained. Long chapters are divided into bounded, non-overlapping ~3,000-token target windows. Text blocks beyond one window are fragmented without truncation.
+Sources follow the selected source order; chapters follow document reading order.
+All blocks belonging to a chapter are grouped into one complete chapter input,
+including subsection headings. Unmapped text is retained as an explicit chapter.
+The default path has no source-text, passage, definition-count or response-token
+quota and never truncates a chapter. The optional low-level batching helper still
+supports explicit budgets for legacy callers; Learn Ontology does not use them.
 The task never writes approved entity definitions.
 
-### V5 world-local semantic ontology extraction
+### V6 sequential world-local ontology extraction
 
-This additive contract supersedes V3. **Every ontology belongs to its Shrecknet
+This contract supersedes V5 and invalidates its extraction caches. **Every ontology belongs to its Shrecknet
 world** (`ontology_id`). The extractor may use cross-game examples to learn
 classification patterns but must never import concepts or semantics from a
 different world. The approved SQLite graph remains the source of truth.
@@ -97,7 +102,7 @@ and instance value-field schemas. It does not create a character, spell, item,
 occupation catalog record, or executable game rule. Any entity type — not only
 characters — can own a stateful property.
 
-Example compact discovery output (fragment):
+Example validation-stage omission output:
 
 ```json
 {
@@ -112,7 +117,8 @@ Example compact discovery output (fragment):
       ],
       "b": [1]
     }], "r": []
-  }]}
+  }],
+  "issues": []
 }
 ```
 
@@ -128,32 +134,66 @@ Example compact discovery output (fragment):
 - Character-specific scores belong to instances, not to the shared definition.
   Derived statistics and formulas are deferred to the rules-extraction phase.
 
-### Partial output and validation diagnostics
+### Ordered chapter conversation
 
-Each extraction window uses one discovery model request. The response schema
-contains only the `e` entity list; there is no overflow field, preflight, or
-recursive source splitting. The model is asked to return as many complete,
-source-grounded definitions as fit.
+1. Discover novel entity types, returning `{"e":[{"n":"Type","d":"description","b":[0]}]}`.
+2. Reconcile identities and discover missing properties, returning
+   `{"e":[{"n":"CanonicalType","p":[...]}]}`.
+3. Discover missing relationships, returning
+   `{"e":[{"n":"CanonicalType","r":[...]}]}`. Both endpoints may be earlier types;
+   the chapter need not rediscover them.
+4. Check every source passage for missing or unsupported definitions, returning
+   `{"e":[...],"issues":[]}`. Additions use the full compact entity shape above.
+   Nonempty issues fail the chapter and remain visible in checkpoint diagnostics.
 
-The worker salvages complete entity objects from syntactically truncated JSON.
-Within parsed entities, it validates entity types, properties, relationships,
-and metadata independently. A malformed part is skipped while valid siblings
-are retained. Each window stores its `validation_diagnostics`, including the
-part path and validation code. `GET /runs/{run_id}/windows` returns these
-diagnostics in each window's `validation_diagnostics` field, and the run
-activity log includes a bounded summary for the completed window. ShreckWorld
-adds this JSON field to existing window tables during its normal schema startup
-migration. V4 checkpoints are retained but are not reused as V5 results. A
-window with valid partial results completes and remains
-available for review; a response with no recoverable complete entities also
-completes with diagnostics so the overall job can proceed.
+Each request includes the original chapter, all earlier stage replies and the
+updated canonical registry. History is explicit in the request, not shared server
+conversation memory, so worlds and runs remain isolated. The stable prefix permits
+provider prompt caching where supported; cache hits and completeness are not
+guaranteed by the model API.
 
-Unparseable scalar metadata is preserved as source-grounded text and flagged
-for human review. Fatal provider refusal or transport errors still fail the
-window. The workflow uses one combined discovery/schema model call per input
-window, followed by semantic reconciliation of plausible duplicates. Alias
-merges preserve evidence; incompatible types or definitions require explicit
-human review. Approved definitions are never silently retyped.
+The registry starts with the world's approved definitions. After each stage,
+exact normalized duplicates are reconciled deterministically; plausible ambiguous
+pairs are classified in batches with `{"same":[true,false,...]}`, one boolean
+per supplied pair. Candidate definitions are sent once per batch. Models cannot rename, remove or
+issue edit operations. First-seen canonical names win, dependent references are
+mapped by the backend, and new-candidate evidence is combined. Approved definitions
+are never mutated by extraction. Previously known definitions are reused; later
+chapters add missing properties and relationships. Conflicting property definitions
+remain flagged for human review. A final whole-run reconciliation uses the same
+decision memo to avoid repeating identical ambiguity calls.
+
+### Completeness, checkpoints and provider limits
+
+There are no discovery JSON `maxItems` or `maxLength` quotas, parser slices, or
+application-requested `max_tokens` values. Source selection has no 20-book cap;
+definition names and semantic types have no API validation length quota.
+Provider context windows, output limits/defaults and configured transport deadlines
+still apply. An oversized request can fail; the worker does not discard input,
+silently split away history, or certify a truncated output. Choose a model able
+to hold the chapter, registry and growing conversation. This pipeline does not
+automatically continue provider-truncated output; start a new run after choosing
+a suitable model. No extraction can guarantee semantic completeness without review.
+
+A checkpoint retains proposals after each successful stage. Only all four stages
+plus reconciliation can mark the chapter completed/sent. Invalid JSON, provider
+truncation/refusal, invalid evidence, unresolved endpoints, malformed definitions
+or validation issues fail the checkpoint. Earlier successful stage proposals remain
+inspectable in `GET /runs/{id}/windows`, but incomplete checkpoints are never
+reused as completed extraction. Cancellation is checked before and after every
+model call and between stages. Usage totals include every returned stage and
+ambiguity response, including responses subsequently rejected by validation.
+
+Checkpoint fingerprints include the complete chapter, evidence lookup, prior
+registry, model targets and stage contracts. A different earlier ontology cannot
+reuse a stale chapter extraction. Only completed V6 checkpoints are reusable.
+V5 runs remain readable; queue a new run to use V6. No database migration or
+automatic graph rewrite is required. Deploy/restart the ShreckWorld API and worker
+together after draining older jobs. Rollback leaves old records intact, but a
+rolled-back worker cannot reuse V6 checkpoints.
+
+Unparseable scalar metadata is preserved verbatim and flagged for human review;
+it is not guessed or silently converted. Human approval remains mandatory.
 
 Existing property CRUD accepts `semantic_type`, `definition` and
 `value_schema`; these fields also appear in the graph and proposal review

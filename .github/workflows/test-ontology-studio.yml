@@ -9,12 +9,14 @@ on:
       - "shreckworld/app/integrations/shreckllm.py"
       - "shreckworld/app/services/ontology_run_reporting.py"
       - "shreckworld/app/services/ontology_discovery_batches.py"
+      - "shreckworld/app/services/ontology_sequential.py"
       - "shreckworld/app/api/routers/ontology_studio.py"
       - "shreckworld/app/tasks/architect_learn_ontology.py"
       - "shreckworld/tests/test_ontology_studio.py"
       - "shreckworld/tests/test_ontology_schema_v3.py"
       - "shreckworld/tests/test_ontology_semantics_v4.py"
-      - "shreckworld/tests/test_ontology_adaptive_splits.py"
+      - "shreckworld/tests/test_ontology_sequential.py"
+      - "shreckworld/tests/test_ontology_partial_discovery.py"
       - "shreckworld/tests/test_ontology_discovery_batches.py"
       - "shreckworld/tests/test_ontology_job_monitor.py"
       - "shreckconfig/**"
@@ -36,7 +38,7 @@ jobs:
           python -m pip install pytest "SQLAlchemy>=2.0,<2.1" "pydantic>=2.6,<3" \
             "pydantic-settings>=2.2,<3" "fastapi>=0.110,<0.112" \
             "httpx>=0.27,<0.29" "neo4j>=5.20,<7" "celery>=5.3,<6" "python-multipart>=0.0.9,<1" \
-            "python-jose[cryptography]>=3.3,<4" "python-dotenv>=1,<2" "PyYAML>=6"
+            "python-jose[cryptography]>=3.3,<4" "python-dotenv>=1,<2" "PyYAML>=6" "PyMuPDF>=1.24,<2" "PyPDF2>=3,<4"
           python -m pip install -e ./shreckconfig --no-deps
           python -m pip install -e ./shreckdoc --no-deps
       - name: Compile Ontology Studio
@@ -47,10 +49,11 @@ jobs:
             shreckworld/app/integrations/shreckllm.py \
             shreckworld/app/services/ontology_run_reporting.py \
             shreckworld/app/services/ontology_discovery_batches.py \
+            shreckworld/app/services/ontology_sequential.py \
             shreckworld/app/api/routers/ontology_studio.py \
             shreckworld/app/tasks/architect_learn_ontology.py \
             shrecknet/app/core/config_store.py \
             shrecknet/app/api/routers/configurations.py
       - name: Focused ontology regression tests
         working-directory: shreckworld
-        run: python -m pytest tests/test_ontology_studio.py tests/test_ontology_discovery_batches.py tests/test_ontology_job_monitor.py tests/test_ontology_schema_v3.py tests/test_ontology_semantics_v4.py tests/test_ontology_adaptive_splits.py -q
+        run: python -m pytest tests/test_ontology_studio.py tests/test_ontology_discovery_batches.py tests/test_ontology_job_monitor.py tests/test_ontology_schema_v3.py tests/test_ontology_semantics_v4.py tests/test_ontology_sequential.py tests/test_ontology_partial_discovery.py -q

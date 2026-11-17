@@ -76,7 +76,7 @@ def example_response():
 
 
 def test_v3_is_nested_schema_only_with_multigame_grounding():
-    assert CONTRACT_VERSION == "ontology-schema-v5"
+    assert CONTRACT_VERSION == "ontology-schema-v6"
     assert set(DISCOVERY_SCHEMA["properties"]) == {"e"}
     shape = DISCOVERY_SCHEMA["properties"]["e"]["items"]
     assert set(shape["properties"]) == {"n", "d", "b", "p", "r"}
@@ -240,7 +240,7 @@ def test_token_bounded_windows_retain_all_explanatory_text():
     b = {row.id: row for row in [
         block("b1", original, 1), block("b2", "A Passion is a trait", 2),
         block("b3", "Character", 3), block("b4", "Glory", 4)]}
-    batches = build_discovery_batches(make_map(), b)
+    batches = build_discovery_batches(make_map(), b, max_input_tokens=MAX_INPUT_TOKENS)
     assert MAX_INPUT_TOKENS <= 4000
     assert len(batches) > 3
     pieces = [frag["text"] for batch in batches for section in batch["sections"]
@@ -265,7 +265,7 @@ def test_sqlite_window_uses_current_contract_version(tmp_path):
         db.commit()
     with Session(engine) as db:
         item = db.query(OntologyLearnWindow).one()
-        assert item.contract_version == "ontology-schema-v5"
+        assert item.contract_version == "ontology-schema-v6"
         assert item.output_tokens == 150
     engine.dispose()
 

@@ -1,9 +1,12 @@
-"""Compact, evidence-bound RPG ontology *schema-only* learning contract (V5).
+"""Compact, evidence-bound RPG ontology *schema-only* learning contract (V6).
 
 Models discover world-scoped entity types, named semantic properties, reusable
 instance value schemas and directed relationships. Catalog entries and actual
 character instances are not ontology types. Numeric evidence is rehydrated server-side; the model never
-sees persisted block UUIDs. V5 invalidates old checkpoints by design.
+sees persisted block UUIDs. V6 invalidates old checkpoints by design.
+The active four-stage prompts live in ontology_sequential. DISCOVERY_PROMPT
+provides shared domain guidance; its combined output contract and the legacy
+RECONCILIATION_PROMPT are retained for compatibility, with no active task call site.
 """
 from __future__ import annotations
 
@@ -13,17 +16,11 @@ import math
 import re
 from difflib import SequenceMatcher
 
-CONTRACT_VERSION = "ontology-schema-v5"
+CONTRACT_VERSION = "ontology-schema-v6"
 TYPE_CODES = {
     "s": "text", "i": "integer", "f": "number", "b": "boolean",
     "d": "date", "dt": "datetime", "j": "json", "img": "image", "u": "url",
 }
-MAX_NAME = 100
-MAX_ENTITY_TYPES = 24
-MAX_PROPERTIES_PER_TYPE = 64
-MAX_RELATIONSHIPS_PER_TYPE = 12
-MAX_METADATA_PER_PROPERTY = 12
-MAX_INSTANCE_FIELDS = 12
 # Only unambiguously named examples of actual world instances are excluded
 # as entity TYPES. Named statistics and skills MUST be discovered as properties.
 KNOWN_INSTANCE_EXAMPLES = frozenset({
@@ -32,24 +29,24 @@ KNOWN_INSTANCE_EXAMPLES = frozenset({
     "str", "con", "dex", "app", "pow", "siz", "int", "edu",
 })
 
-EVIDENCE_SCHEMA = {"type": "array", "minItems": 1, "maxItems": 3,
+EVIDENCE_SCHEMA = {"type": "array", "minItems": 1,
                    "items": {"type": "integer", "minimum": 0}}
 METADATA_SCHEMA = {
-    "type": "array", "maxItems": MAX_METADATA_PER_PROPERTY,
+    "type": "array",
     "items": {"type": "object", "additionalProperties": False,
               "required": ["n", "t", "v"],
               "properties": {
-                  "n": {"type": "string", "maxLength": MAX_NAME},
+                  "n": {"type": "string"},
                   "t": {"type": "string", "enum": ["s", "i", "f", "b"]},
-                  "v": {"type": "string", "maxLength": 300},
+                  "v": {"type": "string"},
               }},
 }
 INSTANCE_FIELDS_SCHEMA = {
-    "type": "array", "maxItems": MAX_INSTANCE_FIELDS,
+    "type": "array",
     "items": {"type": "object", "additionalProperties": False,
               "required": ["n", "t", "r"],
               "properties": {
-                  "n": {"type": "string", "maxLength": MAX_NAME},
+                  "n": {"type": "string"},
                   "t": {"type": "string", "enum": list(TYPE_CODES)},
                   "r": {"type": "boolean"},
               }},
@@ -59,33 +56,33 @@ DISCOVERY_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["e"],
     "properties": {
-        "e": {"type": "array", "maxItems": MAX_ENTITY_TYPES, "items": {
+        "e": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "required": ["n", "d", "b", "p", "r"],
             "properties": {
-                "n": {"type": "string", "maxLength": MAX_NAME},
-                "d": {"type": "string", "maxLength": 300},
+                "n": {"type": "string"},
+                "d": {"type": "string"},
                 "b": EVIDENCE_SCHEMA,
-                "p": {"type": "array", "maxItems": MAX_PROPERTIES_PER_TYPE, "items": {
+                "p": {"type": "array", "items": {
                     "type": "object", "additionalProperties": False,
                     "required": ["n", "t", "s", "d", "m", "i", "b"],
                     "properties": {
-                        "n": {"type": "string", "maxLength": MAX_NAME},
+                        "n": {"type": "string"},
                         "t": {"type": "string", "enum": list(TYPE_CODES)},
-                        "s": {"type": "string", "maxLength": MAX_NAME},
-                        "d": {"type": "string", "maxLength": 300},
+                        "s": {"type": "string"},
+                        "d": {"type": "string"},
                         "m": METADATA_SCHEMA,
                         "i": INSTANCE_FIELDS_SCHEMA,
                         "b": EVIDENCE_SCHEMA,
                     },
                 }},
-                "r": {"type": "array", "maxItems": MAX_RELATIONSHIPS_PER_TYPE, "items": {
+                "r": {"type": "array", "items": {
                     "type": "object", "additionalProperties": False,
                     "required": ["n", "t", "d", "b"],
                     "properties": {
-                        "n": {"type": "string", "maxLength": MAX_NAME},
-                        "t": {"type": "string", "maxLength": MAX_NAME},
-                        "d": {"type": "string", "maxLength": 300},
+                        "n": {"type": "string"},
+                        "t": {"type": "string"},
+                        "d": {"type": "string"},
                         "b": EVIDENCE_SCHEMA,
                     },
                 }},
@@ -94,6 +91,7 @@ DISCOVERY_SCHEMA = {
     },
 }
 
+# Legacy combined prompt; V6 reuses only its RPG domain guidance.
 DISCOVERY_PROMPT = """You are the ShreckWorld Architect reading an RPG RULEBOOK.
 Discover reusable, world-local ontology entity TYPES, their typed PROPERTIES
 and genuine entity-to-entity RELATIONSHIPS. The owner's WORLD/ontology is
@@ -125,7 +123,7 @@ n=name, d=concise source-grounded description (empty ONLY if ungrounded),
 t=storage type code (s text, i integer, f number, b boolean, d date,
 dt datetime, j json, img image, u url); s=free-text semantic type
 (Skill, Characteristic, Resource, Trait, Rune, Passion, Cost, etc.) or "".
-m=up to 12 definition metadata fields {n:key,t:typecode(s/i/f/b),v:string};
+m=definition metadata fields {n:key,t:typecode(s/i/f/b),v:string};
 examples: base_chance, min, max, associated_characteristic, specializations,
 initialization_notes, but only when EVIDENCED. Never guess constraints.
 i=instance fields {n:name,t:typecode,r:boolean required}; for mutable
@@ -133,7 +131,7 @@ attributes include current_value with the SAME type as the property.
 For specialized state add improvement_mark, maximum, etc only if evidenced.
 The current_value slot is required for a stateful property even if nullable
 until initialized. Values of individual characters never appear in the schema.
-b=1-3 numbered input passage indexes. Cite every extracted definition.
+b=one or more numbered input passage indexes. Cite every extracted definition.
 Be mindful of derived values: do not invent separate editable properties for
 half/fifth thresholds or formulas; record dependencies as metadata and leave
 executable formulas for the subsequent Rule Discovery pass.
@@ -152,10 +150,7 @@ named cult; other cults may be catalog objects rather than entity TYPES.
 Pendragon: Knight may own trait and passion ratings, Sir Gawain is an instance.
 D&D: Class, Spell, Item can be entity TYPES; Wizard and Fireball are catalog
 entries, not new entity types. Do not impose these examples on another game.
-If the excerpt contains more definitions than fit in the response, return as many
-complete, well-supported definitions as possible. Never emit an overflow marker,
-partial JSON object, placeholder, or prose. Prioritize source order and complete
-each emitted entity, property, and relationship object before continuing.
+Return every supported definition; never deliberately omit definitions to fit a quota.
 Return no prose outside JSON."""
 
 RECONCILIATION_SCHEMA = {
@@ -173,6 +168,7 @@ RECONCILIATION_SCHEMA = {
         "review": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 0}},
     },
 }
+# Legacy operation contract; no active V6 call site (boolean classification replaces it).
 RECONCILIATION_PROMPT = """Return ONLY compact reconciliation operations:
 {merge:[[from_index,to_index]],rename:[[index,"CanonicalName"]],review:[index]}.
 Indexes reference candidate IDs in the input (not evidence or UUIDs).
@@ -318,7 +314,7 @@ def model_window(batch: dict, source_title: str) -> tuple[str, dict[int, dict]]:
                 lookup[number]["char_end"] = block["fragment_char_offset"] + len(block["text"])
             fragments.append({"i": number, "x": block["text"]})
         if fragments:
-            sections.append({"h": " > ".join(section["heading_path"][-2:]), "b": fragments})
+            sections.append({"h": " > ".join(section["heading_path"]), "b": fragments})
     payload = {"source": source_title, "chapter": batch["chapter_title"], "s": sections}
     return compact_json(payload), lookup
 
@@ -350,13 +346,13 @@ def proposal_key(p: dict) -> tuple:
 
 
 def _valid_name(value: object) -> str:
-    if not isinstance(value, str) or not 0 < len(value.strip()) <= MAX_NAME:
+    if not isinstance(value, str) or not value.strip():
         raise CompactContractError("invalid_compact_name")
     return value.strip()
 
 
 def _support(indices: object, lookup: dict[int, dict], base: dict) -> list[dict]:
-    if not isinstance(indices, list) or not 1 <= len(indices) <= 3:
+    if not isinstance(indices, list) or not indices:
         raise CompactContractError("invalid_compact_evidence")
     seen: set[int] = set()
     selected = []
@@ -394,11 +390,8 @@ def _metadata(items: object, *, warnings: list[dict] | None = None,
         if diagnostics is not None:
             diagnostics.append({"path": path, "code": "invalid_compact_metadata"})
         return {}
-    if len(items) > MAX_METADATA_PER_PROPERTY and diagnostics is not None:
-        diagnostics.append({"path": path, "code": "metadata_limit_exceeded",
-                            "message": f"Kept the first {MAX_METADATA_PER_PROPERTY} fields."})
     result: dict = {}
-    for index, item in enumerate(items[:MAX_METADATA_PER_PROPERTY]):
+    for index, item in enumerate(items):
         try:
             if not isinstance(item, dict) or set(item) != {"n", "t", "v"}:
                 raise CompactContractError("invalid_compact_metadata")
@@ -412,8 +405,6 @@ def _metadata(items: object, *, warnings: list[dict] | None = None,
                 if raw is None or isinstance(raw, (dict, list)):
                     raise CompactContractError("invalid_compact_metadata")
                 raw = str(raw)
-            if len(raw) > 300:
-                raise CompactContractError("invalid_compact_metadata")
         except CompactContractError as exc:
             if diagnostics is None:
                 raise
@@ -460,7 +451,7 @@ def _metadata(items: object, *, warnings: list[dict] | None = None,
 
 
 def _instance_schema(fields: object, data_type: str) -> dict:
-    if not isinstance(fields, list) or len(fields) > MAX_INSTANCE_FIELDS:
+    if not isinstance(fields, list):
         raise CompactContractError("invalid_compact_instance_schema")
     schema: dict = {}
     for field in fields:
@@ -484,7 +475,7 @@ def _instance_schema(fields: object, data_type: str) -> dict:
 
 
 def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
-                    *, stats: dict | None = None) -> list[dict]:
+                    *, stats: dict | None = None, known_entities=()) -> list[dict]:
     """Keep valid nested definitions and report malformed parts for review."""
     if not isinstance(data, dict) or "e" not in data:
         raise CompactContractError("invalid_compact_envelope")
@@ -497,11 +488,7 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
     stats.setdefault("unresolved_relationships", 0)
     stats.setdefault("metadata_warnings", 0)
     stats.setdefault("malformed_parts", [])
-    if len(entities) > MAX_ENTITY_TYPES:
-        stats["malformed_parts"].append({"path": "e", "code": "entity_limit_exceeded",
-                                        "message": f"Kept the first {MAX_ENTITY_TYPES} entities."})
-        entities = entities[:MAX_ENTITY_TYPES]
-    names: dict[str, str] = {}
+    names: dict[str, str] = {_normalized_entity_name(n): n for n in known_entities}
     source_entities = []
     suppressed = {_normalized_entity_name(x) for x in KNOWN_INSTANCE_EXAMPLES}
     for entity_index, item in enumerate(entities):
@@ -510,7 +497,7 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
             if not isinstance(item, dict) or set(item) != {"n", "d", "b", "p", "r"}:
                 raise CompactContractError("invalid_compact_entity")
             name = _valid_name(item["n"])
-            if (not isinstance(item["d"], str) or len(item["d"]) > 300 or
+            if (not isinstance(item["d"], str) or
                 not isinstance(item["p"], list) or not isinstance(item["r"], list)):
                 raise CompactContractError("invalid_compact_entity")
             support = _support(item["b"], lookup, base)
@@ -518,8 +505,6 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
             stats["malformed_parts"].append({"path": path, "code": exc.code,
                                             "name": item.get("n") if isinstance(item, dict) else None})
             continue
-        if len(item["p"]) > MAX_PROPERTIES_PER_TYPE or len(item["r"]) > MAX_RELATIONSHIPS_PER_TYPE:
-            stats["malformed_parts"].append({"path": path, "code": "nested_item_limit_exceeded"})
         key = _normalized_entity_name(name)
         if key in suppressed:
             stats["suppressed_instances"] += 1
@@ -530,7 +515,7 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
     for entity_index, item, name, support in source_entities:
         results.append({"kind": "entity", "name": name, "description": item["d"].strip(),
                         "evidence": support})
-        for prop_index, prop in enumerate(item["p"][:MAX_PROPERTIES_PER_TYPE]):
+        for prop_index, prop in enumerate(item["p"]):
             path = f"e[{entity_index}].p[{prop_index}]"
             try:
                 if not isinstance(prop, dict) or set(prop) != {"n", "t", "s", "d", "m", "i", "b"}:
@@ -538,8 +523,8 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
                 code = prop["t"]
                 if not isinstance(code, str) or code not in TYPE_CODES:
                     raise CompactContractError("invalid_compact_type")
-                if (not isinstance(prop["s"], str) or len(prop["s"]) > MAX_NAME
-                    or not isinstance(prop["d"], str) or len(prop["d"]) > 300):
+                if (not isinstance(prop["s"], str)
+                    or not isinstance(prop["d"], str)):
                     raise CompactContractError("invalid_compact_property")
                 data_type = TYPE_CODES[code]
                 metadata_warnings: list[dict] = []
@@ -565,14 +550,14 @@ def parse_discovery(data: dict, lookup: dict[int, dict], base: dict,
             except CompactContractError as exc:
                 stats["malformed_parts"].append({"path": path, "code": exc.code,
                                                 "name": prop.get("n") if isinstance(prop, dict) else None})
-        for rel_index, relation in enumerate(item["r"][:MAX_RELATIONSHIPS_PER_TYPE]):
+        for rel_index, relation in enumerate(item["r"]):
             path = f"e[{entity_index}].r[{rel_index}]"
             try:
                 if not isinstance(relation, dict) or set(relation) != {"n", "t", "d", "b"}:
                     raise CompactContractError("invalid_compact_relationship")
                 target_key = _normalized_entity_name(_valid_name(relation["t"]))
                 support = _support(relation["b"], lookup, base)
-                if not isinstance(relation["d"], str) or len(relation["d"]) > 300:
+                if not isinstance(relation["d"], str):
                     raise CompactContractError("invalid_compact_relationship")
                 if target_key not in names:
                     stats["unresolved_relationships"] += 1

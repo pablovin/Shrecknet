@@ -65,6 +65,8 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## ShreckWorld
 
+- [Ontology Studio](./API/ONTOLOGY_STUDIO_API.md) — sequential chapter conversations, append-only schema discovery, evidence validation and review.
+
 - [ShreckWorld Agent](./Agents/ShreckWorld/ShreckWorld%20Agent.md) — independent planned-evidence pipeline, coverage rules, persisted job lifecycle, and operations
 - [ShreckWorld game engine API, Phase 1](./API/SHRECKWORLD_GAME_ENGINE_API.md) — ruleset drafts/publication, ontology bindings, placeholder generation runs, and ShreckTable administration
 

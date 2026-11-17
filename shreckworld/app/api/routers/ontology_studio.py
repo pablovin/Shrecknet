@@ -33,7 +33,7 @@ class Versioned(Strict):
     expected_revision: int = Field(ge=0)
 
 class EntityCreate(Versioned):
-    name: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1)
     description: str = ""
     aliases: list[str] = Field(default_factory=list)
     parent_id: str | None = None
@@ -45,7 +45,7 @@ class EntityPatch(Versioned):
     parent_id: str | None = None
 
 class PropertyCreate(Versioned):
-    name: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1)
     data_type: str
     description: str = ""
     required: bool = False
@@ -67,7 +67,7 @@ class PropertyPatch(Versioned):
     value_schema: dict | None = None
 
 class RelationshipCreate(Versioned):
-    name: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1)
     source_id: str
     target_id: str
     description: str = ""
@@ -84,12 +84,12 @@ class RelationshipPatch(Versioned):
 
 class LearnRequest(Strict):
     idempotency_key: str = Field(min_length=1, max_length=128)
-    source_ids: list[str] = Field(min_length=1, max_length=20)
+    source_ids: list[str] = Field(min_length=1)
     chapter_ids: dict[str, list[str]] | None = None
 
 class ProposalEdit(Strict):
     expected_proposal_revision: int = Field(ge=0)
-    name: str | None = Field(default=None, min_length=1, max_length=200)
+    name: str | None = Field(default=None, min_length=1)
     description: str | None = None
     entity: str | None = None
     source: str | None = None
@@ -102,7 +102,7 @@ class ProposalEdit(Strict):
 class ProposalCreate(Strict):
     expected_proposal_revision: int = Field(ge=0)
     kind: str
-    name: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1)
     description: str = ""
     entity: str | None = None
     source: str | None = None

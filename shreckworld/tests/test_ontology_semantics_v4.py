@@ -75,7 +75,7 @@ def test_instance_template_inherits_and_supports_extra_skill_state(db):
 
 
 def test_v4_source_evidence_and_semantic_fields():
-    assert CONTRACT_VERSION == "ontology-schema-v5"
+    assert CONTRACT_VERSION == "ontology-schema-v6"
     lookup = {0: {"block_id": "b1", "section_id": "s1", "fragment_index": 0}}
     base = {"source_id": "source", "document_id": "doc", "chapter_id": "chapter",
             "chapter_title": "Skills", "content_digest": "digest"}

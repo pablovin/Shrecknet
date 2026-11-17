@@ -639,6 +639,39 @@ def _merge_definition(target: dict, source: dict) -> None:
                                              "required": True, "nullable": True})
 
 
+def _merge_existing_conflict(target: dict, incoming: dict) -> None:
+    """Propagate independent within-chapter conflicts across later reconciliations."""
+    incoming_conflict = incoming.get("conflict")
+    if not isinstance(incoming_conflict, dict):
+        return
+    previous = target.get("conflict")
+    if not isinstance(previous, dict):
+        target["conflict"] = dict(incoming_conflict)
+        return
+    reasons = []
+    for item in (previous, incoming_conflict):
+        source_reasons = item.get("reasons") or [item.get("reason")]
+        for reason in source_reasons:
+            if reason and reason not in reasons:
+                reasons.append(reason)
+    fields = list(dict.fromkeys([*(previous.get("fields") or []),
+                                 *(incoming_conflict.get("fields") or [])]))
+    alternatives = list(previous.get("alternatives") or [])
+    seen = {compact_json(value) for value in alternatives}
+    for item in incoming_conflict.get("alternatives") or []:
+        key = compact_json(item)
+        if key not in seen:
+            seen.add(key)
+            alternatives.append(item)
+    target["conflict"] = {
+        **previous,
+        "reason": reasons[0] if len(reasons) == 1 else "multiple_source_conflicts",
+        **({"reasons": reasons} if len(reasons) > 1 else {}),
+        **({"fields": fields} if fields else {}),
+        **({"alternatives": alternatives} if alternatives else {}),
+    }
+
+
 def accumulate(found: dict, proposal: dict) -> None:
     """Merge exact-name candidates, preserving provenance and detecting conflicts."""
     key = proposal_key(proposal)
@@ -647,6 +680,7 @@ def accumulate(found: dict, proposal: dict) -> None:
         return
     old = found[key]
     _merge_definition(old, proposal)
+    _merge_existing_conflict(old, proposal)
     warnings = {compact_json(v): v for v in old.get("validation_warnings", [])}
     warnings.update({compact_json(v): v for v in proposal.get("validation_warnings", [])})
     if warnings:

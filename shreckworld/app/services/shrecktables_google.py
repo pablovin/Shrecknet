@@ -163,6 +163,26 @@ def create_calendar(db: Session, table: Table, connection: GoogleConnection) -> 
     return calendar_id
 
 
+def link_existing_calendar(db: Session, table: Table, connection: GoogleConnection,
+                           calendar_id: str | None = None) -> str:
+    """Adopt an existing calendar only after verifying organizer write permissions."""
+    selected = calendar_id or table.calendar_id
+    if not selected:
+        raise HTTPException(422, "Calendar ID required")
+    token = access_token(connection)
+    try:
+        item = google("GET", CALENDAR_BASE + "/users/me/calendarList/" + quote(selected, safe=""), token)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(409, "Connected Google account cannot access this calendar") from exc
+    if item.get("accessRole") not in {"owner", "writer"}:
+        raise HTTPException(403, "Google account needs writer access to this calendar")
+    table.calendar_id = selected
+    table.google_connection_id = connection.id
+    table.revision += 1
+    db.commit()
+    return selected
+
+
 def _configure_auto_artifacts(token: str, meet_uri: str, table: Table) -> str | None:
     match = re.fullmatch(r"https://meet\.google\.com/([a-z]{3}-[a-z]{4}-[a-z]{3})", meet_uri)
     if not match:

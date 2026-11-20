@@ -22,3 +22,10 @@ celery_app.conf.update(
         "shreckworld.shrecktables.*": {"queue": "shreckworld_agent"},
     },
 )
+
+celery_app.conf.beat_schedule = {
+    "shrecktables-post-meet-reconciliation": {
+        "task": "shreckworld.shrecktables.reconcile",
+        "schedule": 900.0,
+    },
+}

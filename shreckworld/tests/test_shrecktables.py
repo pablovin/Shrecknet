@@ -96,5 +96,9 @@ def test_session_attachments_are_private_and_correctly_scoped(api, monkeypatch):
     file_id = uploaded.json()["id"]
     download = client.get(f"/api/v1/shrecktables/tables/{table_id}/sessions/{session_id}/attachments/{file_id}",headers=headers)
     assert download.status_code == 200 and download.content == b"The mysterious forest"
+    from app.main import app
+    from app.api.deps import get_current_user
+    app.dependency_overrides.pop(get_current_user)
     assert client.get(f"/api/v1/shrecktables/tables/{table_id}/sessions/{session_id}/attachments/{file_id}").status_code == 401
+    app.dependency_overrides[get_current_user] = lambda: __import__("app.api.deps", fromlist=["ShrecknetPrincipal"]).ShrecknetPrincipal(user_id="1", role="admin")
     assert client.get(f"/api/v1/shrecktables/tables/{table_id}/sessions/{session_id}/attachments",headers=headers).json()[0]["id"] == file_id

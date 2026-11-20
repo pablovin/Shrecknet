@@ -146,6 +146,18 @@ def _session_read(session: Session, row: TableSession) -> dict:
                 polls=[_poll_read(session, poll) for poll in polls])
 
 
+def _enqueue_sync(db: Session, row: TableSession) -> None:
+    if row.calendar_sync_status != "pending":
+        return
+    try:
+        from app.tasks.shrecktables import synchronize_session
+        synchronize_session.delay(row.id)
+    except Exception:
+        row.calendar_sync_status = "failed"
+        row.calendar_sync_error = "Background calendar worker unavailable"
+        db.commit()
+
+
 class CreateTable(BaseModel):
     world_id: str = Field(min_length=1, max_length=64)
     ontology_id: int = Field(gt=0)
@@ -377,6 +389,7 @@ def create_session(table_id: int, body: SessionCreate,
                        calendar_sync_status="pending" if date and table.calendar_id else "not_configured")
     session.add(row)
     session.commit()
+    _enqueue_sync(session, row)
     return _session_read(session, row)
 
 
@@ -401,6 +414,7 @@ def patch_session(table_id: int, session_id: int, body: SessionCreate,
     row.calendar_sync_status = "pending" if table.calendar_id else "not_configured"
     row.revision += 1
     session.commit()
+    _enqueue_sync(session, row)
     return _session_read(session, row)
 
 
@@ -503,6 +517,7 @@ def finalize_poll(table_id: int, session_id: int, poll_id: int, body: FinalizeRe
     row.calendar_sync_status = "pending" if table.calendar_id else "not_configured"
     row.revision += 1
     session.commit()
+    _enqueue_sync(session, row)
     return _session_read(session, row)
 
 

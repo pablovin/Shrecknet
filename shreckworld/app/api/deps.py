@@ -52,7 +52,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> ShrecknetPrincipal:
         settings = get_settings()
         claims = jwt.decode(token, key, algorithms=["RS256"], audience=settings.shrecknet_jwt_audience, issuer=settings.shrecknet_jwt_issuer)
         user_id, role = str(claims.get("sub") or ""), str(claims.get("role") or "")
-        if not user_id or role not in {"admin", "world_builder", "writer", "architect", "player"}:
+        if not user_id or role not in {"admin", "world_builder", "writer", "architect", "player", "gm"}:
             raise JWTError("invalid claims")
         if claims.get("sid"):
             _verify_browser_session(token, user_id, role)

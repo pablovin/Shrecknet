@@ -19,7 +19,7 @@ def new_id() -> str:
 
 class Table(Base):
     __tablename__ = "shrecktables"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     world_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     ontology_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
@@ -44,8 +44,8 @@ class Table(Base):
 class TableMember(Base):
     __tablename__ = "shrecktables_members"
     __table_args__ = (UniqueConstraint("table_id", "user_id", name="uq_shrecktables_member"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    table_id: Mapped[str] = mapped_column(ForeignKey("shrecktables.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("shrecktables.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     role: Mapped[str] = mapped_column(String(16), default="player", nullable=False)
     character_agent_id: Mapped[str | None] = mapped_column(String(64))
@@ -55,8 +55,8 @@ class TableMember(Base):
 
 class TableSession(Base):
     __tablename__ = "shrecktables_sessions"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    table_id: Mapped[str] = mapped_column(ForeignKey("shrecktables.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("shrecktables.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
     location: Mapped[str | None] = mapped_column(String(255))
@@ -81,10 +81,10 @@ class TableSession(Base):
 
 class TablePoll(Base):
     __tablename__ = "shrecktables_polls"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    session_id: Mapped[str] = mapped_column(ForeignKey("shrecktables_sessions.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("shrecktables_sessions.id", ondelete="CASCADE"), index=True)
     is_finalized: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    finalized_option_id: Mapped[str | None] = mapped_column(String(36))
+    finalized_option_id: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     session: Mapped[TableSession] = relationship(back_populates="polls")
     options: Mapped[list["TablePollOption"]] = relationship(back_populates="poll", cascade="all, delete-orphan")
@@ -92,8 +92,8 @@ class TablePoll(Base):
 
 class TablePollOption(Base):
     __tablename__ = "shrecktables_poll_options"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    poll_id: Mapped[str] = mapped_column(ForeignKey("shrecktables_polls.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    poll_id: Mapped[int] = mapped_column(ForeignKey("shrecktables_polls.id", ondelete="CASCADE"), index=True)
     proposed_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     poll: Mapped[TablePoll] = relationship(back_populates="options")
     votes: Mapped[list["TablePollVote"]] = relationship(back_populates="option", cascade="all, delete-orphan")
@@ -102,8 +102,8 @@ class TablePollOption(Base):
 class TablePollVote(Base):
     __tablename__ = "shrecktables_poll_votes"
     __table_args__ = (UniqueConstraint("option_id", "user_id", name="uq_shrecktables_vote"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    option_id: Mapped[str] = mapped_column(ForeignKey("shrecktables_poll_options.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    option_id: Mapped[int] = mapped_column(ForeignKey("shrecktables_poll_options.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     option: Mapped[TablePollOption] = relationship(back_populates="votes")
@@ -112,8 +112,8 @@ class TablePollVote(Base):
 class TableAttendance(Base):
     __tablename__ = "shrecktables_attendance"
     __table_args__ = (UniqueConstraint("session_id", "user_id", name="uq_shrecktables_attendance"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    session_id: Mapped[str] = mapped_column(ForeignKey("shrecktables_sessions.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("shrecktables_sessions.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     attending: Mapped[bool] = mapped_column(Boolean, nullable=False)
     responded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -123,8 +123,8 @@ class TableAttendance(Base):
 class TableAttachment(Base):
     __tablename__ = "shrecktables_attachments"
     __table_args__ = (UniqueConstraint("session_id", "source", "external_id", name="uq_shrecktables_import"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    session_id: Mapped[str] = mapped_column(ForeignKey("shrecktables_sessions.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("shrecktables_sessions.id", ondelete="CASCADE"), index=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     media_type: Mapped[str] = mapped_column(String(120), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(512), nullable=False)

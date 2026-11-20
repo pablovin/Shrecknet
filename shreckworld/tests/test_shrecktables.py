@@ -102,3 +102,56 @@ def test_session_attachments_are_private_and_correctly_scoped(api, monkeypatch):
     assert client.get(f"/api/v1/shrecktables/tables/{table_id}/sessions/{session_id}/attachments/{file_id}").status_code == 401
     app.dependency_overrides[get_current_user] = lambda: __import__("app.api.deps", fromlist=["ShrecknetPrincipal"]).ShrecknetPrincipal(user_id="1", role="admin")
     assert client.get(f"/api/v1/shrecktables/tables/{table_id}/sessions/{session_id}/attachments",headers=headers).json()[0]["id"] == file_id
+
+
+def test_legacy_import_is_idempotent_and_does_not_recreate_google_events(api):
+    import sqlite3
+    from app.db.session import session_factory
+    from app.models.shrecktables import Table, TableSession, TablePoll, TablePollOption, TablePollVote
+    from scripts.migrate_shrecktables import Importer
+    from sqlalchemy import select, func
+
+    rpg = sqlite3.connect(":memory:")
+    rpg.row_factory = sqlite3.Row
+    try:
+        rpg.executescript("""
+            CREATE TABLE games (id INTEGER, ontology_id INTEGER, owner_user_id INTEGER,
+                                name TEXT, google_calendar_id TEXT, vtt TEXT);
+            CREATE TABLE game_memberships (id INTEGER, game_id INTEGER, user_id INTEGER, role TEXT);
+            CREATE TABLE game_sessions (id INTEGER, game_id INTEGER, title TEXT, scheduled_date TEXT,
+                   scheduled_timezone TEXT, google_event_id TEXT, google_meet_link TEXT, location TEXT, summary TEXT);
+            CREATE TABLE game_session_attendance (id INTEGER, session_id INTEGER, user_id INTEGER, attending INTEGER, responded_at TEXT);
+            CREATE TABLE game_session_polls (id INTEGER, session_id INTEGER, is_finalized INTEGER, finalized_option_id INTEGER);
+            CREATE TABLE game_session_poll_options (id INTEGER, poll_id INTEGER, proposed_start TEXT);
+            CREATE TABLE game_session_poll_votes (id INTEGER, option_id INTEGER, user_id INTEGER);
+            INSERT INTO games VALUES (12, 7, 1, 'Cthulhu', 'original-calendar', NULL);
+            INSERT INTO game_memberships VALUES (1, 12, 2, 'member');
+            INSERT INTO game_sessions VALUES (41, 12, 'First case', '2027-02-09T19:00:00+00:00',
+                  'Europe/Brussels', 'existing-google-event', 'https://meet.google.com/abc-defg-hij', NULL, NULL);
+            INSERT INTO game_session_attendance VALUES (1, 41, 2, 1, '2027-01-01T12:00:00Z');
+            INSERT INTO game_session_polls VALUES (5, 41, 1, 8);
+            INSERT INTO game_session_poll_options VALUES (8, 5, '2027-02-09T19:00:00+00:00');
+            INSERT INTO game_session_poll_votes VALUES (2, 8, 2);
+        """)
+        with session_factory()() as db:
+            first = Importer(db, {"7": "canonical-world"}, apply=True)
+            first.import_rpg(rpg)
+            first.import_engine()
+            db.commit()
+        with session_factory()() as db:
+            repeated = Importer(db, {"7": "canonical-world"}, apply=True)
+            repeated.import_rpg(rpg)
+            repeated.import_engine()
+            db.commit()
+            tables = db.scalars(select(Table)).all()
+            sessions = db.scalars(select(TableSession)).all()
+            polls = db.scalars(select(TablePoll)).all()
+            assert len(tables) == len(sessions) == len(polls) == 1
+            assert db.scalar(select(func.count()).select_from(TablePollOption)) == 1
+            assert db.scalar(select(func.count()).select_from(TablePollVote)) == 1
+            assert sessions[0].google_event_id == "existing-google-event"
+            assert sessions[0].google_meet_url == "https://meet.google.com/abc-defg-hij"
+            assert polls[0].finalized_option_id is not None
+            assert tables[0].calendar_id == "original-calendar"
+    finally:
+        rpg.close()

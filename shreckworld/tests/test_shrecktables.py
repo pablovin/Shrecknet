@@ -10,7 +10,7 @@ def mock_contracts(monkeypatch):
             return {"id": "world-1", "name": "Pendragon", "ontology_ids": [7]}
         if path.startswith("/contracts/users?"):
             return [{"id": int(value), "username": "player" + value, "full_name": "Player " + value, "avatar_url": None}
-                    for value in path.split("?", 1)[1].split("&") if (value := value.split("=")[-1])]
+                    for pair in path.split("?", 1)[1].split("&") for value in [pair.split("=")[-1]]]
         if path.startswith("/contracts/users/"):
             ident = path.rsplit("/", 1)[-1]
             return {"id": ident, "full_name": "Player " + ident, "role": "player", "email": "test@example.com"}

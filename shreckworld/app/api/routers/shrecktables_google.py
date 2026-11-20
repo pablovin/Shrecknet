@@ -80,6 +80,21 @@ def table_calendar(table_id: int, connection_id: str,
     return {"calendar_id": calendar_id, "connection_id": connection.id}
 
 
+@router.post("/tables/{table_id}/calendar/connect-existing")
+def connect_existing_calendar(table_id: int, connection_id: str,
+                              calendar_id: str | None = None,
+                              actor: ShrecknetPrincipal = Depends(get_current_user),
+                              db: Session = Depends(get_db)):
+    table = _table(db, table_id, actor, manage=True)
+    connection = db.get(GoogleConnection, connection_id)
+    if not connection or connection.status != "connected":
+        raise HTTPException(404, "Google connection unavailable")
+    if actor.role not in {"admin", "world_builder"} and connection.owner_user_id != actor.user_id:
+        raise HTTPException(403, "Connect your own Google account")
+    selected = service.link_existing_calendar(db, table, connection, calendar_id)
+    return {"calendar_id": selected, "connection_id": connection.id}
+
+
 @router.post("/tables/{table_id}/sessions/{session_id}/sync-google")
 def sync_google(table_id: int, session_id: int, actor: ShrecknetPrincipal = Depends(get_current_user),
                 db: Session = Depends(get_db)):

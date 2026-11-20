@@ -237,7 +237,7 @@ def create_table(body: CreateTable, token: str = Depends(oauth2_scheme),
         raise HTTPException(403, "GM or Admin required")
     _zone(body.timezone)
     resolve_ontology(body.ontology_id, token)
-    world = shrecknet_read("/worlds/" + body.world_id, token)
+    world = shrecknet_read("/contracts/worlds/" + body.world_id, token)
     if not isinstance(world, dict) or body.ontology_id not in world.get("ontology_ids", []):
         raise HTTPException(409, "Ontology does not belong to the selected world")
     row = Table(**body.model_dump(), created_by=actor.user_id)
@@ -330,11 +330,24 @@ def remove_member(table_id: int, user_id: str, actor: ShrecknetPrincipal = Depen
 
 
 @router.get("/tables/{table_id}/members")
-def list_members(table_id: int, actor: ShrecknetPrincipal = Depends(get_current_user),
+def list_members(table_id: int, token: str = Depends(oauth2_scheme),
+                 actor: ShrecknetPrincipal = Depends(get_current_user),
                  session: Session = Depends(get_db)):
     row = _table(session, table_id, actor)
+    member_ids = [int(m.user_id) for m in row.memberships]
+    profiles = {}
+    for start in range(0, len(member_ids), 100):
+        batch = member_ids[start:start + 100]
+        query = "?" + "&".join("ids=" + str(user_id) for user_id in batch)
+        summaries = shrecknet_read("/contracts/users" + query, token)
+        if not isinstance(summaries, list):
+            raise HTTPException(503, "Member profiles unavailable")
+        profiles.update({int(info["id"]): info for info in summaries})
     return [{"id": int(m.user_id), "user_id": m.user_id, "role": m.role,
-             "username": m.user_id, "full_name": m.user_id, "avatar_url": None} for m in row.memberships]
+             "username": profiles.get(int(m.user_id), {}).get("username", m.user_id),
+             "full_name": profiles.get(int(m.user_id), {}).get("full_name", m.user_id),
+             "avatar_url": profiles.get(int(m.user_id), {}).get("avatar_url")}
+            for m in row.memberships]
 
 
 @router.post("/tables/{table_id}/archive")

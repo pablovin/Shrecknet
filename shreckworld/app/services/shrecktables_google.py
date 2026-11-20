@@ -12,7 +12,7 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import httpx
@@ -76,9 +76,9 @@ def oauth_finish(db: Session, state: str, code: str) -> GoogleConnection:
     row = db.get(GoogleOAuthState, state)
     if not row:
         raise HTTPException(400, "Invalid or expired Google authorization")
+    owner_id, verifier, expiry = row.owner_user_id, row.verifier, row.expires_at
     db.delete(row)
     db.commit()  # One use only, even if token exchange fails.
-    expiry = row.expires_at
     expiry = expiry if expiry.tzinfo else expiry.replace(tzinfo=timezone.utc)
     if expiry <= datetime.now(timezone.utc):
         raise HTTPException(400, "Google authorization expired")
@@ -86,7 +86,7 @@ def oauth_finish(db: Session, state: str, code: str) -> GoogleConnection:
         response = client.post(GOOGLE_TOKEN_URL, data={
             "code": code, "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret, "redirect_uri": settings.google_redirect_uri,
-            "grant_type": "authorization_code", "code_verifier": row.verifier,
+            "grant_type": "authorization_code", "code_verifier": verifier,
         })
         if response.status_code != 200:
             raise HTTPException(502, "Google authorization failed")
@@ -103,7 +103,7 @@ def oauth_finish(db: Session, state: str, code: str) -> GoogleConnection:
         if not email or who.json().get("email_verified") is False:
             raise HTTPException(502, "Google email is not verified")
     existing = db.scalar(select(GoogleConnection).where(
-        GoogleConnection.owner_user_id == row.owner_user_id,
+        GoogleConnection.owner_user_id == owner_id,
         GoogleConnection.email == email))
     if existing:
         existing.encrypted_refresh_token = _fernet().encrypt(refresh.encode()).decode()
@@ -111,7 +111,7 @@ def oauth_finish(db: Session, state: str, code: str) -> GoogleConnection:
         existing.status = "connected"
         connection = existing
     else:
-        connection = GoogleConnection(owner_user_id=row.owner_user_id, email=email,
+        connection = GoogleConnection(owner_user_id=owner_id, email=email,
             encrypted_refresh_token=_fernet().encrypt(refresh.encode()).decode(),
             scopes=credentials.get("scope", ""), status="connected")
         db.add(connection)
@@ -146,7 +146,9 @@ def google(method: str, url: str, token: str, *, params=None, body=None, raw: bo
         response = client.request(method, url, params=params, json=body,
                                   headers={"Authorization": "Bearer " + token})
     response.raise_for_status()
-    return response.content if raw else response.json()
+    if raw:
+        return response.content
+    return response.json() if response.content else {}
 
 
 def create_calendar(db: Session, table: Table, connection: GoogleConnection) -> str:
@@ -199,11 +201,11 @@ def sync_event(db: Session, session_id: int) -> str:
         return "failed"
     try:
         token = access_token(connection)
-        url = CALENDAR_BASE + "/calendars/" + __import__("urllib.parse", fromlist=["quote"]).quote(table.calendar_id, safe="") + "/events"
+        url = CALENDAR_BASE + "/calendars/" + quote(table.calendar_id, safe="") + "/events"
         if row.scheduled_at_utc is None or row.status != "scheduled":
             if row.google_event_id:
                 try:
-                    google("DELETE", url + "/" + row.google_event_id, token)
+                    google("DELETE", url + "/" + quote(row.google_event_id, safe=""), token)
                 except httpx.HTTPStatusError as exc:
                     if exc.response.status_code not in {404, 410}:
                         raise
@@ -232,7 +234,7 @@ def sync_event(db: Session, session_id: int) -> str:
                 event = google("GET", url + "/" + event_id, token)
             row.google_event_id = event_id
         else:
-            event = google("PATCH", url + "/" + row.google_event_id, token,
+            event = google("PATCH", url + "/" + quote(row.google_event_id, safe=""), token,
                            params={"conferenceDataVersion": 1}, body=body)
         row.google_meet_url = event.get("hangoutLink") or row.google_meet_url
         if not row.google_meet_url:

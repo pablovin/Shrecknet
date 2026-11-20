@@ -268,6 +268,9 @@ def sync_event(db: Session, session_id: int) -> str:
         if row.google_meet_url:
             try:
                 row.meet_space = _configure_auto_artifacts(token, row.google_meet_url, table)
+                if (table.auto_notes or table.auto_transcript) and not row.meet_space:
+                    row.calendar_sync_status = "partial"
+                    row.calendar_sync_error = "Meet space could not be resolved for documentation"
             except (httpx.HTTPError, ValueError):
                 row.calendar_sync_status = "partial"
                 row.calendar_sync_error = "Meet auto-documentation could not be configured"

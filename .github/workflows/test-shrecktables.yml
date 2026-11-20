@@ -1,0 +1,47 @@
+name: ShreckTables backend tests
+on:
+  pull_request:
+    paths:
+      - 'shreckworld/app/models/shrecktables.py'
+      - 'shreckworld/app/models/__init__.py'
+      - 'shreckworld/app/api/routers/shrecktables*.py'
+      - 'shreckworld/app/services/shrecktables*.py'
+      - 'shreckworld/app/tasks/shrecktables.py'
+      - 'shreckworld/scripts/migrate_shrecktables.py'
+      - 'shreckworld/tests/test_shrecktables.py'
+      - 'shreckworld/app/core/config.py'
+      - 'shreckworld/app/main.py'
+      - 'shreckworld/app/db/session.py'
+      - '.github/workflows/test-shrecktables.yml'
+  workflow_dispatch:
+jobs:
+  shrecktables:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install focused dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest "SQLAlchemy>=2.0,<2.1" "pydantic>=2.6,<3" \
+            "pydantic-settings>=2.2,<3" "fastapi>=0.110,<0.112" \
+            "httpx>=0.27,<0.29" "neo4j>=5.20,<7" "celery>=5.3,<6" \
+            "python-multipart>=0.0.9,<1" "python-jose[cryptography]>=3.3,<4" \
+            "cryptography>=42,<47" "python-dotenv>=1,<2" "PyYAML>=6" \
+            "PyMuPDF>=1.24,<2" "PyPDF2>=3,<4"
+          python -m pip install -e ./shreckconfig --no-deps
+          python -m pip install -e ./shreckdoc --no-deps
+      - name: Compile core and migration
+        run: |
+          python -m compileall -q shreckworld/app/models/shrecktables.py \
+            shreckworld/app/api/routers/shrecktables.py \
+            shreckworld/app/api/routers/shrecktables_google.py \
+            shreckworld/app/services/shrecktables_google.py \
+            shreckworld/app/tasks/shrecktables.py \
+            shreckworld/scripts/migrate_shrecktables.py
+      - name: Run ShreckTables regression tests
+        working-directory: shreckworld
+        run: python -m pytest tests/test_shrecktables.py -q

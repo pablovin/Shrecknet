@@ -44,3 +44,6 @@ __all__ = [
     "ShreckTable",
     "ShreckTableParticipant",
 ]
+
+from app.models.shrecktables import (Table, TableMember, TableSession, TablePoll, TablePollOption, TablePollVote,
+    TableAttendance, TableAttachment, GoogleConnection, GoogleOAuthState, LegacyTableMap)

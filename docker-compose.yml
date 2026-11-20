@@ -32,6 +32,11 @@ x-shrecknet-env: &shrecknet-env
   SHRECKNET_BACKUP_SHRECKRPG_DATA_DIR: /backup-sources/shreckrpg/data
 
 x-shreckworld-env: &shreckworld-env
+  SHRECKWORLD_GOOGLE_CLIENT_ID: ${SHRECKWORLD_GOOGLE_CLIENT_ID:-}
+  SHRECKWORLD_GOOGLE_CLIENT_SECRET: ${SHRECKWORLD_GOOGLE_CLIENT_SECRET:-}
+  SHRECKWORLD_GOOGLE_REDIRECT_URI: ${SHRECKWORLD_GOOGLE_REDIRECT_URI:-}
+  SHRECKWORLD_GOOGLE_FRONTEND_RETURN_URL: ${SHRECKWORLD_GOOGLE_FRONTEND_RETURN_URL:-}
+  SHRECKWORLD_GOOGLE_TOKEN_FERNET_KEY: ${SHRECKWORLD_GOOGLE_TOKEN_FERNET_KEY:-}
   SHRECKWORLD_EMBEDDING_MODEL_ID: ${SHRECKWORLD_EMBEDDING_MODEL_ID:-intfloat/multilingual-e5-small}
   SHRECKWORLD_EMBEDDING_REVISION: ${SHRECKWORLD_EMBEDDING_REVISION:-614241f622f53c4eeff9890bdc4f31cfecc418b3}
   SHRECKWORLD_EMBEDDING_DEVICE: ${SHRECKWORLD_EMBEDDING_DEVICE:-}
@@ -666,6 +671,29 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+  shrecktables_scheduler:
+    image: shreckworld:local
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
+    command: celery -A app.celery_app:celery_app beat --loglevel=info --schedule=/data/shrecktables-celerybeat
+    environment:
+      <<: *shreckworld-env
+      SHRECKWORLD_DATABASE_URL: sqlite:////data/shreckworld.db
+      SHRECKWORLD_MEDIA_ROOT: /app/media
+      SHRECKWORLD_CELERY_BROKER_URL: redis://shreckworld_redis:6379/0
+      SHRECKWORLD_CELERY_RESULT_BACKEND: redis://shreckworld_redis:6379/1
+    volumes:
+      - ./shreckworld/databases:/data
+      - ./shrecknet/databases/service-config:/service-config:ro
+      - ./shreckworld/media:/app/media
+    depends_on:
+      shreckworld_permissions:
+        condition: service_completed_successfully
+      shreckworld_redis:
+        condition: service_healthy
+
   shrecknet_ready:
     image: alpine:3.20
     depends_on:

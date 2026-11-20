@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     shrecknet_jwt_issuer: str = "shrecknet"
     shrecknet_jwt_audience: str = "shreckrpg"
     admin_token: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
+    google_frontend_return_url: str = ""
+    google_token_fernet_key: str = ""
     # Automatic startup import. Neo4j and legacy SQLite/media are read-only inputs.
     # Runs after create_schema; explicitly set false to disable.
     graph_import_on_startup: bool = True

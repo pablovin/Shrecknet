@@ -9,7 +9,7 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     # Workers start from this module without importing the HTTP routers that
     # lazily import tasks when an indexing request is submitted.
-    include=["app.tasks.embedding", "app.tasks.agent", "app.tasks.game_engine", "app.tasks.book_map", "app.tasks.architect_learn_ontology"],
+    include=["app.tasks.embedding", "app.tasks.agent", "app.tasks.game_engine", "app.tasks.book_map", "app.tasks.architect_learn_ontology", "app.tasks.shrecktables"],
 )
 celery_app.conf.update(
     task_always_eager=settings.celery_task_always_eager,
@@ -19,5 +19,13 @@ celery_app.conf.update(
         "shreckworld.game_engine.*": {"queue": "shreckworld_agent"},
         "shreckworld.book_map.*": {"queue": "shreckworld_agent"},
         "shreckworld.architect.*": {"queue": "shreckworld_agent"},
+        "shreckworld.shrecktables.*": {"queue": "shreckworld_agent"},
     },
 )
+
+celery_app.conf.beat_schedule = {
+    "shrecktables-post-meet-reconciliation": {
+        "task": "shreckworld.shrecktables.reconcile",
+        "schedule": 900.0,
+    },
+}

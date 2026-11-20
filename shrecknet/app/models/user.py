@@ -19,6 +19,7 @@ if TYPE_CHECKING:  # pragma: no cover
 class UserRole(str, Enum):
     ADMIN = "admin"
     WORLD_BUILDER = "world_builder"
+    GM = "gm"
     WRITER = "writer"
     PLAYER = "player"
 

@@ -214,6 +214,18 @@ class VoteRequest(BaseModel):
     option_id: int
 
 
+class PollOptionCreate(BaseModel):
+    options: list[datetime] = Field(min_length=1, max_length=50)
+    timezone: str = "UTC"
+
+
+class BulkSessionsCreate(BaseModel):
+    titles: list[str] = Field(min_length=1, max_length=52)
+    scheduled_dates: list[datetime] = Field(min_length=1, max_length=52)
+    timezone: str
+    duration_minutes: int = Field(default=180, ge=15, le=1440)
+
+
 class FinalizeRequest(BaseModel):
     option_id: int
 
@@ -406,6 +418,47 @@ def create_session(table_id: int, body: SessionCreate,
     return _session_read(session, row)
 
 
+@router.post("/tables/{table_id}/sessions/bulk", status_code=201)
+def create_bulk_sessions(table_id: int, body: BulkSessionsCreate,
+                         actor: ShrecknetPrincipal = Depends(get_current_user),
+                         session: Session = Depends(get_db)):
+    table = _table(session, table_id, actor, manage=True)
+    if len(body.titles) not in {1, len(body.scheduled_dates)}:
+        raise HTTPException(422, "Provide one title or one per scheduled date")
+    instants = [_utc(value, body.timezone) for value in body.scheduled_dates]
+    if len(set(instants)) != len(instants):
+        raise HTTPException(422, "Duplicate session dates")
+    rows = []
+    for i, instant in enumerate(instants):
+        name = body.titles[i if len(body.titles) > 1 else 0].strip()
+        if not name or len(name) > 255:
+            raise HTTPException(422, "Valid session title required")
+        row = TableSession(table_id=table_id, title=name, scheduled_at_utc=instant,
+                           scheduled_timezone=body.timezone, duration_minutes=body.duration_minutes,
+                           status="scheduled", created_by=actor.user_id,
+                           calendar_sync_status="pending" if table.calendar_id else "not_configured")
+        session.add(row)
+        rows.append(row)
+    session.commit()
+    for row in rows:
+        _enqueue_sync(session, row)
+    return [_session_read(session, row) for row in rows]
+
+
+@router.delete("/tables/{table_id}/sessions/{session_id}", status_code=204)
+def cancel_session(table_id: int, session_id: int,
+                   actor: ShrecknetPrincipal = Depends(get_current_user),
+                   session: Session = Depends(get_db)):
+    table = _table(session, table_id, actor, manage=True)
+    row = _session(session, table_id, session_id)
+    # Do not hard-delete sessions with historical Google artifacts, polls or votes.
+    row.status = "cancelled"
+    row.calendar_sync_status = "pending" if table.calendar_id else "not_configured"
+    row.revision += 1
+    session.commit()
+    _enqueue_sync(session, row)
+
+
 @router.get("/tables/{table_id}/sessions/{session_id}")
 def get_session(table_id: int, session_id: int, actor: ShrecknetPrincipal = Depends(get_current_user),
                 session: Session = Depends(get_db)):
@@ -437,8 +490,8 @@ def respond_attendance(table_id: int, session_id: int, body: AttendanceRequest,
                        session: Session = Depends(get_db)):
     _table(session, table_id, actor)
     row = _session(session, table_id, session_id)
-    if row.scheduled_at_utc is None:
-        raise HTTPException(409, "Session not scheduled")
+    if row.scheduled_at_utc is None or row.status != "scheduled":
+        raise HTTPException(409, "Session is not scheduled")
     response = session.scalar(select(TableAttendance).where(
         TableAttendance.session_id == session_id, TableAttendance.user_id == actor.user_id))
     if not response:
@@ -465,6 +518,25 @@ def create_poll(table_id: int, session_id: int, body: PollCreate,
     session.add(poll)
     session.flush()
     session.add_all(TablePollOption(poll_id=poll.id, proposed_at_utc=v) for v in values)
+    session.commit()
+    return _poll_read(session, poll)
+
+
+@router.post("/tables/{table_id}/sessions/{session_id}/polls/{poll_id}/options")
+def add_poll_options(table_id: int, session_id: int, poll_id: int, body: PollOptionCreate,
+                     actor: ShrecknetPrincipal = Depends(get_current_user),
+                     session: Session = Depends(get_db)):
+    _table(session, table_id, actor, manage=True)
+    _session(session, table_id, session_id)
+    poll = _poll(session, session_id, poll_id)
+    if poll.is_finalized:
+        raise HTTPException(409, "Poll is finalized")
+    existing = set(session.scalars(select(TablePollOption.proposed_at_utc).where(
+        TablePollOption.poll_id == poll.id)).all())
+    instants = [_utc(v, body.timezone) for v in body.options]
+    if len(instants) != len(set(instants)) or any(v in existing for v in instants):
+        raise HTTPException(409, "Poll option already exists")
+    session.add_all([TablePollOption(poll_id=poll.id, proposed_at_utc=v) for v in instants])
     session.commit()
     return _poll_read(session, poll)
 

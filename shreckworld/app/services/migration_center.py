@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from app.integrations.ontologies import shrecknet_read
 from app.models import ShreckWorld, ShreckWorldLibraryItem
-from app.models.game_engine import WorldRuleset
 from app.models.source_collection import SourceCollection
 from app.models.shrecktables import LegacyTableMap, SessionNarrativeSource, Table, TableSession
 from app.models.migration_center import MigrationCenterAudit
@@ -198,6 +197,7 @@ def apply_source_ownership(db: Session, token: str, *, collection_id: str, targe
     if not result["will_update"]:
         return {"changed_items": 0, "already_migrated": result["already_mapped"],
                 "operation": "no_changes", "audit_id": None}
+    pending_ids = [item.id for item in _sources(db, collection_id) if item.ontology_id is None]
     changed = db.execute(update(ShreckWorldLibraryItem).where(
         ShreckWorldLibraryItem.shreckworld_id == collection_id,
         ShreckWorldLibraryItem.ontology_id.is_(None),
@@ -210,7 +210,7 @@ def apply_source_ownership(db: Session, token: str, *, collection_id: str, targe
         collection_id=collection_id, target_ontology_id=target,
         changed_items=changed, preview_fingerprint=fingerprint,
         details={"target_world_id": result["target_world_id"],
-                 "source_ids": [x.id for x in _sources(db, collection_id)]},
+                 "updated_source_ids": pending_ids},
     )
     db.add(audit)
     db.commit()

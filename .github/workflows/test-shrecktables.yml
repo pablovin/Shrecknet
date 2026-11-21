@@ -4,6 +4,10 @@ on:
     paths:
       - 'shreckworld/app/models/shrecktables.py'
       - 'shreckworld/app/models/__init__.py'
+      - 'shreckworld/app/models/migration_center.py'
+      - 'shreckworld/app/services/migration_center.py'
+      - 'shreckworld/app/api/routers/migration_center.py'
+      - 'shreckworld/tests/test_migration_center.py'
       - 'shreckworld/app/api/routers/shrecktables*.py'
       - 'shreckworld/app/services/shrecktables*.py'
       - 'shreckworld/app/tasks/shrecktables.py'
@@ -41,7 +45,9 @@ jobs:
             shreckworld/app/api/routers/shrecktables_google.py \
             shreckworld/app/services/shrecktables_google.py \
             shreckworld/app/tasks/shrecktables.py \
-            shreckworld/scripts/migrate_shrecktables.py
+            shreckworld/scripts/migrate_shrecktables.py \\
+            shreckworld/app/services/migration_center.py \\
+            shreckworld/app/api/routers/migration_center.py
       - name: Run ShreckTables regression tests
         working-directory: shreckworld
-        run: python -m pytest tests/test_shrecktables.py -q
+        run: python -m pytest tests/test_shrecktables.py tests/test_migration_center.py -q

@@ -151,3 +151,17 @@ revocation, retries, timezone/DST cases and multiple GMs.
 **Deployment policy:** do not merge both PRs separately. First validate the
 canonical data and external integration, then deploy backend + migrations,
 and finally deploy the Nexus/Apps frontend cutover.
+
+
+### Shared-world consistency audit
+
+World managers can call `GET /api/v1/shrecktables/worlds/{world_id}/knowledge-integrity`
+to verify that table and published-session-source references point to the world's
+single active ontology, that the world rules selection is unambiguous, and to
+inspect source/collection counts. The endpoint does not modify data. A
+`consistent: true` result **only** covers those relational references; it
+explicitly returns `graph_and_vector_store_verified: false` because Neo4j,
+Qdrant and original media files require their own cutover verification.
+
+New table creation rejects worlds with conflicting legacy table rules until
+the world manager selects one shared published rules version.

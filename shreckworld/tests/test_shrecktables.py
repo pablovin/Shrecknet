@@ -246,3 +246,39 @@ def test_world_rules_and_narratives_are_shared_by_tables(api, monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: ShrecknetPrincipal(user_id="2", role="player")
     assert client.get(f"{tables}/{second}/world", headers=headers).status_code == 403
     assert client.get(f"{tables}?world_id=world-1", headers=headers).json() == []
+
+
+def test_world_integrity_detects_foreign_table_and_keeps_shared_sources(api, monkeypatch):
+    from app.db.session import session_factory
+    from app.models.shrecktables import Table
+
+    mock_contracts(monkeypatch)
+    client, headers, _ = api
+    first = make_table(client, headers)
+    second = make_table(client, headers)
+    url = "/api/v1/shrecktables/worlds/world-1/knowledge-integrity"
+    report = client.get(url, headers=headers)
+    assert report.status_code == 200, report.text
+    assert report.json()["consistent"] is True
+    assert report.json()["table_count"] == 2
+    assert report.json()["ontology_id"] == 7
+    assert report.json()["graph_and_vector_store_verified"] is False
+
+    # Simulate a pre-migration table claiming this world but using another
+    # ontology; diagnostics must identify it without changing any record.
+    with session_factory()() as db:
+        row = db.get(Table, second)
+        row.ontology_id = 8
+        db.commit()
+    broken = client.get(url, headers=headers)
+    assert broken.status_code == 200, broken.text
+    assert broken.json()["consistent"] is False
+    assert {"code": "table_ontology_mismatch", "table_id": second} in broken.json()["issues"]
+
+    # A table with this ontology but a different World is also a violation.
+    with session_factory()() as db:
+        row = db.get(Table, first)
+        row.world_id = "world-2"
+        db.commit()
+    broken = client.get(url, headers=headers)
+    assert {"code": "ontology_used_by_other_world", "table_id": first} in broken.json()["issues"]

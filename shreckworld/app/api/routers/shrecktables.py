@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, HttpUrl, model_validator
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -22,6 +22,8 @@ from app.integrations.worlds import resolve_world
 from app.repositories.source_scope import OntologyScope
 from app.services.session_narrative import promote_session
 from app.services.world_rules import read_world_rules
+from app.models.shreckworld import ShreckWorldLibraryItem
+from app.models.source_collection import SourceCollection
 from app.models.shrecktables import (
     Table, TableMember, TableSession, TablePoll, TablePollOption,
     TablePollVote, TableAttendance, TableAttachment, SessionNarrativeSource,
@@ -254,6 +256,68 @@ def list_tables(ontology_id: int | None = Query(default=None, gt=0),
     return [_table_read(row, actor, session) for row in rows]
 
 
+@router.get("/worlds/{world_id}/knowledge-integrity")
+def world_knowledge_integrity(
+    world_id: str, token: str = Depends(oauth2_scheme),
+    actor: ShrecknetPrincipal = Depends(get_current_user),
+    session: Session = Depends(get_db),
+):
+    """Audit shared-world references without creating table-local knowledge.
+
+    This is a relational consistency check, not a claim that external Neo4j,
+    Qdrant, and file-store contents have been verified.
+    """
+    if actor.role not in GLOBAL_MANAGERS:
+        raise HTTPException(403, "World manager required")
+    world = resolve_world(world_id, token)
+    scoped_tables = session.scalars(select(Table).where(or_(
+        Table.world_id == world.id,
+        Table.ontology_id == world.active_ontology_id,
+    ))).all()
+    issues: list[dict[str, str | int]] = []
+    for row in scoped_tables:
+        if row.world_id != world.id:
+            issues.append({"code": "ontology_used_by_other_world", "table_id": row.id})
+        elif row.ontology_id != world.active_ontology_id:
+            issues.append({"code": "table_ontology_mismatch", "table_id": row.id})
+
+    source_items = session.scalars(select(ShreckWorldLibraryItem).where(
+        ShreckWorldLibraryItem.ontology_id == world.active_ontology_id
+    )).all()
+    source_by_id = {item.id: item for item in source_items}
+    promotions = session.execute(
+        select(SessionNarrativeSource, Table).join(
+            TableSession, TableSession.id == SessionNarrativeSource.session_id
+        ).join(Table, Table.id == TableSession.table_id).where(Table.world_id == world.id)
+    ).all()
+    for promotion, table in promotions:
+        if promotion.source_id not in source_by_id:
+            issues.append({
+                "code": "narrative_source_outside_world",
+                "table_id": table.id,
+                "source_id": promotion.source_id,
+            })
+
+    rules = read_world_rules(session, world.id)
+    if rules.legacy_conflict:
+        issues.append({"code": "conflicting_legacy_rules"})
+    return {
+        "world_id": world.id,
+        "ontology_id": world.active_ontology_id,
+        "consistent": not issues,
+        "issues": issues,
+        "table_count": sum(table.world_id == world.id for table in scoped_tables),
+        "source_count": len(source_items),
+        "narrative_source_count": sum(item.source_type == "narrative" for item in source_items),
+        "source_collection_count": session.scalar(select(func.count()).select_from(
+            SourceCollection
+        ).where(SourceCollection.ontology_id == world.active_ontology_id)) or 0,
+        "published_session_count": len(promotions),
+        "rules_version_id": rules.version_id,
+        "graph_and_vector_store_verified": False,
+    }
+
+
 @router.post("/tables", status_code=201)
 def create_table(body: CreateTable, token: str = Depends(oauth2_scheme),
                  actor: ShrecknetPrincipal = Depends(get_current_user),
@@ -263,6 +327,8 @@ def create_table(body: CreateTable, token: str = Depends(oauth2_scheme),
     _zone(body.timezone)
     world = resolve_world(body.world_id, token, body.ontology_id)
     rules = read_world_rules(session, world.id)
+    if rules.legacy_conflict:
+        raise HTTPException(409, "Resolve conflicting legacy world rules before creating another table")
     if body.version_id is not None and body.version_id != rules.version_id:
         raise HTTPException(409, "Rules are selected for the world")
     row = Table(**body.model_dump(exclude={"ontology_id", "version_id"}),

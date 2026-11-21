@@ -13,6 +13,7 @@ from app.api.routers.ontology_items import router as ontology_items_router
 from app.api.routers.sources_workspace import router as sources_workspace_router
 from app.api.routers.source_collections import router as source_collections_router
 from app.api.routers.ontology_migration import router as ontology_migration_router
+from app.api.routers.migration_center import router as migration_center_router
 from app.api.routers.game_engine import router as game_engine_router
 from app.api.routers.shrecktables import router as shrecktables_router
 from app.api.routers.shrecktables_google import router as shrecktables_google_router
@@ -126,6 +127,7 @@ app.include_router(ontology_items_router)
 app.include_router(sources_workspace_router)
 app.include_router(source_collections_router)
 app.include_router(ontology_migration_router)
+app.include_router(migration_center_router)
 app.include_router(game_engine_router)
 app.include_router(shrecktables_router)
 app.include_router(shrecktables_google_router)

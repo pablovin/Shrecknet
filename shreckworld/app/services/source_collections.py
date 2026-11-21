@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -214,6 +215,19 @@ def remove_collection(db: Session, scope: OntologyScope, collection_id: str, exp
         db.rollback()
         fail(409, "Hierarchy changed; reload before removing it")
     db.commit()
+
+
+def delete_collection_assignment(
+    db: Session, scope: OntologyScope, collection_id: str, expected_revision: int,
+) -> None:
+    """Hard-remove one world's hierarchy assignment while retaining its sources and template."""
+    record = scoped_collection(db, scope, collection_id)
+    if record.revision != expected_revision:
+        fail(409, "Hierarchy changed; reload before removing it")
+    artwork_root = get_settings().media_root / "source-collections" / str(record.ontology_id) / record.id
+    db.delete(record)
+    db.commit()
+    shutil.rmtree(artwork_root, ignore_errors=True)
 
 
 def _image_root(collection: SourceCollection, entry_id: str) -> Path:

@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.models import SourceHierarchy, ShreckWorldLibraryItem
+from app.models import SourceCollection, SourceHierarchy, ShreckWorldLibraryItem
 from app.repositories.source_scope import OntologyScope
 from app.schemas.source_collections import CollectionCreate, CollectionEntry, CollectionUpdate, CollectionTemplateUpdate
 from app.services import source_collections
@@ -69,6 +69,28 @@ def test_world_and_category_scoped_assignments_archive_restore(db):
     source_collections.remove_collection(db, OntologyScope(7, "World"), first.id, 1)
     restored = sample(db)
     assert restored.id == first.id and restored.revision == 3 and not restored.archived
+
+
+def test_hard_removing_world_assignment_preserves_attached_source_and_template(db):
+    scope = OntologyScope(7, "World")
+    collection = sample(db)
+    source = ShreckWorldLibraryItem(
+        id="retained-source", ontology_id=7, source_type="narrative",
+        hierarchy_template_id="adventure", hierarchy_template_version=1,
+        title="Attached story", pdf_path="", source_sha256="d" * 64,
+    )
+    db.add(source); db.commit()
+    source_collections.save_collection(db, scope, collection.id, CollectionUpdate(
+        expected_revision=1, name=collection.name, description=collection.description,
+        archived=False, nodes=[entry("root", sources=[source.id])],
+    ))
+
+    source_collections.delete_collection_assignment(db, scope, collection.id, 2)
+
+    assert db.get(SourceCollection, collection.id) is None
+    assert db.get(ShreckWorldLibraryItem, source.id) is not None
+    assert db.get(SourceHierarchy, ("adventure", 1)) is not None
+    assert source_collections.list_collections(db, scope, "narrative") == []
 
 
 def test_nested_entry_tree_and_source_references(db):
@@ -260,11 +282,29 @@ def test_explicit_template_version_upgrade_preserves_cards_and_rejects_dropped_l
     assert refused.value.status_code == 422
 
 
-def test_delete_template_removes_current_world_entries_and_retires_template(db):
+def test_delete_template_removes_world_sources_assignment_and_unreferenced_template(db):
     from app.services.source_workspace import delete_hierarchy, list_hierarchies
     scope = OntologyScope(7, "World")
     sample(db)
+    source = ShreckWorldLibraryItem(
+        id="source-to-delete", ontology_id=7, source_type="narrative",
+        hierarchy_template_id="adventure", hierarchy_template_version=1,
+        title="Adventure source", pdf_path="", source_sha256="c" * 64,
+    )
+    db.add(source); db.commit()
     delete_hierarchy(db, scope, "adventure", 1, remove_items=True)
     assert source_collections.list_collections(db, scope, "narrative") == []
+    assert db.get(ShreckWorldLibraryItem, "source-to-delete") is None
+    assert all(item.id != "adventure" for item in list_hierarchies(db))
+
+
+def test_delete_template_preserves_shared_template_for_another_world(db):
+    from app.services.source_workspace import delete_hierarchy, list_hierarchies
+    scope = OntologyScope(7, "World")
+    sample(db, world=7)
+    sample(db, world=8)
+    delete_hierarchy(db, scope, "adventure", 1, remove_items=True)
+    assert source_collections.list_collections(db, scope, "narrative") == []
+    assert len(source_collections.list_collections(db, OntologyScope(8, "Other"), "narrative")) == 1
     template = next(item for item in list_hierarchies(db) if item.id == "adventure")
-    assert template.archived is True and template.version == 2
+    assert template.archived is False and template.version == 1

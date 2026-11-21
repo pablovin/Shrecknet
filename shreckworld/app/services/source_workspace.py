@@ -1,4 +1,4 @@
-"""Source hierarchy and editorial organization service; graph and vectors remain untouched."""
+"""Source hierarchy and editorial organization service; ontology graph writes stay out of scope."""
 from __future__ import annotations
 
 from hashlib import sha256
@@ -110,16 +110,51 @@ def save_hierarchy(db: Session, payload: HierarchyInput, hierarchy_id: str | Non
 
 def delete_hierarchy(db: Session, scope: OntologyScope, hierarchy_id: str, expected_version: int,
                      remove_items: bool = False) -> HierarchyRead:
-    """Retire a template and optionally remove its entries from this ontology."""
+    """Remove a world assignment and its sources, retaining shared templates still in use."""
     previous = latest_hierarchy(db, hierarchy_id)
     if previous.version != expected_version:
         _fail(409, "Template changed; reload before deleting")
     if remove_items:
-        db.query(SourceCollection).filter(
+        # Sources are world-owned records. Remove them through the lifecycle
+        # service so files and rebuildable retrieval projections are cleaned up.
+        sources = db.scalars(select(ShreckWorldLibraryItem).where(
+            ShreckWorldLibraryItem.ontology_id == scope.ontology_id,
+            ShreckWorldLibraryItem.hierarchy_template_id == hierarchy_id,
+        )).all()
+        from app.services.source_lifecycle import delete_source
+        for source in sources:
+            delete_source(db, source)
+
+        collections = db.scalars(select(SourceCollection).where(
             SourceCollection.ontology_id == scope.ontology_id,
             SourceCollection.hierarchy_template_id == hierarchy_id,
-        ).delete(synchronize_session=False)
+        )).all()
+        for collection in collections:
+            db.delete(collection)
         db.commit()
+
+        # Templates are currently reusable across worlds. Hard-delete every
+        # version and artwork only after the last world/source reference is gone.
+        other_collection = db.scalar(select(SourceCollection.id).where(
+            SourceCollection.hierarchy_template_id == hierarchy_id,
+        ).limit(1))
+        other_source = db.scalar(select(ShreckWorldLibraryItem.id).where(
+            ShreckWorldLibraryItem.hierarchy_template_id == hierarchy_id,
+        ).limit(1))
+        if other_collection is None and other_source is None:
+            versions = db.scalars(select(SourceHierarchy).where(
+                SourceHierarchy.id == hierarchy_id,
+            )).all()
+            image_paths = {Path(row.image_path) for row in versions if row.image_path}
+            for row in versions:
+                db.delete(row)
+            db.commit()
+            for image_path in image_paths:
+                image_path.unlink(missing_ok=True)
+        return hierarchy_read(previous)
+
+    # Retain the legacy archive-only behavior for API callers that explicitly
+    # request remove_items=false.
     return save_hierarchy(db, HierarchyInput(
         source_type=previous.source_type, name=previous.name,
         description=previous.description or "", section_types=previous.section_types,

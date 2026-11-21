@@ -11,8 +11,10 @@ authenticated and authorized to read the referenced ontology by Shrecknet.
 Mutating routes require the existing `require_world_manager` role check.
 
 No endpoint in this slice writes Neo4j nodes, ontology definitions, scenes, milestones,
-embeddings, or existing document generations. The original PDF's Book Map remains
-immutable and independently retrievable.
+or existing document generations. Hierarchy deletion may remove source-owned database
+records, stored files, and rebuildable retrieval vectors through the source lifecycle.
+The original PDF's Book Map remains immutable and independently retrievable unless its
+owning source document is explicitly deleted with its hierarchy.
 
 ## Contracts
 
@@ -23,6 +25,7 @@ immutable and independently retrievable.
 - `GET /source-hierarchies/{id}/versions/{version}/image`: authenticated, version-pinned image read.
 - `PUT /source-hierarchies/{id}`: append a new version, requires
   `expected_version` of the current version (409 on conflict).
+- `DELETE /source-hierarchies/{id}?expected_version=N&remove_items=true`: permanently removes the hierarchy assignment and every source document in that ontology that uses the hierarchy. Source file storage, structured source rows, and retrieval projections follow the normal source deletion lifecycle. Hierarchy template versions and artwork are hard-deleted only when no other ontology collection or source references the shared template. The default `remove_items=false` retains the legacy archive-only behavior.
 - `POST /sources`: create an authored Source and atomically instantiate a starter outline from its pinned template levels, with required `title`,
   `source_type` (narrative or explanatory), `hierarchy_template_id`,
   `hierarchy_template_version`. Reuses the existing library-item ID space.
@@ -65,6 +68,11 @@ A stale editor save fails rather than silently overwriting concurrent changes.
 
 Section removal is editorial. The old complete tree revision remains in
 `source_organizations`; original Book Map nodes and vectors are not deleted.
+Deleting a hierarchy with `remove_items=true` is a separate destructive operation:
+it deletes the ontology-owned source documents associated with that hierarchy,
+including their stored files and structured source projections. A shared template
+remains available to other ontologies until its last collection and source reference
+is removed.
 
 ## Narrative and Explanatory files
 
@@ -141,6 +149,11 @@ Required ontology-scoped routes:
   below an occupied level is rejected with HTTP 422.
 - `DELETE /source-collections/{collection_id}?expected_revision=N`:
   archive an assignment; **not** the template or linked documents.
+- `DELETE /source-collections/{collection_id}/assignment?expected_revision=N`:
+  permanently remove the hierarchy assignment and its entries/artwork from this
+  ontology while retaining attached source documents in the world library as
+  unassociated sources. The reusable template remains available for assignment
+  again. A stale revision returns HTTP 409.
 - `POST /source-collections/{id}/entries/{entry_id}/image?expected_revision=N`:
   upload an authenticated PNG, JPEG or WebP (maximum 5 MB).
 - `DELETE /source-collections/{id}/entries/{entry_id}/image?expected_revision=N`:

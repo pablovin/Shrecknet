@@ -67,6 +67,16 @@ def archive_collection(
     collections.remove_collection(db, scope, collection_id, expected_revision)
 
 
+@router.delete("/{collection_id}/assignment", status_code=204, dependencies=manager)
+def delete_collection_assignment(
+    collection_id: str, expected_revision: int = Query(ge=1),
+    scope: OntologyScope = Depends(authorized_ontology), db: Session = Depends(get_db),
+):
+    # Remove this world's hierarchy and entry structure; attached sources remain
+    # in the library and become available as unassociated source documents.
+    collections.delete_collection_assignment(db, scope, collection_id, expected_revision)
+
+
 @router.post("/{collection_id}/entries/{entry_id}/image", response_model=CollectionRead, dependencies=manager)
 async def upload_entry_artwork(
     collection_id: str, entry_id: str, image: UploadFile = File(...),

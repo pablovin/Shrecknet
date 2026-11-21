@@ -45,8 +45,8 @@ jobs:
             shreckworld/app/api/routers/shrecktables_google.py \
             shreckworld/app/services/shrecktables_google.py \
             shreckworld/app/tasks/shrecktables.py \
-            shreckworld/scripts/migrate_shrecktables.py \\
-            shreckworld/app/services/migration_center.py \\
+            shreckworld/scripts/migrate_shrecktables.py \
+            shreckworld/app/services/migration_center.py \
             shreckworld/app/api/routers/migration_center.py
       - name: Run ShreckTables regression tests
         working-directory: shreckworld

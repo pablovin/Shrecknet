@@ -373,7 +373,22 @@ def _template_for_signature(db: Session, signature: tuple[str, ...]) -> SourceHi
     if template.source_type != "narrative" or template.section_types != list(signature):
         raise ValueError("Generated narrative hierarchy template conflicts with existing data")
     if template.archived:
-        return None
+        # Imported collections are version-pinned. Keep the archived version
+        # intact, but publish a new active version so this graph signature can
+        # be imported for ontologies that do not yet have a collection.
+        next_version = template.version + 1
+        logger.warning(
+            "Archived graph narrative template %s v%s; creating active version v%s for imports",
+            template_id, template.version, next_version,
+        )
+        template = SourceHierarchy(
+            id=template_id, version=next_version,
+            name=" → ".join(signature),
+            description="Narrative hierarchy imported from ontology entity types",
+            section_types=list(signature), source_type="narrative", archived=False,
+        )
+        db.add(template)
+        db.flush()
     return template
 
 

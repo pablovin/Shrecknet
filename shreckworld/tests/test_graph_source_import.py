@@ -281,6 +281,26 @@ def test_narrative_import_accepts_localized_names_and_deeper_paths():
     ]
 
 
+def test_archived_generated_template_gets_new_active_version(tmp_path, monkeypatch):
+    settings, engine, factory = _init(tmp_path, monkeypatch)
+    signature = ("Adventures", "Story Arcs", "Stories")
+    template_id = importer._id("template", "/".join(signature))
+    with Session(engine) as db:
+        db.add(SourceHierarchy(
+            id=template_id, version=1, name=" → ".join(signature),
+            description="Previously generated", section_types=list(signature),
+            source_type="narrative", archived=True,
+        ))
+        db.commit()
+        active = importer._template_for_signature(db, signature)
+        assert active is not None
+        assert active.version == 2
+        assert active.archived is False
+        previous = db.get(SourceHierarchy, (template_id, 1))
+        assert previous is not None and previous.archived is True
+    engine.dispose()
+
+
 def test_standalone_timeline_cannot_form_a_narrative_path():
     types = {4: importer.LegacyType(4, "Timeline")}
     nodes = {"timeline": _node("timeline", 4, "A Date", "page")}

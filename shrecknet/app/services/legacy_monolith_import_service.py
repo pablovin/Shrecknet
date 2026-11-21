@@ -694,6 +694,9 @@ class LegacyMonolithImportService:
                     else None
                 )
                 ontology.image_url = self._normalize_legacy_media_url(row.get("image_url"))
+                world.description = ontology.description
+                world.image_url = ontology.image_url
+                world.rpg_system = ontology.rpg_system
 
                 session.merge(
                     IdMapping(

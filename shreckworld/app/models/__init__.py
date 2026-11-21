@@ -18,6 +18,7 @@ from app.models.game_engine import (
     GameRuleset,
     GameRulesetReview,
     GameRulesetVersion,
+    WorldRuleset,
     ShreckTable,
     ShreckTableParticipant,
 )
@@ -40,10 +41,11 @@ __all__ = [
     "GameBinding",
     "GameDefinition",
     "GameRulesetVersion",
+    "WorldRuleset",
     "GameGenerationRun",
     "ShreckTable",
     "ShreckTableParticipant",
 ]
 
 from app.models.shrecktables import (Table, TableMember, TableSession, TablePoll, TablePollOption, TablePollVote,
-    TableAttendance, TableAttachment, GoogleConnection, GoogleOAuthState, LegacyTableMap)
+    TableAttendance, TableAttachment, GoogleConnection, GoogleOAuthState, LegacyTableMap, SessionNarrativeSource)

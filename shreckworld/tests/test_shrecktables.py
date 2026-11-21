@@ -7,7 +7,13 @@ from test_upload_metadata_api import api
 def mock_contracts(monkeypatch):
     def fake(path, token):
         if path == "/contracts/worlds/world-1":
-            return {"id": "world-1", "name": "Pendragon", "ontology_ids": [7]}
+            return {"id": "world-1", "name": "Pendragon", "ontology_ids": [7], "active_ontology_id": 7}
+        if path == "/contracts/worlds/world-2":
+            return {"id": "world-2", "name": "Sartar", "ontology_ids": [8], "active_ontology_id": 8}
+        if path == "/contracts/worlds/ambiguous":
+            return {"id": "ambiguous", "name": "Legacy", "ontology_ids": [7, 8], "active_ontology_id": None}
+        if path in {"/ontologies/7", "/ontologies/8"}:
+            return {"id": int(path.rsplit("/", 1)[-1]), "name": "World ontology", "description": None}
         if path.startswith("/contracts/users?"):
             return [{"id": int(value), "username": "player" + value, "full_name": "Player " + value, "avatar_url": None}
                     for pair in path.split("?", 1)[1].split("&") for value in [pair.split("=")[-1]]]
@@ -16,8 +22,8 @@ def mock_contracts(monkeypatch):
             return {"id": ident, "full_name": "Player " + ident, "role": "player", "email": "test@example.com"}
         raise AssertionError(path)
     monkeypatch.setattr("app.api.routers.shrecktables.shrecknet_read", fake)
-    monkeypatch.setattr("app.api.routers.shrecktables.resolve_ontology",
-                        lambda identifier, token: {"id": identifier})
+    monkeypatch.setattr("app.integrations.worlds.shrecknet_read", fake)
+    monkeypatch.setattr("app.integrations.ontologies.shrecknet_read", fake)
 
 
 def make_table(client, headers):
@@ -155,3 +161,124 @@ def test_legacy_import_is_idempotent_and_does_not_recreate_google_events(api):
             assert tables[0].calendar_id == "original-calendar"
     finally:
         rpg.close()
+
+
+def test_world_rules_and_narratives_are_shared_by_tables(api, monkeypatch):
+    from app.api.deps import ShrecknetPrincipal, get_current_user
+    from app.db.session import session_factory
+    from app.main import app
+    from app.models.game_engine import GameBinding, GameRuleset, GameRulesetVersion
+    from app.models.shreckworld import ShreckWorldLibraryItem
+
+    mock_contracts(monkeypatch)
+    client, headers, _ = api
+    tables = "/api/v1/shrecktables/tables"
+    first = make_table(client, headers)
+    new = client.post(tables, headers=headers, json={"world_id": "world-1", "name": "Second table"})
+    assert new.status_code == 201, new.text
+    second = new.json()["id"]
+    other = client.post(tables, headers=headers, json={"world_id": "world-2", "name": "Other world"})
+    assert other.status_code == 201, other.text
+    assert other.json()["ontology_id"] == 8
+    assert client.post(tables, headers=headers, json={
+        "world_id": "world-1", "ontology_id": 8, "name": "Invalid scope",
+    }).status_code == 409
+    assert client.post(tables, headers=headers, json={
+        "world_id": "ambiguous", "ontology_id": 7, "name": "Ambiguous legacy scope",
+    }).status_code == 409
+
+    with session_factory()() as db:
+        db.add(GameRuleset(id="rules", name="Pendragon", edition="6e", schema_version="1",
+                           status="published", created_by="1"))
+        db.flush()
+        db.add(GameBinding(ontology_id=7, ruleset_id="rules", created_by="1"))
+        db.add(GameRulesetVersion(id="version", ruleset_id="rules", definition_revision=1,
+                                  schema_version="1", definition_digest="digest",
+                                  definitions_snapshot=[], published_by="1"))
+        db.commit()
+
+    rules = "/api/v1/game-engine/worlds"
+    update = {"version_id": "version", "expected_revision": 0}
+    assert client.put(f"{rules}/world-2/rules", headers=headers, json=update).status_code == 409
+    selection = client.put(f"{rules}/world-1/rules", headers=headers, json=update)
+    assert selection.status_code == 200, selection.text
+    assert client.put(f"{rules}/world-1/rules", headers=headers, json=update).status_code == 409
+    first_world = client.get(f"{tables}/{first}/world", headers=headers).json()
+    assert first_world == client.get(f"{tables}/{second}/world", headers=headers).json()
+    assert first_world["ontology_id"] == 7
+    assert first_world["rules"]["version_id"] == "version"
+    assert client.get(f"{tables}/{first}", headers=headers).json()["version_id"] == "version"
+    assert client.get(f"{tables}/{other.json()['id']}", headers=headers).json()["version_id"] is None
+    assert client.post(tables, headers=headers, json={
+        "world_id": "world-1", "version_id": "local-rules", "name": "Invalid rules",
+    }).status_code == 409
+
+    source_ids = []
+    for table_id, title in [(first, "The winter feast"), (second, "The spring hunt")]:
+        entry = client.post(f"{tables}/{table_id}/sessions", headers=headers, json={"title": title})
+        assert entry.status_code == 201, entry.text
+        session_id = entry.json()["id"]
+        endpoint = f"{tables}/{table_id}/sessions/{session_id}/narrative-source"
+        reviewed = {"title": title, "narrative": "The knights returned to Camelot."}
+        published = client.post(endpoint, headers=headers, json=reviewed)
+        assert published.status_code == 201, published.text
+        assert published.json()["ontology_id"] == 7
+        source_ids.append(published.json()["source_id"])
+        assert client.post(endpoint, headers=headers, json=reviewed).status_code == 409
+        assert client.post(f"{tables}/{other.json()['id']}/sessions/{session_id}/narrative-source",
+                           headers=headers, json=reviewed).status_code == 404
+
+    for table_id in (first, second):
+        shared = client.get(f"{tables}/{table_id}/world", headers=headers).json()
+        collection = client.get(f"/ontologies/{shared['ontology_id']}/items", headers=headers)
+        assert collection.status_code == 200, collection.text
+        assert {source["id"] for source in collection.json()} == set(source_ids)
+    assert client.get("/ontologies/8/items", headers=headers).json() == []
+
+    with session_factory()() as db:
+        from pathlib import Path
+
+        for source_id in source_ids:
+            source = db.get(ShreckWorldLibraryItem, source_id)
+            assert source.ontology_id == 7 and source.source_type == "narrative"
+            assert "The knights returned to Camelot." in Path(source.storage_path).read_text()
+
+    app.dependency_overrides[get_current_user] = lambda: ShrecknetPrincipal(user_id="2", role="player")
+    assert client.get(f"{tables}/{second}/world", headers=headers).status_code == 403
+    assert client.get(f"{tables}?world_id=world-1", headers=headers).json() == []
+
+
+def test_world_integrity_detects_foreign_table_and_keeps_shared_sources(api, monkeypatch):
+    from app.db.session import session_factory
+    from app.models.shrecktables import Table
+
+    mock_contracts(monkeypatch)
+    client, headers, _ = api
+    first = make_table(client, headers)
+    second = make_table(client, headers)
+    url = "/api/v1/shrecktables/worlds/world-1/knowledge-integrity"
+    report = client.get(url, headers=headers)
+    assert report.status_code == 200, report.text
+    assert report.json()["consistent"] is True
+    assert report.json()["table_count"] == 2
+    assert report.json()["ontology_id"] == 7
+    assert report.json()["graph_and_vector_store_verified"] is False
+
+    # Simulate a pre-migration table claiming this world but using another
+    # ontology; diagnostics must identify it without changing any record.
+    with session_factory()() as db:
+        row = db.get(Table, second)
+        row.ontology_id = 8
+        db.commit()
+    broken = client.get(url, headers=headers)
+    assert broken.status_code == 200, broken.text
+    assert broken.json()["consistent"] is False
+    assert {"code": "table_ontology_mismatch", "table_id": second} in broken.json()["issues"]
+
+    # A table with this ontology but a different World is also a violation.
+    with session_factory()() as db:
+        row = db.get(Table, first)
+        row.world_id = "world-2"
+        db.commit()
+    broken = client.get(url, headers=headers)
+    assert {"code": "ontology_used_by_other_world", "table_id": first} in broken.json()["issues"]

@@ -4,10 +4,10 @@
 
 ShreckWorld is a separately deployed world-knowledge service inside the Shrecknet
 frontend. It owns ontology-associated source items, original files, structured document generations,
-embeddings, retrieval jobs and citations. Shrecknet ontologies provide the authoritative
-world identity for both Atlas graph content and ShreckWorld source items. The existing
-Shrecknet `World` remains an ontology-grouping concept. Separate `ShreckWorld` rows
-are retained only for legacy compatibility; new items need no such parent.
+embeddings, retrieval jobs and citations. Shrecknet's `World` provides the canonical
+identity and metadata. Its active ontology ID scopes both Atlas graph content and
+ShreckWorld source storage. Separate ShreckWorld service rows are retained for
+legacy compatibility. See the [world identity contract](../API/SHRECKWORLD_IDENTITY_API.md).
 It also owns a persisted `model_shreckworld_synthesizer` provider/model target,
 administered through its settings API and shared by ShreckWorld LLM stages.
 
@@ -60,9 +60,10 @@ as a private cover. See [upload API](../API/SHRECKWORLD_UPLOAD_API.md) and
 ShreckWorld persists ruleset drafts, ontology bindings, immutable published
 definition snapshots, generation setup runs, and ShreckTables in additive SQLite
 tables. Shrecknet remains authoritative for ontology, user, and Character Agent
-identity; ShreckWorld stores stable references. Each table pins one existing
-integer `ontology_id` and one published version ID. A table is a live-game record,
-not a second ontology or a legacy `shreckworlds` row.
+identity; ShreckWorld stores stable references. The world selects a single
+published version for all its tables. Ruleset publication retains immutable
+versions independently of the world's RPG edition. ShreckTables belongs to
+the world and holds live play and scheduling records.
 
 The `/api/v1/game-engine` routes require `admin` or `world_builder`; ontology-scoped
 operations resolve access with the caller's Shrecknet bearer token. Review and

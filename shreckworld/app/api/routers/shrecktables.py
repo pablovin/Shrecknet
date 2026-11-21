@@ -11,16 +11,22 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, HttpUrl, model_validator
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import ShrecknetPrincipal, get_current_user, oauth2_scheme
 from app.db.session import get_db
-from app.integrations.ontologies import resolve_ontology, shrecknet_read
+from app.integrations.ontologies import shrecknet_read
+from app.integrations.worlds import resolve_world
+from app.repositories.source_scope import OntologyScope
+from app.services.session_narrative import promote_session
+from app.services.world_rules import read_world_rules
+from app.models.shreckworld import ShreckWorldLibraryItem
+from app.models.source_collection import SourceCollection
 from app.models.shrecktables import (
     Table, TableMember, TableSession, TablePoll, TablePollOption,
-    TablePollVote, TableAttendance, TableAttachment,
+    TablePollVote, TableAttendance, TableAttachment, SessionNarrativeSource,
 )
 
 router = APIRouter(prefix="/api/v1/shrecktables", tags=["ShreckTables"])
@@ -87,6 +93,7 @@ def _poll(session: Session, session_id: int, poll_id: int) -> TablePoll:
 
 
 def _table_read(row: Table, actor: ShrecknetPrincipal, session: Session) -> dict:
+    rules = read_world_rules(session, row.world_id)
     members = list(row.memberships)
     upcoming = session.scalar(select(TableSession).where(
         TableSession.table_id == row.id, TableSession.scheduled_at_utc > utcnow(),
@@ -112,7 +119,8 @@ def _table_read(row: Table, actor: ShrecknetPrincipal, session: Session) -> dict
             TablePollVote.option_id.in_(option_ids), TablePollVote.user_id == actor.user_id).limit(1)):
             unanswered += 1
     return dict(
-        id=row.id, world_id=row.world_id, ontology_id=row.ontology_id, version_id=row.version_id,
+        id=row.id, world_id=row.world_id, ontology_id=row.ontology_id, version_id=rules.version_id,
+        rules_conflict=rules.legacy_conflict,
         owner_user_id=int(row.created_by), name=row.name, description=row.description,
         image_url=row.image_url, timezone=row.timezone, vtt=row.vtt_url,
         google_calendar_id=row.calendar_id, member_count=len(members),
@@ -135,7 +143,9 @@ def _poll_read(session: Session, poll: TablePoll) -> dict:
 def _session_read(session: Session, row: TableSession) -> dict:
     attendance = session.scalars(select(TableAttendance).where(TableAttendance.session_id == row.id)).all()
     polls = session.scalars(select(TablePoll).where(TablePoll.session_id == row.id)).all()
+    narrative = session.get(SessionNarrativeSource, row.id)
     return dict(id=row.id, game_id=row.table_id, table_id=row.table_id,
+                narrative_source_id=narrative.source_id if narrative else None,
                 title=row.title, description=row.summary, summary=row.summary,
                 location=row.location, status=row.status,
                 scheduled_at_utc=_instant(row.scheduled_at_utc),
@@ -160,7 +170,7 @@ def _enqueue_sync(db: Session, row: TableSession) -> None:
 
 class CreateTable(BaseModel):
     world_id: str = Field(min_length=1, max_length=64)
-    ontology_id: int = Field(gt=0)
+    ontology_id: int | None = Field(default=None, gt=0)
     name: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=10000)
     image_url: str | None = Field(default=None, max_length=1024)
@@ -232,13 +242,80 @@ class FinalizeRequest(BaseModel):
 
 @router.get("/tables")
 def list_tables(ontology_id: int | None = Query(default=None, gt=0),
+                world_id: str | None = Query(default=None, min_length=1, max_length=64),
                 actor: ShrecknetPrincipal = Depends(get_current_user),
                 session: Session = Depends(get_db)):
-    rows = session.scalars(select(Table).options(selectinload(Table.memberships)).where(
-        Table.status == "active").order_by(Table.name, Table.id)).all()
-    return [_table_read(row, actor, session) for row in rows
-            if (ontology_id is None or row.ontology_id == ontology_id)
-            and (actor.role in GLOBAL_MANAGERS or any(m.user_id == actor.user_id for m in row.memberships))]
+    query = select(Table).options(selectinload(Table.memberships)).where(Table.status == "active")
+    if ontology_id is not None:
+        query = query.where(Table.ontology_id == ontology_id)
+    if world_id is not None:
+        query = query.where(Table.world_id == world_id)
+    if actor.role not in GLOBAL_MANAGERS:
+        query = query.where(Table.memberships.any(TableMember.user_id == actor.user_id))
+    rows = session.scalars(query.order_by(Table.name, Table.id))
+    return [_table_read(row, actor, session) for row in rows]
+
+
+@router.get("/worlds/{world_id}/knowledge-integrity")
+def world_knowledge_integrity(
+    world_id: str, token: str = Depends(oauth2_scheme),
+    actor: ShrecknetPrincipal = Depends(get_current_user),
+    session: Session = Depends(get_db),
+):
+    """Audit shared-world references without creating table-local knowledge.
+
+    This is a relational consistency check, not a claim that external Neo4j,
+    Qdrant, and file-store contents have been verified.
+    """
+    if actor.role not in GLOBAL_MANAGERS:
+        raise HTTPException(403, "World manager required")
+    world = resolve_world(world_id, token)
+    scoped_tables = session.scalars(select(Table).where(or_(
+        Table.world_id == world.id,
+        Table.ontology_id == world.active_ontology_id,
+    ))).all()
+    issues: list[dict[str, str | int]] = []
+    for row in scoped_tables:
+        if row.world_id != world.id:
+            issues.append({"code": "ontology_used_by_other_world", "table_id": row.id})
+        elif row.ontology_id != world.active_ontology_id:
+            issues.append({"code": "table_ontology_mismatch", "table_id": row.id})
+
+    source_items = session.scalars(select(ShreckWorldLibraryItem).where(
+        ShreckWorldLibraryItem.ontology_id == world.active_ontology_id
+    )).all()
+    source_by_id = {item.id: item for item in source_items}
+    promotions = session.execute(
+        select(SessionNarrativeSource, Table).join(
+            TableSession, TableSession.id == SessionNarrativeSource.session_id
+        ).join(Table, Table.id == TableSession.table_id).where(Table.world_id == world.id)
+    ).all()
+    for promotion, table in promotions:
+        if promotion.source_id not in source_by_id:
+            issues.append({
+                "code": "narrative_source_outside_world",
+                "table_id": table.id,
+                "source_id": promotion.source_id,
+            })
+
+    rules = read_world_rules(session, world.id)
+    if rules.legacy_conflict:
+        issues.append({"code": "conflicting_legacy_rules"})
+    return {
+        "world_id": world.id,
+        "ontology_id": world.active_ontology_id,
+        "consistent": not issues,
+        "issues": issues,
+        "table_count": sum(table.world_id == world.id for table in scoped_tables),
+        "source_count": len(source_items),
+        "narrative_source_count": sum(item.source_type == "narrative" for item in source_items),
+        "source_collection_count": session.scalar(select(func.count()).select_from(
+            SourceCollection
+        ).where(SourceCollection.ontology_id == world.active_ontology_id)) or 0,
+        "published_session_count": len(promotions),
+        "rules_version_id": rules.version_id,
+        "graph_and_vector_store_verified": False,
+    }
 
 
 @router.post("/tables", status_code=201)
@@ -248,11 +325,14 @@ def create_table(body: CreateTable, token: str = Depends(oauth2_scheme),
     if actor.role not in TABLE_CREATORS:
         raise HTTPException(403, "GM or Admin required")
     _zone(body.timezone)
-    resolve_ontology(body.ontology_id, token)
-    world = shrecknet_read("/contracts/worlds/" + body.world_id, token)
-    if not isinstance(world, dict) or body.ontology_id not in world.get("ontology_ids", []):
-        raise HTTPException(409, "Ontology does not belong to the selected world")
-    row = Table(**body.model_dump(), created_by=actor.user_id)
+    world = resolve_world(body.world_id, token, body.ontology_id)
+    rules = read_world_rules(session, world.id)
+    if rules.legacy_conflict:
+        raise HTTPException(409, "Resolve conflicting legacy world rules before creating another table")
+    if body.version_id is not None and body.version_id != rules.version_id:
+        raise HTTPException(409, "Rules are selected for the world")
+    row = Table(**body.model_dump(exclude={"ontology_id", "version_id"}),
+                ontology_id=world.active_ontology_id, created_by=actor.user_id)
     session.add(row)
     session.flush()
     session.add(TableMember(table_id=row.id, user_id=actor.user_id, role="gm"))
@@ -264,6 +344,17 @@ def create_table(body: CreateTable, token: str = Depends(oauth2_scheme),
 def get_table(table_id: int, actor: ShrecknetPrincipal = Depends(get_current_user),
               session: Session = Depends(get_db)):
     return _table_read(_table(session, table_id, actor), actor, session)
+
+
+@router.get("/tables/{table_id}/world")
+def get_table_world(table_id: int, token: str = Depends(oauth2_scheme),
+                    actor: ShrecknetPrincipal = Depends(get_current_user),
+                    session: Session = Depends(get_db)):
+    table = _table(session, table_id, actor)
+    world = resolve_world(table.world_id, token, table.ontology_id)
+    rules = read_world_rules(session, world.id)
+    return {"world_id": world.id, "name": world.name, "ontology_id": world.active_ontology_id,
+            "rules": rules}
 
 
 @router.patch("/tables/{table_id}")
@@ -604,6 +695,30 @@ def finalize_poll(table_id: int, session_id: int, poll_id: int, body: FinalizeRe
     session.commit()
     _enqueue_sync(session, row)
     return _session_read(session, row)
+
+
+class PromoteNarrative(BaseModel):
+    title: str = Field(min_length=1, max_length=255, pattern=r"\S")
+    narrative: str = Field(min_length=1, max_length=200000, pattern=r"\S")
+    attachment_id: int | None = Field(default=None, gt=0)
+
+
+@router.post("/tables/{table_id}/sessions/{session_id}/narrative-source", status_code=201)
+def promote_narrative(
+    table_id: int, session_id: int, body: PromoteNarrative,
+    token: str = Depends(oauth2_scheme),
+    actor: ShrecknetPrincipal = Depends(get_current_user),
+    session: Session = Depends(get_db),
+):
+    table = _table(session, table_id, actor, manage=True)
+    _session(session, table_id, session_id)
+    world = resolve_world(table.world_id, token, table.ontology_id)
+    promotion = promote_session(
+        session, OntologyScope(world.active_ontology_id, world.name, world.description),
+        session_id, actor.user_id, body.title, body.narrative, body.attachment_id,
+    )
+    return {"world_id": world.id, "ontology_id": world.active_ontology_id,
+            "source_id": promotion.source_id, "attachment_id": promotion.attachment_id}
 
 
 @router.get("/tables/{table_id}/sessions/{session_id}/attachments")

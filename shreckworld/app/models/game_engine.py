@@ -136,3 +136,14 @@ class ShreckTableParticipant(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     table: Mapped[ShreckTable] = relationship(back_populates="participants")
     __table_args__ = (UniqueConstraint("table_id", "user_id", name="uq_shreck_table_participant"),)
+
+
+class WorldRuleset(Base):
+    __tablename__ = "game_engine_world_rulesets"
+
+    world_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("game_engine_versions.id", ondelete="RESTRICT")
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False)

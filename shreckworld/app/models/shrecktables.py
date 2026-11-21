@@ -22,6 +22,7 @@ class Table(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     world_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     ontology_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # Retained for legacy migration. Live rules are selected on the world.
     version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -163,3 +164,15 @@ class LegacyTableMap(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     old_id: Mapped[str] = mapped_column(String(128), nullable=False)
     new_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+
+
+class SessionNarrativeSource(Base):
+    __tablename__ = "shrecktables_session_narrative_sources"
+
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("shrecktables_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    attachment_id: Mapped[int | None] = mapped_column(Integer)
+    promoted_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

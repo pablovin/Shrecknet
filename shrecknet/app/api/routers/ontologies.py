@@ -597,6 +597,11 @@ async def delete_ontology(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
         )
+    if ontology.world_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This ontology is a world storage scope and cannot be deleted independently",
+        )
     await service.delete_ontology(ontology)
     await audit_service.log_action(
         actor_type=AuditActorType.USER,

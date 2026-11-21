@@ -1,21 +1,25 @@
 from __future__ import annotations
 
+from pydantic import BaseModel, Field
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import ShrecknetPrincipal, oauth2_scheme, require_world_manager
+from app.api.deps import ShrecknetPrincipal, get_current_user, oauth2_scheme, require_world_manager
 from app.db.session import get_db
 from app.integrations.ontologies import resolve_ontology, shrecknet_read
+from app.integrations.worlds import resolve_world
 from app.models.game_engine import GameBinding, GameGenerationRun, GameRuleset
 from app.models.document import ShreckWorldDocument, ShreckWorldDocumentBookMap
 from app.models.shreckworld import ShreckWorldLibraryItem
 from app.schemas.game_engine import (
     BindingCreate, BindingRead, DefinitionCreate, DefinitionRead, ParticipantCreate, ParticipantRead,
-    PublishRequest, RejectRequest, ReviewRead, RulesetCreate, RulesetRead, RunCreate, RunPage, RunRead, TableCreate, TablePage,
+    PublishRequest, RejectRequest, ReviewRead, RulesetCreate, RulesetRead, RunCreate, RunPage, RunRead, TablePage,
     TableRead, TableUpdate, VersionRead, EntityDiscoveryCreate, EntityDiscoveryReview,
 )
 from app.services import game_engine as service
+from app.services.world_rules import WorldRulesRead, read_world_rules, select_world_rules
 
 router = APIRouter(prefix="/api/v1/game-engine", tags=["ShreckWorld game engine"])
 
@@ -32,6 +36,31 @@ def _reviewer(principal: ShrecknetPrincipal = Depends(_manager)) -> ShrecknetPri
 
 def _authorize_ontology(ontology_id: int, token: str) -> None:
     resolve_ontology(ontology_id, token)
+
+
+class WorldRulesUpdate(BaseModel):
+    version_id: str | None = Field(max_length=36)
+    expected_revision: int = Field(ge=0)
+
+
+@router.get("/worlds/{world_id}/rules", response_model=WorldRulesRead)
+def get_world_rules(world_id: str, token: str = Depends(oauth2_scheme),
+                    _: ShrecknetPrincipal = Depends(get_current_user),
+                    session: Session = Depends(get_db)):
+    world = resolve_world(world_id, token)
+    return read_world_rules(session, world.id)
+
+
+@router.put("/worlds/{world_id}/rules", response_model=WorldRulesRead)
+def update_world_rules(world_id: str, payload: WorldRulesUpdate,
+                       token: str = Depends(oauth2_scheme),
+                       principal: ShrecknetPrincipal = Depends(_manager),
+                       session: Session = Depends(get_db)):
+    world = resolve_world(world_id, token)
+    return select_world_rules(
+        session, world.id, world.active_ontology_id, payload.version_id,
+        payload.expected_revision, principal.user_id,
+    )
 
 
 @router.post("/rulesets", response_model=RulesetRead, status_code=status.HTTP_201_CREATED)
@@ -282,11 +311,9 @@ def cancel_run(run_id: str, principal: ShrecknetPrincipal = Depends(_manager), s
     return run
 
 
-@router.post("/tables", response_model=TableRead, status_code=status.HTTP_201_CREATED)
-def create_table(payload: TableCreate, token: str = Depends(oauth2_scheme),
-                 principal: ShrecknetPrincipal = Depends(_manager), session: Session = Depends(get_db)):
-    _authorize_ontology(payload.ontology_id, token)
-    return service.create_table(session, payload, principal.user_id)
+@router.post("/tables", deprecated=True, status_code=410)
+def create_legacy_table(_: ShrecknetPrincipal = Depends(_manager)):
+    raise HTTPException(410, "Create tables through /api/v1/shrecktables/tables")
 
 
 @router.get("/tables", response_model=TablePage)

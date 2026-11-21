@@ -168,19 +168,6 @@ class RunPage(StrictModel):
     next_cursor: str | None
 
 
-class TableCreate(StrictModel):
-    ontology_id: int = Field(gt=0)
-    version_id: str = Field(min_length=1, max_length=36)
-    name: str = Field(min_length=1, max_length=200)
-
-    @field_validator("name")
-    @classmethod
-    def nonblank_name(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("Name must not be blank")
-        return value.strip()
-
-
 class TableUpdate(StrictModel):
     name: str = Field(min_length=1, max_length=200)
 

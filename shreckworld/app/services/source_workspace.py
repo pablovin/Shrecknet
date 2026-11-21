@@ -21,8 +21,9 @@ from app.models import (
 from app.repositories.source_scope import OntologyScope, scoped_item
 from app.schemas.book_map import BookMapV4
 from app.schemas.sources import (
-    AuthoredContent, ExtractedContent, HierarchyInput, HierarchyRead, Paragraph,
-    OrganizationInput, OrganizationRead, SourceCreate, SourceSection, SourceSettings,
+    MAX_AUTHORED_CONTENT_BYTES, AuthoredContent, ExtractedContent, HierarchyInput,
+    HierarchyRead, Paragraph, OrganizationInput, OrganizationRead, SourceCreate,
+    SourceSection, SourceSettings,
 )
 from app.services.book_map_contract import try_read_book_map
 
@@ -506,8 +507,8 @@ def save_authored_document(
         _fail(422, "Only authored Markdown uses the source organization editor")
     if expected_revision != item.source_revision:
         _fail(409, "Source changed; reload before saving")
-    if len(content.encode("utf-8")) > 2_000_000:
-        _fail(413, "Markdown document exceeds the 2 MB editor limit")
+    if len(content.encode("utf-8")) > MAX_AUTHORED_CONTENT_BYTES:
+        _fail(413, "Markdown document exceeds the 10 MB editor limit")
     current = get_organization(db, item)
     root = next((node for node in current.nodes if node.parent_id is None), None)
     if root is None:

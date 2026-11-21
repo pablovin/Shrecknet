@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 SourceType = Literal['narrative', 'explanatory']
 Identifier = Annotated[str, Field(min_length=1, max_length=128, pattern=r'^[a-zA-Z0-9_:.\-]+$')]
 Title = Annotated[str, Field(min_length=1, max_length=255)]
+MAX_PARAGRAPH_CHARS = 10_000_000
+MAX_AUTHORED_CONTENT_BYTES = 10_000_000
 
 
 class Contract(BaseModel):
@@ -51,7 +53,7 @@ class SourceSettings(SourceCreate):
 
 class Paragraph(Contract):
     id: Identifier
-    text: str = Field(max_length=200000)
+    text: str = Field(max_length=MAX_PARAGRAPH_CHARS)
 
 
 class AuthoredContent(Contract):
@@ -121,8 +123,8 @@ class OrganizationInput(Contract):
                         raise ValueError('Duplicate paragraph ID')
                     paragraphs.add(paragraph.id)
                     size += len(paragraph.text.encode('utf-8'))
-        if size > 2_000_000:
-            raise ValueError('Authored content exceeds 2 MB organization limit')
+        if size > MAX_AUTHORED_CONTENT_BYTES:
+            raise ValueError('Authored content exceeds 10 MB organization limit')
         return self
 
 

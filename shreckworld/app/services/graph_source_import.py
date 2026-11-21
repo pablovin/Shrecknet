@@ -27,7 +27,9 @@ from app.core.config import get_settings
 from app.models import ShreckWorldLibraryItem, SourceCollection, SourceHierarchy, SourceOrganization
 from app.models.sources import GraphSourceImport, SourceAsset
 from app.schemas.source_collections import CollectionEntry
-from app.schemas.sources import AuthoredContent, SectionMetadata, SourceSection
+from app.schemas.sources import (
+    MAX_AUTHORED_CONTENT_BYTES, AuthoredContent, SectionMetadata, SourceSection,
+)
 from app.services.source_assets import asset_id, markdown_bytes, stage_asset
 from app.services.source_collections import _image_root, _validate_entries
 
@@ -42,7 +44,7 @@ NARRATIVE_TYPES = (
 )
 MIN_NARRATIVE_LEVELS = 2
 MAX_TREE_NODES = 2000
-MAX_TREE_BYTES = 2_000_000
+MAX_TREE_BYTES = MAX_AUTHORED_CONTENT_BYTES
 
 
 def _id(*parts: object) -> str:

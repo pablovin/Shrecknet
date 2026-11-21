@@ -699,7 +699,7 @@ def finalize_poll(table_id: int, session_id: int, poll_id: int, body: FinalizeRe
 
 class PromoteNarrative(BaseModel):
     title: str = Field(min_length=1, max_length=255, pattern=r"\S")
-    narrative: str = Field(min_length=1, max_length=200000, pattern=r"\S")
+    narrative: str = Field(min_length=1, max_length=10_000_000, pattern=r"\S")
     attachment_id: int | None = Field(default=None, gt=0)
 
 

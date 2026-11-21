@@ -47,6 +47,9 @@ and Novel templates; each retains immutable versions.
 One root is required and its ID is `source-{source_id}`. Parents must exist,
 cycles and sibling-order collisions are rejected, and authored paragraph IDs must
 remain unique within a source. A section may own paragraphs and contain children.
+Each authored paragraph accepts up to 10,000,000 characters. The complete authored
+organization is limited to 10 MB of UTF-8 text; graph-imported entity Markdown
+uses the same 10 MB limit per Source.
 
 `content_reference` is either:
 
@@ -190,7 +193,7 @@ SourceCollection or create a duplicate entry hierarchy.
 
 - `GET /sources/{source_id}/document`: bounded preview of TXT, HTML, DOCX
   and Markdown originals; uploaded and authored Markdown are editable unless
-  truncated. PDF returns an indicator so the
+  truncated. Markdown previews and edits support up to 10 MB. PDF returns an indicator so the
   authorized original-byte streaming endpoint can be used for the browser
   PDF viewer.
 - `PUT /sources/{source_id}/document`: revision-safe rich editing for
@@ -296,7 +299,7 @@ sources remain unindexed until the normal indexing workflow runs. The importer
 does not write to Neo4j or legacy SQLite. Only Shrecknet-owned `/media/` image
 paths inside the read-only legacy media directory are copied; external URLs
 are never fetched. Missing or unsupported images do not prevent text import.
-An entity Markdown document larger than 2 MB causes its hierarchy group to be
+An entity Markdown document larger than 10 MB causes its hierarchy group to be
 logged and skipped, so startup does not partially commit that collection.
 
 Section asset downloads use:

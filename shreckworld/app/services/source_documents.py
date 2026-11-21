@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models import ShreckWorldLibraryItem
-from app.schemas.sources import Contract
+from app.schemas.sources import MAX_AUTHORED_CONTENT_BYTES, Contract
 
 
 class DocumentRead(Contract):
@@ -28,7 +28,7 @@ class DocumentRead(Contract):
 
 class DocumentSave(Contract):
     expected_revision: int = Field(ge=1)
-    content: str = Field(max_length=2_000_000)
+    content: str = Field(max_length=MAX_AUTHORED_CONTENT_BYTES)
 
 
 def _error(status: int, message: str):
@@ -83,7 +83,7 @@ def read_document(item: ShreckWorldLibraryItem) -> DocumentRead:
                             format="docx", content=content, truncated=truncated)
     if suffix not in {".md", ".txt", ".html", ".htm"}:
         _error(415, "No built-in reader for this document type")
-    limit = 2_000_000
+    limit = MAX_AUTHORED_CONTENT_BYTES
     with path.open("rb") as stream:
         raw = stream.read(limit + 1)
     truncated = len(raw) > limit
@@ -103,8 +103,8 @@ def save_imported_markdown(
         _error(415, "Only Markdown documents are editable")
     if item.source_revision != payload.expected_revision:
         _error(409, "Source changed; reload before saving")
-    if len(payload.content.encode("utf-8")) > 2_000_000:
-        _error(413, "Markdown document exceeds the 2 MB editor limit")
+    if len(payload.content.encode("utf-8")) > MAX_AUTHORED_CONTENT_BYTES:
+        _error(413, "Markdown document exceeds the 10 MB editor limit")
     if item.authored:
         from app.services.source_workspace import save_authored_document
         organization = save_authored_document(

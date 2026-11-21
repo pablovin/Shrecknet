@@ -29,6 +29,12 @@ class World(BaseModel):
     id: str
     name: str
     ontology_ids: list[int] = Field(default_factory=list)
+    active_ontology_id: int | None = None
+    description: str | None = None
+    image_url: str | None = None
+    rpg_system: str | None = None
+    rpg_edition: str | None = None
+    rpg_subversion: str | None = None
 
 
 class LLMModelTarget(BaseModel):
@@ -437,6 +443,7 @@ class ScenePerspectiveAggregateRead(ScenePerspectiveRead):
 
 class Ontology(BaseModel):
     id: int
+    world_id: str | None = None
     name: str
     description: str | None = None
     rpg_system: str | None = None

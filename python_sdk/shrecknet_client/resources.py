@@ -108,7 +108,7 @@ from .models import (
 
 
 class WorldsAPI:
-    """World read endpoints."""
+    """Canonical Shreckworld endpoints."""
 
     def __init__(self, client: AsyncShrecknetClient):
         self._client = client
@@ -121,6 +121,22 @@ class WorldsAPI:
     async def get(self, world_id: str) -> World:
         """Fetch a world by id."""
         data = await self._client.raw_request("GET", f"/worlds/{world_id}")
+        return World.model_validate(data)
+
+
+    async def create(
+        self, *, name: str, description: str | None = None, image_url: str | None = None,
+        rpg_system: str | None = None, rpg_edition: str | None = None,
+        rpg_subversion: str | None = None,
+    ) -> World:
+        """Create a world and its empty ontology as one operation."""
+        payload = dict(name=name, description=description, image_url=image_url, rpg_system=rpg_system,
+                       rpg_edition=rpg_edition, rpg_subversion=rpg_subversion)
+        return World.model_validate(await self._client.raw_request("POST", "/worlds", json=payload))
+
+    async def update(self, world_id: str, **metadata: str | None) -> World:
+        """Update supplied world metadata fields. Explicit null clears optional fields."""
+        data = await self._client.raw_request("PATCH", f"/worlds/{world_id}", json=metadata)
         return World.model_validate(data)
 
 

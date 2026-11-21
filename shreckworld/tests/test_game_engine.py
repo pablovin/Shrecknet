@@ -49,10 +49,18 @@ def test_ruleset_binding_publication_and_table_lifecycle(api, monkeypatch):
     client, headers, _ = api
     _, binding, version = prepare_published(client, headers)
     assert client.get("/api/v1/game-engine/bindings?ontology_id=7", headers=headers).json()[0]["id"] == binding["id"]
-    table = client.post("/api/v1/game-engine/tables", headers=headers,
-                        json={"ontology_id": 7, "version_id": version["id"], "name": "Winter Court"})
-    assert table.status_code == 201, table.text
-    body = table.json()
+    from app.db.session import session_factory
+    from app.models.game_engine import ShreckTable
+
+    assert client.post("/api/v1/game-engine/tables", headers=headers, json={
+        "ontology_id": 7, "version_id": version["id"], "name": "Winter Court",
+    }).status_code == 410
+    with session_factory()() as db:
+        legacy = ShreckTable(ontology_id=7, version_id=version["id"], name="Winter Court", created_by="1")
+        db.add(legacy)
+        db.commit()
+        table_id = legacy.id
+    body = client.get(f"/api/v1/game-engine/tables/{table_id}?ontology_id=7", headers=headers).json()
     assert body["ontology_id"] == 7 and body["version_id"] == version["id"] and body["revision"] == 1
     added = client.put(f"/api/v1/game-engine/tables/{body['id']}/participants?ontology_id=7", headers=headers,
                        json={"user_id": "2", "role": "player", "character_agent_id": "agent-1"})
@@ -96,15 +104,13 @@ def test_run_placeholder_is_idempotent_scoped_and_reports_no_extraction(api, mon
     assert finished["diagnostics"] == [{"code": "extraction_not_implemented", "retryable": False}]
 
 
-def test_game_engine_rejects_unpublished_table_version_and_invalid_definition(api, monkeypatch):
+def test_game_engine_rejects_invalid_definition(api, monkeypatch):
     identity(monkeypatch)
     client, headers, _ = api
     ruleset = client.post("/api/v1/game-engine/rulesets", headers=headers,
                           json={"name": "Draft", "edition": "1"}).json()
     client.post("/api/v1/game-engine/bindings", headers=headers,
                 json={"ontology_id": 7, "ruleset_id": ruleset["id"]})
-    assert client.post("/api/v1/game-engine/tables", headers=headers,
-                       json={"ontology_id": 7, "version_id": "missing", "name": "Table"}).status_code == 409
     assert client.post(f"/api/v1/game-engine/rulesets/{ruleset['id']}/definitions?ontology_id=7", headers=headers,
                        json={"kind": "dice", "schema_version": "1.0", "payload": {}}).status_code == 422
     assert client.post(f"/api/v1/game-engine/rulesets/{ruleset['id']}/approve?expected_revision=1", headers=headers).status_code == 422

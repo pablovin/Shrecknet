@@ -19,7 +19,7 @@ from app.models.document import (
     ShreckWorldDocumentSection,
 )
 from app.models.shreckworld import ShreckWorldLibraryItem
-from app.schemas.game_engine import BindingCreate, DefinitionCreate, RulesetCreate, TableCreate, TableUpdate
+from app.schemas.game_engine import BindingCreate, DefinitionCreate, RulesetCreate, TableUpdate
 
 
 def now() -> datetime:
@@ -229,17 +229,6 @@ def validate_source_references(session: Session, ontology_id: int, references: l
             )) is not None
         if not located:
             raise HTTPException(422, "Source locator does not exist in the selected document revision")
-
-
-def create_table(session: Session, payload: TableCreate, owner_id: str) -> ShreckTable:
-    version = session.get(GameRulesetVersion, payload.version_id)
-    if not version or version.status != "published":
-        raise HTTPException(409, "A published ruleset version is required")
-    row = ShreckTable(ontology_id=payload.ontology_id, version_id=payload.version_id,
-                      name=payload.name, status="active", revision=1, created_by=owner_id)
-    session.add(row)
-    session.commit()
-    return get_table(session, row.id, payload.ontology_id)
 
 
 def get_table(session: Session, table_id: str, ontology_id: int) -> ShreckTable:

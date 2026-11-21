@@ -13,6 +13,8 @@ from app.models.ontology import (
     OntologyProperty,
     OntologyRelationship,
 )
+from app.models.world import World
+from app.services.worlds import WORLD_ONTOLOGY_METADATA, world_service
 from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology import (
     OntologyCopyEntityResult,
@@ -30,8 +32,11 @@ class OntologyService:
 
     # Ontologies --------------------------------------------------------
     async def create_ontology(self, data: dict) -> Ontology:
-        ontology = await self.repository.create(data)
-        await self.session.commit()
+        row = await world_service.create_world(
+            self.session, {key: value for key, value in data.items() if key in WORLD_ONTOLOGY_METADATA}
+        )
+        ontology = await self.repository.get(row[1][0])
+        assert ontology is not None
         return ontology
 
     async def list_ontologies(
@@ -55,6 +60,13 @@ class OntologyService:
         return await self.repository.get(ontology_id)
 
     async def update_ontology(self, ontology: Ontology, data: dict) -> Ontology:
+        if ontology.world_id is not None:
+            row = await world_service.get_world_async(self.session, ontology.world_id)
+            if row is not None and row[1] == [ontology.id]:
+                world: World = row[0]
+                for key, value in data.items():
+                    if key in WORLD_ONTOLOGY_METADATA:
+                        setattr(world, key, value)
         updated = await self.repository.update(ontology, data)
         await self.session.commit()
         return updated

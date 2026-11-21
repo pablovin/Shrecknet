@@ -21,6 +21,7 @@ from app.db.migrations import (
 )
 from app.db.companion_query_migration import migrate_companion_query
 from app.db.elder_chat_migration import migrate_site_elder_chats
+from app.db.world_identity_migration import migrate_world_identity
 from app.db.session import get_engine, get_sessionmaker
 
 
@@ -39,6 +40,7 @@ def init_db() -> None:
         migrate_remove_legacy_character_agents(conn)
         migrate_scene_perspective_audit_types(conn)
         migrate_ontology_rpg_system_column(conn)
+        migrate_world_identity(conn)
         migrate_user_approval_columns(conn)
         migrate_user_email_verification_columns(conn)
         migrate_existing_users_email_verified(conn)

@@ -245,14 +245,17 @@ def _write_authored_revision(item: ShreckWorldLibraryItem, data: bytes) -> Path:
     return path
 
 
-def create_authored_source(db: Session, scope: OntologyScope, payload: SourceCreate) -> ShreckWorldLibraryItem:
+def create_authored_source(
+    db: Session, scope: OntologyScope, payload: SourceCreate, *,
+    source_id: str | None = None, paragraphs: list[Paragraph] | None = None,
+) -> ShreckWorldLibraryItem:
     template = db.get(SourceHierarchy, (payload.hierarchy_template_id, payload.hierarchy_template_version))
     if template is None or template.archived:
         _fail(422, "Select an active hierarchy template version")
     if template.source_type != payload.source_type:
         _fail(422, "Hierarchy template does not belong to this source category")
     item = ShreckWorldLibraryItem(
-        id=str(uuid4()), ontology_id=scope.ontology_id, shreckworld_id=None,
+        id=source_id or str(uuid4()), ontology_id=scope.ontology_id, shreckworld_id=None,
         source_type=payload.source_type, hierarchy_template_id=template.id,
         hierarchy_template_version=template.version, source_revision=1, authored=True,
         title=payload.title, authority_tier="custom", authority_priority=100,
@@ -272,6 +275,9 @@ def create_authored_source(db: Session, scope: OntologyScope, payload: SourceCre
             content_reference=AuthoredContent(),
         ))
         parent_id = section_id
+    if paragraphs:
+        outline[-1].title = payload.title
+        outline[-1].content_reference = AuthoredContent(paragraphs=paragraphs)
     content = render_authored_markdown(outline)
     try:
         path = _write_authored_revision(item, content)

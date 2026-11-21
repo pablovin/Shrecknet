@@ -21,7 +21,7 @@ Errors use FastAPI's `{ "detail": "safe message" }` envelope. `401` means missin
 
 `SourceReference` fields are `source_id`, `document_id`, `document_revision_id`, `content_digest` (64 hexadecimal characters), `locator_kind` (`physical_page`, `printed_page`, `passage`, `section`), and `locator`. Phase 1 validates definition provenance and generation-run source references against persisted ShreckWorld document revisions, the binding ontology, and the requested physical page/printed label/block/section locator. Current structured document IDs are immutable revision IDs; therefore `document_id` and `document_revision_id` must match. Missing, changed, or cross-ontology references return `422` without exposing source content.
 
-Publication requires at least one validated definition. Published snapshots cannot be edited. A successor version records `supersedes_version_id`; tables retain their original version pin. Phase 1 does not execute definition payloads.
+Publication requires at least one validated definition. Published snapshots cannot be edited. A successor version records `supersedes_version_id`; a Shreckworld selects which published version applies to all its tables. Phase 1 does not execute definition payloads.
 
 ## Generation setup runs
 
@@ -43,7 +43,7 @@ The initial entity-discovery model target is `openrouter/deepseek/deepseek-v4.1-
 
 | Method and path | Request | Response / behavior |
 | --- | --- | --- |
-| `POST /tables` | `{ontology_id, version_id, name}` | `201 TableRead`; verifies current ontology access and requires a published version. |
+| `POST /tables` | Retired creation route (410). Create live tables through ShreckTables. |
 | `GET /tables?ontology_id={id}&limit=25&cursor=` | — | Authorized ontology-scoped page, stable by `(created_at, id)`; limit 1–100. |
 | `GET /tables/{id}?ontology_id={id}` | — | Authorized table with participant reference IDs. |
 | `PATCH /tables/{id}?ontology_id={id}` | `{name}` plus `If-Match: <revision>` | Renames an active table and increments revision. Stale revision returns `409`; archived table returns `410`. Ontology and version pin cannot be changed here. |
@@ -51,7 +51,7 @@ The initial entity-discovery model target is `openrouter/deepseek/deepseek-v4.1-
 | `PUT /tables/{id}/participants?ontology_id={id}` | `{user_id, role, character_agent_id?}` | Adds one `owner`, `player`, or `observer` reference. The user must exist; a Character Agent must resolve, match the table ontology, and be owned by the associated participant. Duplicate association returns `409`. |
 | `DELETE /tables/{id}/participants/{user_id}?ontology_id={id}` | — | Removes the association; archived tables reject changes. |
 
-Tables store one integer ontology reference and one immutable published version ID. No cross-database foreign key is created. Ontology checks run server-side on every scoped request; frontend visibility is not an authorization boundary. Participant links do not grant action authority. Game time/state, embodiments, event execution, delegated Companion authority, and Foundry synchronization are not implemented in Phase 1.
+The legacy table routes retain historical records. Their creation route returns 410. The current ShreckTables API creates tables using the world, and the Game Engine selects rules on the world itself. See the [world identity contract](SHRECKWORLD_IDENTITY_API.md). No cross-database foreign key is created. Ontology checks run server-side on every scoped request; frontend visibility is not an authorization boundary. Participant links do not grant action authority. Game time/state, embodiments, event execution, delegated Companion authority, and Foundry synchronization are not implemented in Phase 1.
 
 ## Compatibility and operations
 

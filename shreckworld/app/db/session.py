@@ -29,6 +29,7 @@ def create_schema() -> None:
         WorldOntology, OntologyEntity, OntologyProperty, OntologyRelationship,
         OntologyRevision, OntologyLearnRun, OntologyLearnSource, OntologyLearnWindow,
     )
+    from app.models.migration_center import MigrationCenterAudit  # noqa: F401
     from app.db.base import Base
 
     engine = _engine()

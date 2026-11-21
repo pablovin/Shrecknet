@@ -49,3 +49,5 @@ __all__ = [
 
 from app.models.shrecktables import (Table, TableMember, TableSession, TablePoll, TablePollOption, TablePollVote,
     TableAttendance, TableAttachment, GoogleConnection, GoogleOAuthState, LegacyTableMap, SessionNarrativeSource)
+
+from app.models.migration_center import MigrationCenterAudit

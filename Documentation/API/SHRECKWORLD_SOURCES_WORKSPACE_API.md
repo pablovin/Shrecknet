@@ -287,16 +287,20 @@ Neo4j `EntityInstance` nodes. It loads the graph entities and typed
 then uses the SQL `entity_relationships` definitions to reconstruct complete
 ancestry across ontology pages. An ontology is eligible only when a Scene has
 a `DERIVED_FROM` entity and that entity resolves to a complete narrative tree.
-Only verified two- or three-level paths from an Adventure to a terminal
-narrative type are imported. The ontology's type names define the hierarchy
-levels; examples include `Adventures → Story Arcs → Stories` and
-`Adventures → Timeline`. A Timeline without an Adventure ancestor does not
-create a hierarchy by itself.
+The importer recognizes Adventure roots and terminal Story, Session, Timeline,
+Chapter, Episode, and localized equivalents such as `Aventuras` and `Estórias`.
+Intermediate entity types are retained from the graph path without requiring a
+fixed name or an exact depth, up to 16 levels. Examples include
+`Adventures → Story Arcs → Stories`, `Adventures → Years → Timeline`,
+`Adventures → Years → Volumes → Timeline`, and
+`Aventuras → Anos → Arcos → Estórias`. A terminal type without an Adventure
+ancestor does not create a hierarchy by itself. Ambiguous shortest paths are
+skipped and logged.
 Startup logs report ontology counts and distinguish worlds without Scene
 anchors from those whose anchors do not resolve to a supported hierarchy.
 
 Each ontology gets one Narrative source hierarchy collection for each
-recognized two- or three-level type signature. Collection entries are graph entities
+recognized graph type signature. Collection entries are graph entities
 with stable parent/child links, display names, descriptions and copied local
 images. A Scene anchoring a node beneath an Adventure selects the complete
 Adventure tree: all related lower-level entities are included, even when an

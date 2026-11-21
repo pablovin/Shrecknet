@@ -7,7 +7,7 @@ and legacy SQLite/media inputs remain read-only.
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import sqlite3
+import unicodedata
 
 from neo4j import GraphDatabase
 from sqlalchemy import select, update
@@ -35,14 +36,16 @@ from app.services.source_collections import _image_root, _validate_entries
 
 logger = logging.getLogger(__name__)
 
-# A terminal narrative node can be a Story, Session, Timeline, etc., but it
-# must belong to an Adventure path. This prevents standalone Timeline imports.
+# Narrative roots and terminal story nodes are recognized by type name. Types
+# between them are retained as hierarchy levels without requiring a fixed
+# vocabulary or exactly three levels.
 NARRATIVE_TYPES = (
-    (re.compile(r"\b(?:adventures?|campaigns?|sagas?|chronicles?|books?|novels?)\b", re.I), 0),
-    (re.compile(r"\b(?:story[\s_-]*arcs?|arcs?|storylines?|seasons?|years?|volumes?|parts?|acts?)\b", re.I), 1),
-    (re.compile(r"\b(?:stories|story|sessions?|timelines?|chapters?|episodes?|entries|entry)\b", re.I), 2),
+    (re.compile(r"\b(?:adventures?|aventuras?|campaigns?|sagas?|chronicles?|books?|novels?)\b", re.I), 0),
+    (re.compile(r"\b(?:story[\s_-]*arcs?|arcs?|arcos?|storylines?|seasons?|years?|anos?|volumes?|parts?|actos?|acts?)\b", re.I), 1),
+    (re.compile(r"\b(?:stories|story|estorias?|historias?|sessions?|timelines?|chapters?|episodes?|entries|entry)\b", re.I), 2),
 )
 MIN_NARRATIVE_LEVELS = 2
+MAX_NARRATIVE_LEVELS = 16
 MAX_TREE_NODES = 2000
 MAX_TREE_BYTES = MAX_AUTHORED_CONTENT_BYTES
 
@@ -57,8 +60,11 @@ def graph_collection_entry_id(ontology_id: int, entity_instance_id: str) -> str:
 
 
 def _rank(type_name: str) -> int | None:
+    normalized = unicodedata.normalize("NFKD", type_name)
+    normalized = normalized.encode("ascii", "ignore").decode("ascii").lower()
+    normalized = re.sub(r"[_-]+", " ", normalized)
     for expression, rank in NARRATIVE_TYPES:
-        if expression.search(type_name):
+        if expression.search(normalized):
             return rank
     return None
 
@@ -186,7 +192,7 @@ def _graph_worlds(settings) -> list[dict]:
 
 def _ancestry(leaf_id: str, nodes: dict, edges: list, types: dict,
               relationship_defs: dict) -> list[str]:
-    """Follow verified narrative relationships to the nearest higher levels."""
+    """Find the unique shortest typed relationship path to an Adventure root."""
     neighbours: dict[str, set[str]] = defaultdict(set)
     for source_id, target_id, definition_id in edges:
         definition = relationship_defs.get(definition_id)
@@ -203,34 +209,65 @@ def _ancestry(leaf_id: str, nodes: dict, edges: list, types: dict,
         neighbours[source_id].add(target_id)
         neighbours[target_id].add(source_id)
 
-    result = [leaf_id]
-    visited = {leaf_id}
-    current = leaf_id
-    for _ in range(16):
-        node_type = types.get(nodes[current]["definition_id"])
-        current_rank = _rank(node_type.name) if node_type else None
-        if current_rank is None:
-            current_rank = 3
-        candidates = []
-        for neighbour in neighbours[current]:
-            if neighbour in visited:
-                continue
-            target_type = types.get(nodes[neighbour]["definition_id"])
-            ancestor_rank = _rank(target_type.name) if target_type else None
-            if ancestor_rank is not None and ancestor_rank < current_rank:
-                candidates.append((ancestor_rank, neighbour))
-        if not candidates:
+    paths: list[list[str]] = []
+    queue = deque([leaf_id])
+    depth = {leaf_id: 0}
+    path_to = {leaf_id: [leaf_id]}
+    ambiguous: set[str] = set()
+    shortest: int | None = None
+    while queue:
+        current = queue.popleft()
+        current_depth = depth[current]
+        if shortest is not None and current_depth + 1 > shortest:
             break
-        best_rank = max(rank for rank, _ in candidates)
-        best = sorted(identifier for rank, identifier in candidates if rank == best_rank)
-        if len(best) != 1:
+        current_type = types.get(nodes[current]["definition_id"])
+        current_rank = _rank(current_type.name) if current_type else None
+        if current != leaf_id and current_rank == 0:
+            shortest = current_depth + 1
+            paths.append(path_to[current])
+            if current in ambiguous:
+                raise ValueError("ambiguous narrative parent")
+            continue
+        if current_depth + 1 >= MAX_NARRATIVE_LEVELS:
+            if any(neighbour not in depth for neighbour in neighbours[current]):
+                raise ValueError("narrative ancestry exceeds 16 levels")
+            continue
+        for neighbour in sorted(neighbours[current]):
+            neighbour_type = types.get(nodes[neighbour]["definition_id"])
+            neighbour_rank = _rank(neighbour_type.name) if neighbour_type else None
+            # A terminal story may be the anchored leaf, but never an ancestor.
+            if neighbour_rank == 2:
+                continue
+            next_depth = current_depth + 1
+            if neighbour in depth:
+                if depth[neighbour] == next_depth:
+                    ambiguous.add(neighbour)
+                    if current in ambiguous:
+                        ambiguous.add(neighbour)
+                continue
+            depth[neighbour] = next_depth
+            path_to[neighbour] = path_to[current] + [neighbour]
+            if current in ambiguous:
+                ambiguous.add(neighbour)
+            queue.append(neighbour)
+    if not paths:
+        leaf_type = types.get(nodes[leaf_id]["definition_id"])
+        leaf_rank = _rank(leaf_type.name) if leaf_type else None
+        possible_parents = []
+        for neighbour in neighbours[leaf_id]:
+            neighbour_type = types.get(nodes[neighbour]["definition_id"])
+            neighbour_rank = _rank(neighbour_type.name) if neighbour_type else None
+            if neighbour_rank is not None and leaf_rank is not None and neighbour_rank < leaf_rank:
+                possible_parents.append((neighbour_rank, neighbour))
+        if possible_parents:
+            best_rank = max(rank for rank, _ in possible_parents)
+            possible_parents = [row for row in possible_parents if row[0] == best_rank]
+        if len(possible_parents) > 1:
             raise ValueError("ambiguous narrative parent")
-        current = best[0]
-        result.append(current)
-        visited.add(current)
-    else:
-        raise ValueError("narrative ancestry exceeds 16 levels")
-    return list(reversed(result))
+        return [leaf_id]
+    if len(paths) != 1:
+        raise ValueError("ambiguous narrative parent")
+    return list(reversed(paths[0]))
 
 
 def _valid_path(path: list[str], nodes: dict, types: dict) -> bool:
@@ -242,7 +279,7 @@ def _valid_path(path: list[str], nodes: dict, types: dict) -> bool:
         len(ranks) >= MIN_NARRATIVE_LEVELS
         and ranks[0] == 0
         and ranks[-1] == 2
-        and ranks == sorted(set(ranks))
+        and all(rank not in {0, 2} for rank in ranks[1:-1])
     )
 
 
@@ -654,8 +691,8 @@ def _import_graph_sources_unlocked(session_factory, settings) -> dict[str, int]:
         if not paths:
             summary["worlds_without_valid_narrative_paths"] += 1
             logger.warning(
-                "Skipping graph narrative import ontology=%s: Scene anchors do not resolve to a complete three-level hierarchy",
-                world["ontology_id"],
+                "Skipping graph narrative import ontology=%s: Scene anchors do not resolve to a supported Adventure-to-story path (2-%s levels)",
+                world["ontology_id"], MAX_NARRATIVE_LEVELS,
             )
             continue
         with session_factory() as db:

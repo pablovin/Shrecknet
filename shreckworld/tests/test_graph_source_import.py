@@ -246,6 +246,41 @@ def test_timelines_are_only_imported_when_nested_under_adventures(tmp_path, monk
     engine.dispose()
 
 
+def test_narrative_import_accepts_localized_names_and_deeper_paths():
+    types = {
+        1: importer.LegacyType(1, "Aventuras"),
+        2: importer.LegacyType(2, "Anos"),
+        3: importer.LegacyType(3, "Arcos"),
+        4: importer.LegacyType(4, "Estórias"),
+    }
+    nodes = {
+        "root": _node("root", 1, "Aventura", "page-root"),
+        "year": _node("year", 2, "Ano 1", "page-year"),
+        "arc": _node("arc", 3, "Arco 1", "page-arc"),
+        "story": _node("story", 4, "Estória 1", "page-story"),
+    }
+    relationship_defs = {
+        11: {"entity_id": 1, "destiny_entity_id": 2},
+        12: {"entity_id": 2, "destiny_entity_id": 3},
+        13: {"entity_id": 3, "destiny_entity_id": 4},
+    }
+    world = {
+        "nodes": nodes,
+        "edges": [("root", "year", 11), ("year", "arc", 12), ("arc", "story", 13)],
+        "scene_anchors": [("page-story", "story")],
+    }
+
+    assert importer._rank("Adventures") == 0
+    assert importer._rank("Years") == 1
+    assert importer._rank("Timeline") == 2
+    assert importer._rank("Aventuras") == 0
+    assert importer._rank("Arcos") == 1
+    assert importer._rank("Estórias") == 2
+    assert importer._narrative_paths(world, types, relationship_defs) == [
+        ["root", "year", "arc", "story"]
+    ]
+
+
 def test_standalone_timeline_cannot_form_a_narrative_path():
     types = {4: importer.LegacyType(4, "Timeline")}
     nodes = {"timeline": _node("timeline", 4, "A Date", "page")}

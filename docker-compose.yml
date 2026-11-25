@@ -74,6 +74,9 @@ services:
     restart: "no"
     init: true
     user: "0:0"
+    depends_on:
+      shrecknet_permissions:
+        condition: service_completed_successfully
     environment: *shrecknet-env
     env_file:
       - ./configs/compose.env
@@ -258,6 +261,7 @@ services:
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/media
       - ${SHRECKNET_BACKUP_DIR:-./backups}:/backups
+      - hf-model-cache:/hf-cache
     command:
       - /bin/sh
       - -ec
@@ -270,6 +274,9 @@ services:
         find /data /media -type f -exec chmod 664 {} +
         chown "$$TARGET_UID:$$TARGET_GID" /backups
         chmod 2775 /backups
+        # A new hf-model-cache volume is root-owned. shrecknet_model_prefetch
+        # drops to TARGET_UID before creating /hf-cache/sentence_transformers.
+        chown "$$TARGET_UID:$$TARGET_GID" /hf-cache
         if [ -d /data/runtime-secrets ]; then
           chown -R "$$TARGET_UID:$$TARGET_GID" /data/runtime-secrets
           find /data/runtime-secrets -type d -exec chmod 700 {} +
@@ -560,6 +567,10 @@ services:
     command: python -m app.prefetch
     depends_on:
       shrecknet_permissions:
+        condition: service_completed_successfully
+      # Both prefetches download the same embedding model into the shared
+      # cache; running them concurrently races on HF lock and .incomplete files.
+      shrecknet_model_prefetch:
         condition: service_completed_successfully
     environment:
       <<: *shreckworld-env

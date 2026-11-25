@@ -22,11 +22,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml ./
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install --upgrade "pip>=24.3.1" setuptools wheel
+    PIP_CACHE_DIR=/root/.cache/pip python -m pip install --upgrade "pip>=24.3.1" setuptools wheel
 
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --prefer-binary --index-url "$TORCH_INDEX_URL" \
+    PIP_CACHE_DIR=/root/.cache/pip pip install --prefer-binary --index-url "$TORCH_INDEX_URL" \
       "torch>=2,<3" \
       "torchvision>=0.17,<1"
 
@@ -37,7 +37,7 @@ COPY --from=shreckdoc / /tmp/shreckdoc
 RUN pip install --no-deps /tmp/shreckdoc
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c 'import re, subprocess, tomllib; project = tomllib.load(open("pyproject.toml", "rb"))["project"]; requirements = [item for item in project["dependencies"] if re.match(r"^\s*([A-Za-z0-9_.-]+)", item).group(1).lower() not in {"shreckconfig", "shreckdoc"}]; subprocess.run(["pip", "install", "--prefer-binary", "--index-url", "https://pypi.org/simple", "--timeout", "120", "--retries", "10", *requirements], check=True)'
+    PIP_CACHE_DIR=/root/.cache/pip python -c 'import re, subprocess, tomllib; project = tomllib.load(open("pyproject.toml", "rb"))["project"]; requirements = [item for item in project["dependencies"] if re.match(r"^\s*([A-Za-z0-9_.-]+)", item).group(1).lower() not in {"shreckconfig", "shreckdoc"}]; subprocess.run(["pip", "install", "--prefer-binary", "--index-url", "https://pypi.org/simple", "--timeout", "120", "--retries", "10", *requirements], check=True)'
 
 COPY app ./app
 COPY scripts ./scripts

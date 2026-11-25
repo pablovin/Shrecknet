@@ -65,7 +65,9 @@ def print_report(result):
     print(" | ".join(title.ljust(width) for title, width, _ in columns))
     print("-+-".join("-" * width for _, width, _ in columns))
     for item in result["tables"]:
-        mapping = f"{item.get('ontology_name') or '?'} → {item.get('world_name') or item['world_status']}"
+        target_ontology = item.get("target_ontology_id")
+        suffix = f" · ontology {target_ontology}" if target_ontology else ""
+        mapping = f"{item.get('ontology_name') or '?'} → {item.get('world_name') or item['world_status']}{suffix}"
         values = {**item, "mapping": mapping}
         print(" | ".join(str(values.get(key, ""))[:width].ljust(width)
                          for _, width, key in columns))
@@ -102,8 +104,12 @@ def resolve_world_names(shrecknet):
     worlds = rows(shrecknet, "worlds")
     ontologies = rows(shrecknet, "ontologies")
     world_names = {}
+    ontologies_by_world = {}
     for world in worlds:
         world_names.setdefault(normalized_name(world.get("name")), []).append(world)
+    for ontology in ontologies:
+        if ontology.get("world_id"):
+            ontologies_by_world.setdefault(str(ontology["world_id"]), []).append(ontology)
     result = {}
     for ontology in ontologies:
         name = ontology.get("name")
@@ -113,21 +119,40 @@ def resolve_world_names(shrecknet):
             linked_world_id = ontology.get("world_id")
             if linked_world_id and str(linked_world_id) != str(matched["id"]):
                 result[str(ontology["id"])] = {
-                    "ontology_name": name, "world_id": None,
+                    "ontology_name": name, "world_id": None, "target_ontology_id": None,
                     "world_name": matched.get("name"), "status": "name_link_conflict",
                 }
             else:
-                result[str(ontology["id"])] = {
-                    "ontology_name": name, "world_id": str(matched["id"]),
-                    "world_name": matched.get("name"), "status": "matched",
-                }
+                canonical_ontologies = ontologies_by_world.get(str(matched["id"]), [])
+                if len(canonical_ontologies) != 1:
+                    result[str(ontology["id"])] = {
+                        "ontology_name": name, "world_id": None, "target_ontology_id": None,
+                        "world_name": matched.get("name"), "status": "world_has_no_unique_ontology",
+                    }
+                else:
+                    result[str(ontology["id"])] = {
+                        "ontology_name": name, "world_id": str(matched["id"]),
+                        "target_ontology_id": int(canonical_ontologies[0]["id"]),
+                        "world_name": matched.get("name"), "status": "matched",
+                    }
         else:
             result[str(ontology["id"])] = {
-                "ontology_name": name, "world_id": None,
+                "ontology_name": name, "world_id": None, "target_ontology_id": None,
                 "world_name": None,
                 "status": "unmatched" if not matches else "ambiguous",
             }
     return result
+
+
+def resolve_world_id(shrecknet, world_id):
+    world = next((item for item in rows(shrecknet, "worlds")
+                  if str(item["id"]) == str(world_id)), None)
+    linked = [item for item in rows(shrecknet, "ontologies")
+              if str(item.get("world_id")) == str(world_id)]
+    if world is None or len(linked) != 1:
+        return None
+    return {"world_id": str(world["id"]), "target_ontology_id": int(linked[0]["id"]),
+            "world_name": world.get("name"), "status": "override"}
 
 
 class Importer:
@@ -136,6 +161,7 @@ class Importer:
         self.world_lookup = {
             str(key): (value if isinstance(value, dict) else {
                 "ontology_name": None, "world_id": str(value),
+                "target_ontology_id": int(key),
                 "world_name": "explicit mapping", "status": "override",
             })
             for key, value in world_lookup.items()
@@ -165,13 +191,13 @@ class Importer:
 
     def world(self, ontology_id):
         value = self.world_lookup.get(str(ontology_id))
-        if not value or not value.get("world_id"):
+        if not value or not value.get("world_id") or not value.get("target_ontology_id"):
             status = value.get("status", "ontology_not_found") if value else "ontology_not_found"
             self.warnings.append({"ontology_id": ontology_id,
                                   "ontology_name": value.get("ontology_name") if value else None,
                                   "status": status})
             return None
-        return value["world_id"]
+        return value
 
     def import_rpg(self, rpg):
         games = rows(rpg, "games")
@@ -191,7 +217,8 @@ class Importer:
         self.table_report = []
         for game in games:
             legacy = game["id"]
-            world_id = self.world(game["ontology_id"])
+            world_mapping = self.world(game["ontology_id"])
+            world_id = world_mapping["world_id"] if world_mapping else None
             ontology = self.world_lookup.get(str(game["ontology_id"]), {})
             old_sessions = sessions_by_game.get(legacy, [])
             related_session_ids = {item["id"] for item in old_sessions}
@@ -207,6 +234,7 @@ class Importer:
             report = {
                 "legacy_table_id": legacy, "table_name": game.get("name"),
                 "ontology_id": game.get("ontology_id"), "ontology_name": ontology.get("ontology_name"),
+                "target_ontology_id": ontology.get("target_ontology_id"),
                 "world_name": ontology.get("world_name"), "world_status": ontology.get("status", "ontology_not_found"),
                 "members": len(participant_ids),
                 "participation_users_without_membership": len(participation_user_ids - participant_ids),
@@ -223,7 +251,7 @@ class Importer:
             existed = table is not None
             if not table:
                 table = self.mark("rpg_game", legacy, Table(
-                    ontology_id=game["ontology_id"], world_id=world_id,
+                    ontology_id=world_mapping["target_ontology_id"], world_id=world_id,
                     name=game["name"], created_by=str(game["owner_user_id"]),
                     calendar_id=game.get("google_calendar_id"), vtt_url=game.get("vtt"),
                     created_at=source_timestamp(game.get("created_at")),
@@ -327,14 +355,14 @@ class Importer:
         tables = rows(self.db.connection().connection, "shreck_tables")
         participants = rows(self.db.connection().connection, "shreck_table_participants")
         for source in tables:
-            world_id = self.world(source["ontology_id"])
-            if not world_id:
+            world_mapping = self.world(source["ontology_id"])
+            if not world_mapping:
                 self.counts["skipped_engine_tables"] += 1
                 continue
             table = self.lookup("engine_table", source["id"], Table)
             if not table:
                 table = self.mark("engine_table", source["id"], Table(
-                    world_id=world_id, ontology_id=source["ontology_id"], name=source["name"],
+                    world_id=world_mapping["world_id"], ontology_id=world_mapping["target_ontology_id"], name=source["name"],
                     version_id=source.get("version_id"), created_by=source["created_by"],
                     status=source.get("status") or "active"))
             members = [m for m in participants if m["table_id"] == source["id"]]
@@ -378,8 +406,14 @@ def main():
         if args.world_map:
             overrides = json.loads(args.world_map.read_text())
             for ontology_id, world_id in overrides.items():
-                world_lookup[str(ontology_id)] = {"ontology_name": world_lookup.get(str(ontology_id), {}).get("ontology_name"),
-                    "world_id": str(world_id), "world_name": "explicit override", "status": "override"}
+                override = resolve_world_id(shrecknet, world_id)
+                if override:
+                    override["ontology_name"] = world_lookup.get(str(ontology_id), {}).get("ontology_name")
+                else:
+                    override = {"ontology_name": world_lookup.get(str(ontology_id), {}).get("ontology_name"),
+                                "world_id": None, "target_ontology_id": None,
+                                "world_name": None, "status": "override_world_has_no_unique_ontology"}
+                world_lookup[str(ontology_id)] = override
         if not args.target_db.exists():
             raise FileNotFoundError("Target database not found. Initialize ShreckWorld first.")
         engine = create_engine("sqlite:///" + str(args.target_db.resolve()),

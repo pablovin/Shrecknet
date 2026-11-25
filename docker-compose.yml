@@ -618,6 +618,7 @@ services:
       - ./shreckworld/media:/app/media
       - ./shrecknet/databases:/legacy-shrecknet-data:ro
       - ./shrecknet/media:/legacy-shrecknet-media:ro
+      - ${SHRECKNET_BACKUP_SHRECKRPG_HOST_DIR:-./shreckrpg/databases}:/legacy-shreckrpg-data:ro
       - hf-model-cache:/hf-cache:ro
     depends_on:
       shreckworld_model_prefetch:

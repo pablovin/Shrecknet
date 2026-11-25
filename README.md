@@ -126,6 +126,17 @@ Shortcut launchers:
 - `./run.sh` (Linux/macOS)
 - `run.bat` (Windows)
 
+To preview and optionally migrate legacy ShreckRPG tables and sessions into
+ShreckTables while starting the repository stack, add
+`--migrate-shrecktables` to the launcher, for example:
+
+```bash
+./scripts/compose_up.py --build --migrate-shrecktables
+```
+
+The migration shows its per-table report before asking for backup acknowledgement
+and typed confirmation. See the [ShreckTables migration guide](Documentation/Architecture/SHRECKTABLES_CONSOLIDATION.md).
+
 ### 5. Verify
 
 ```bash

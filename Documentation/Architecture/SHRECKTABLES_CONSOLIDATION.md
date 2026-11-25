@@ -102,31 +102,36 @@ Workspace organizer can enable Smart Notes/Transcription automatically.
 
 ## Data migration
 
-The installation bundle exposes the migration as an explicit startup operation.
-First start the services normally, then run one of:
+The repository Compose launcher exposes the migration as an explicit startup
+operation. This is the usual command when rebuilding and starting the stack:
 
-```sh
-./start.sh --no-logs --migrate-shrecktables
+```bash
+./scripts/compose_up.py --build --migrate-shrecktables
 ```
 
-Windows PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\start.ps1 -NoLogs -MigrateShreckTables
-```
+For an already-built stack, omit `--build`; the migration option starts the
+stack detached, waits for Compose health checks, and then runs the preview
+inside `shreckworld_api` with an interactive terminal. The ShreckRPG database is read-only at
+`/legacy-shreckrpg-data`; set
+`SHRECKNET_BACKUP_SHRECKRPG_HOST_DIR` in `.env` if it is not at the default
+`./shreckrpg/databases` path.
 
 The command reads ShreckRPG and Shrecknet databases read-only and prints a
 per-table report with ontology/world mapping, distinct users, sessions,
 attendance, polls and votes, plus source totals and field coverage. Ontology and
 world names are compared case-insensitively after trimming and collapsing
 whitespace. A match must be unique, and an existing ontology `world_id` must
-agree with that name match. Unmatched, ambiguous, conflicting and missing-user
-tables are shown as blocked. Attendance or vote users who are no longer table
-members are also reported; any such association issue prevents the whole apply
-so access is not broadened silently.
+agree with that name match. The target table uses the canonical world's sole
+ontology ID; worlds with zero or multiple linked ontologies are blocked because
+they have no unambiguous active ontology. Unmatched, ambiguous, conflicting and
+missing-user tables are shown as blocked. Attendance or vote users who are no
+longer table members are also reported; any such association issue prevents the
+whole apply so access is not broadened silently.
 
 The report groups fields into migrated, defaulted/derived, and not migrated.
-Table name, owner, members/roles, calendar ID and VTT URL are retained. Session
+Table name, owner, members/roles, calendar ID and VTT URL are retained. The
+legacy ontology ID is resolved by name; ShreckTables stores the matched world's
+canonical ontology ID. Session
 title, summary, location, schedule/timezone, existing Google event/Meet IDs,
 attendance, polls, options, votes, finalized options, and source timestamps are
 retained where present. Legacy IDs are stored in `shrecktables_legacy_map`.

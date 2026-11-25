@@ -102,28 +102,51 @@ Workspace organizer can enable Smart Notes/Transcription automatically.
 
 ## Data migration
 
-From the `shreckworld` directory, first stop table/session writes, take a
-consistent backup of the ShreckRPG, Shrecknet and ShreckWorld SQLite DBs, and
-initialize the new ShreckWorld schema:
+The installation bundle exposes the migration as an explicit startup operation.
+First start the services normally, then run one of:
 
-```shell
-python -m scripts.migrate_shrecktables \
-    --rpg-db ./path/to/shreckrpg.db \
-    --shrecknet-db ./path/to/shrecknet.db \
-    --target-db ./path/to/shreckworld.db
+```sh
+./start.sh --no-logs --migrate-shrecktables
 ```
 
-This is a **dry-run by default**. It reports counts and blocks applying data
-without a mapping from each legacy ontology ID to a canonical World ID.
-Legacy world resolution can be overridden with a JSON `--world-map`:
+Windows PowerShell:
 
-```json
-{ "7": "canonical-shrecknet-world-uuid" }
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1 -NoLogs -MigrateShreckTables
 ```
 
-After validating the dry-run, run with `--apply`. Idempotent
-`shrecktables_legacy_map` links old game/session/poll/vote IDs to new IDs.
-The importer does not modify ShreckRPG or recreate any Google Calendar event.
+The command reads ShreckRPG and Shrecknet databases read-only and prints a
+per-table report with ontology/world mapping, distinct users, sessions,
+attendance, polls and votes, plus source totals and field coverage. Ontology and
+world names are compared case-insensitively after trimming and collapsing
+whitespace. A match must be unique, and an existing ontology `world_id` must
+agree with that name match. Unmatched, ambiguous, conflicting and missing-user
+tables are shown as blocked. Attendance or vote users who are no longer table
+members are also reported; any such association issue prevents the whole apply
+so access is not broadened silently.
+
+The report groups fields into migrated, defaulted/derived, and not migrated.
+Table name, owner, members/roles, calendar ID and VTT URL are retained. Session
+title, summary, location, schedule/timezone, existing Google event/Meet IDs,
+attendance, polls, options, votes, finalized options, and source timestamps are
+retained where present. Legacy IDs are stored in `shrecktables_legacy_map`.
+Table description/image/timezone and session duration/status use documented
+defaults or derivation. No Google events are recreated or modified. ShreckRPG
+Notes/Activities, external calendar ownership, and files outside the RPG
+session schema are not migrated by this command.
+
+The preview makes no durable writes. To apply, acknowledge a restorable backup
+of all three databases and type `MIGRATE SHRECKTABLES` at the prompts. Run this
+during a maintenance window with ShreckRPG table/session writes stopped. The
+importer is idempotent: repeat runs use legacy ID mappings and fill missing
+related records without duplicating them. It does not modify the original
+ShreckRPG data, which must remain available for legacy Notes/Activities and
+other references.
+
+For direct operator use, `python -m scripts.migrate_shrecktables` remains
+dry-run by default. `--interactive` enables the same confirmation flow;
+non-interactive `--apply` requires both `--backup-confirmed` and the exact
+`--confirmation "MIGRATE SHRECKTABLES"` value.
 
 **Important unresolved cutover dependencies:**
 

@@ -66,6 +66,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## ShreckWorld
 
+- [ShreckTables consolidation and migration](./Architecture/SHRECKTABLES_CONSOLIDATION.md) — legacy ShreckRPG import, name-based world mapping, preview/confirmation workflow, coverage and rollback limits
 - [Ontology Studio](./API/ONTOLOGY_STUDIO_API.md) — sequential chapter conversations, append-only schema discovery, evidence validation and review.
 
 - [ShreckWorld Agent](./Agents/ShreckWorld/ShreckWorld%20Agent.md) — independent planned-evidence pipeline, coverage rules, persisted job lifecycle, and operations

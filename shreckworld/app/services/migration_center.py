@@ -168,8 +168,8 @@ def overview(db: Session, token: str) -> dict:
                    "published_session_narratives": promotions},
         "external_checks": [
             {"name": "Legacy ShreckRPG games, Chronicles, Notes and Activities",
-             "status": "operator_required",
-             "detail": "Legacy ShreckRPG database is external; do not delete its game IDs."},
+             "status": "startup_migration_available",
+             "detail": "Run the first-run startup option --migrate-shrecktables for a name-matched preview and explicit apply. Keep the original RPG database for Notes, Activities and other legacy game-ID references."},
             {"name": "Neo4j scenes and source anchors", "status": "operator_required",
              "detail": "Run the existing scene/source migration preview, then an explicit operator apply."},
             {"name": "Qdrant, embeddings, files and BookMaps", "status": "not_verified",

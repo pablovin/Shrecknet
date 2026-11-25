@@ -18,9 +18,10 @@ RUN python3 -m pip install --break-system-packages "mineru[torch]==${MINERU_VERS
 RUN --mount=type=cache,id=mineru-models-${MINERU_VERSION}-${MINERU_MODEL_SOURCE},target=/root/.mineru/models \
     mineru-kit models download --tier standard --small-backend torch --vlm-engine vllm -s "${MINERU_MODEL_SOURCE}" \
     && mkdir -p /opt/mineru-models \
-    && cp -a /root/.mineru/models/. /opt/mineru-models/ \
-    && mineru config set model.base_dir /opt/mineru-models \
-    && mineru config set model.source local
+    && cp -a /root/.mineru/models/. /opt/mineru-models/
+
+ENV MINERU_MODEL_BASE_DIR=/opt/mineru-models \
+    MINERU_MODEL_SOURCE=local
 
 EXPOSE 8000
 ENTRYPOINT ["/bin/bash", "-c", "export MINERU_MODEL_SOURCE=local && exec \"$@\"", "--"]

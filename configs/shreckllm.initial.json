@@ -56,6 +56,14 @@
       "api_key": "",
       "provider_type": "needs_api",
       "website_url": "https://openrouter.ai/settings/keys"
+    },
+    "azure_ai": {
+      "models": [],
+      "base_url": null,
+      "api_key": "",
+      "provider_type": "needs_api",
+      "requires_base_url": true,
+      "website_url": "https://ai.azure.com/"
     }
   },
   "bootstrap_memory_ttl_seconds": 3600,
@@ -77,7 +85,8 @@
     "openai": {"max_concurrent": 10},
     "anthropic": {"max_concurrent": 10},
     "deepinfra": {"max_concurrent": 10},
-    "openrouter": {"max_concurrent": 10}
+    "openrouter": {"max_concurrent": 10},
+    "azure_ai": {"max_concurrent": 10}
   },
   "ollama_keep_alive": "30m",
   "ollama_prewarm_on_startup": false

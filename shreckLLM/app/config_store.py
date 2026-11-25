@@ -23,12 +23,13 @@ MIGRATION_PROVIDER_METADATA_V8_KEY = "migration_provider_metadata_v8_applied"
 MIGRATION_DEEPINFRA_LIMITS_V9_KEY = "migration_deepinfra_limits_v9_applied"
 MIGRATION_OPENROUTER_V10_KEY = "migration_openrouter_v10_applied"
 MIGRATION_COMPANION_TIMEOUTS_V11_KEY = "migration_companion_timeouts_v11_applied"
+MIGRATION_AZURE_AI_PROVIDER_V12_KEY = "migration_azure_ai_provider_v12_applied"
 LEGACY_COMPOSE_OLLAMA_BASE_URL = "http://ollama:11434"
 EXTERNAL_OLLAMA_BASE_URL = "http://host.docker.internal:11434"
 
 # These capabilities and help links are product metadata, rather than values an
 # administrator should be able to override at runtime.
-PROVIDER_METADATA: dict[str, dict[str, str]] = {
+PROVIDER_METADATA: dict[str, dict[str, Any]] = {
     "openai": {
         "provider_type": "needs_api",
         "website_url": "https://platform.openai.com/api-keys",
@@ -44,6 +45,11 @@ PROVIDER_METADATA: dict[str, dict[str, str]] = {
     "openrouter": {
         "provider_type": "needs_api",
         "website_url": "https://openrouter.ai/settings/keys",
+    },
+    "azure_ai": {
+        "provider_type": "needs_api",
+        "requires_base_url": True,
+        "website_url": "https://ai.azure.com/",
     },
     "ollama_cloud": {
         "provider_type": "needs_api",
@@ -69,6 +75,7 @@ class ProviderDefaults(BaseModel):
     # UI capability metadata.  This is configuration-owned, not user-editable.
     provider_type: str | None = None
     website_url: str | None = None
+    requires_base_url: bool = False
 
 
 class ProviderState(BaseModel):
@@ -221,6 +228,7 @@ def _bootstrap_defaults(settings: Settings) -> RuntimeConfig:
             api_key=raw.get("api_key") if isinstance(raw.get("api_key"), str) or raw.get("api_key") is None else None,
             provider_type=raw.get("provider_type") if isinstance(raw.get("provider_type"), str) else None,
             website_url=raw.get("website_url") if isinstance(raw.get("website_url"), str) else None,
+            requires_base_url=raw.get("requires_base_url") is True,
         )
         provider_states[provider_id] = ProviderState(active=False)
 
@@ -902,6 +910,39 @@ def load_runtime_config() -> RuntimeConfig:
             )
             conn.commit()
             merged = {**updated_payload, MIGRATION_OPENROUTER_V10_KEY: True}
+
+        azure_ai_migration_applied = bool(current.get(MIGRATION_AZURE_AI_PROVIDER_V12_KEY))
+        if not azure_ai_migration_applied:
+            runtime = RuntimeConfig(**merged)
+            providers = dict(runtime.provider_defaults)
+            states = dict(runtime.provider_states)
+            limits = {provider_id: dict(row) for provider_id, row in runtime.provider_limits.items()}
+            azure_defaults = defaults.get("provider_defaults", {}).get("azure_ai")
+            if "azure_ai" not in providers and isinstance(azure_defaults, dict):
+                providers["azure_ai"] = ProviderDefaults.model_validate(azure_defaults)
+                states["azure_ai"] = ProviderState(active=False)
+            limits.setdefault("azure_ai", {}).setdefault("max_concurrent", 10)
+            updated_payload = RuntimeConfig(**{
+                **runtime.model_dump(),
+                "provider_defaults": providers,
+                "provider_states": states,
+                "provider_limits": limits,
+            }).model_dump()
+            ts = _now()
+            conn.executemany(
+                f"""INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+                [(k, _serialize(v), ts) for k, v in updated_payload.items()],
+            )
+            conn.execute(
+                f"""INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+                (MIGRATION_AZURE_AI_PROVIDER_V12_KEY, _serialize(True), ts),
+            )
+            conn.commit()
+            merged = {**updated_payload, MIGRATION_AZURE_AI_PROVIDER_V12_KEY: True}
     finally:
         conn.close()
 

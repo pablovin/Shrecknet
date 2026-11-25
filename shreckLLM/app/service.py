@@ -58,7 +58,7 @@ PROVIDER_MODEL_FALLBACKS: dict[str, list[str]] = {
     "ollama_cloud": ["gemma4:31b", "gemma4:31b-cloud"],
 }
 
-CLOUD_API_KEY_PROVIDERS = {"openai", "anthropic", "deepinfra", "openrouter", "ollama_cloud"}
+CLOUD_API_KEY_PROVIDERS = {"openai", "anthropic", "deepinfra", "openrouter", "ollama_cloud", "azure_ai"}
 PROVIDER_COOLDOWN_SAFETY_MARGIN_SECONDS = 0.25
 PROVIDER_COOLDOWN_JITTER_SECONDS = 0.75
 
@@ -109,6 +109,7 @@ class ChatService:
         self._anthropic: AnthropicClient | None = None
         self._deepinfra: OpenAIClient | None = None
         self._openrouter: OpenAIClient | None = None
+        self._azure_ai: OpenAIClient | None = None
         self._bind_providers()
         self.limiter = RequestLimiter(max_concurrent=self._runtime.max_concurrent_requests)
         self._provider_semaphores: dict[str, asyncio.Semaphore] = {}
@@ -186,6 +187,13 @@ class ChatService:
         else:
             self._openrouter = None
 
+        azure_ai_cfg = provider_defaults.get("azure_ai")
+        if azure_ai_cfg is not None:
+            self._azure_ai = self._build_provider_adapter("azure_ai", azure_ai_cfg)
+            self.registry.register(self._azure_ai)
+        else:
+            self._azure_ai = None
+
     def _build_provider_adapter(self, provider_id: str, cfg: ProviderDefaults) -> Any:
         provider_key = provider_id.strip().lower()
         if provider_key == "ollama":
@@ -223,6 +231,13 @@ class ChatService:
                 base_url=cfg.base_url or "https://openrouter.ai/api/v1",
                 provider_id="openrouter",
             )
+        if provider_key == "azure_ai":
+            return OpenAIClient(
+                api_key=cfg.api_key or "",
+                timeout_s=self._runtime.request_timeout_seconds,
+                base_url=cfg.base_url,
+                provider_id="azure_ai",
+            )
         if provider_key == "anthropic":
             return AnthropicClient(
                 api_key=cfg.api_key or "",
@@ -249,6 +264,8 @@ class ChatService:
             closers.append(self._deepinfra.aclose())
         if self._openrouter is not None:
             closers.append(self._openrouter.aclose())
+        if self._azure_ai is not None:
+            closers.append(self._azure_ai.aclose())
         await asyncio.gather(*closers, return_exceptions=True)
         await asyncio.gather(
             *(task for task in [*self._job_worker_tasks, self._job_gc_task] if task is not None),
@@ -270,6 +287,8 @@ class ChatService:
             closers.append(self._deepinfra.aclose())
         if self._openrouter is not None:
             closers.append(self._openrouter.aclose())
+        if self._azure_ai is not None:
+            closers.append(self._azure_ai.aclose())
         if closers:
             await asyncio.gather(*closers, return_exceptions=True)
 
@@ -391,6 +410,8 @@ class ChatService:
         provider_cfg = cfg or self._runtime.provider_defaults.get(provider_key)
         if provider_cfg is None:
             raise InvalidModelError(f"provider not found: {provider_key}")
+        if provider_cfg.requires_base_url and not (provider_cfg.base_url or "").strip():
+            raise DependencyUnavailableError(f"provider_base_url_missing:{provider_key}")
 
         adapter = self.registry.get(provider_key) if cfg is None else None
         owns_adapter = False
@@ -508,6 +529,7 @@ class ChatService:
             "auth_strategy": cfg.auth_strategy,
             "base_url": cfg.base_url,
             "provider_type": cfg.provider_type,
+            "requires_base_url": cfg.requires_base_url,
             "website_url": cfg.website_url,
             "api_key_present": bool((cfg.api_key or "").strip()),
             "active": effective_active,
@@ -557,7 +579,10 @@ class ChatService:
         else:
             requires_api_key = provider_key in CLOUD_API_KEY_PROVIDERS or cfg.auth_strategy == "api_key"
             api_key_present = bool((cfg.api_key or "").strip()) if requires_api_key else True
-            if not api_key_present:
+            if cfg.requires_base_url and not (cfg.base_url or "").strip():
+                auth_valid = False
+                reason = "missing_base_url"
+            elif not api_key_present:
                 auth_valid = False
                 reason = "missing_api_key"
             else:
@@ -611,6 +636,7 @@ class ChatService:
             "auth_strategy": cfg.auth_strategy,
             "base_url": cfg.base_url,
             "provider_type": cfg.provider_type,
+            "requires_base_url": cfg.requires_base_url,
             "website_url": cfg.website_url,
             "api_key_present": bool((cfg.api_key or "").strip()),
             "active": state.active,

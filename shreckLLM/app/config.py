@@ -81,6 +81,16 @@ class Settings(BaseSettings):
             "provider_type": "needs_api",
             "website_url": "https://openrouter.ai/settings/keys",
         },
+        "azure_ai": {
+            "kind": "cloud",
+            "auth_strategy": "api_key",
+            "models": [],
+            "base_url": None,
+            "api_key": "",
+            "provider_type": "needs_api",
+            "requires_base_url": True,
+            "website_url": "https://ai.azure.com/",
+        },
         "ollama_cloud": {
             "kind": "cloud",
             "auth_strategy": "api_key",

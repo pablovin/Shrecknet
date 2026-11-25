@@ -171,7 +171,7 @@ Requires additional setup:
 - The initial JSON files seed only missing config DB values. Once `shrecknet_config.db` or `shreckllm_config.db` exists, those databases are the runtime source of truth.
 - Delete the relevant config DB only when you intentionally want to reseed from `configs/*.initial.json`.
 - `configs/neo4j.env` is the initial Neo4j source of truth for both the Neo4j container and Shrecknet's graph connection. It ships with a local password; change it before first run for non-local use.
-- OpenAI and Anthropic credentials belong to shreckLLM provider config, not Shrecknet. Add them through shreckLLM `/config/openai-token` and `/config/anthropic-token` after startup.
+- OpenAI, Anthropic, and Azure AI credentials belong to shreckLLM provider config, not Shrecknet. Azure AI uses provider ID `azure_ai`; configure its resource endpoint and API key through `/config/providers/azure_ai` or the ShreckOS Providers administration panel.
 
 Primary references:
 - [Documentation/README.md](Documentation/README.md)

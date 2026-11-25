@@ -2489,6 +2489,10 @@ async def _execute_architect_pipeline(
             ontology_instance = await instance_service.get_instance(
                 ontology_instance_id
             )
+            # Keep the persisted ontology instance as the graph reconciliation
+            # catalogue, even when source-only analysis later swaps in a virtual
+            # narrative record for scene discovery.
+            graph_instance = ontology_instance
             ontology_id = ontology_instance.ontology_id
             if run.ontology_id is not None and run.ontology_id != ontology_id:
                 raise ValueError("Source page does not belong to the selected world")
@@ -2525,7 +2529,6 @@ async def _execute_architect_pipeline(
                     merged_nodes[node_id] = node
                 existing_nodes = list(merged_nodes.values())
 
-            graph_instance = ontology_instance  # Real graph entities remain the reconciliation catalogue.
             # Source-only analysis: Scene discovery reads the chosen Markdown, not
             # the obsolete EntityInstance narrative text. The graph instance
             # remains the target world page for new entity relationships.

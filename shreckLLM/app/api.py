@@ -161,6 +161,7 @@ async def _validate_provider_models_before_save(
         api_key=candidate.api_key,
         provider_type=candidate.provider_type,
         website_url=candidate.website_url,
+        requires_base_url=candidate.requires_base_url,
     )
 
 
@@ -173,8 +174,8 @@ async def _update_provider(
     current = service._runtime.provider_defaults.get(provider_key)
     if current is None:
         raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
-    updates = payload.model_dump(exclude_none=True)
-    if current.provider_type == "needs_api" and "base_url" in updates:
+    updates = payload.model_dump(exclude_unset=True)
+    if current.provider_type == "needs_api" and not current.requires_base_url and "base_url" in updates:
         raise HTTPException(status_code=400, detail="base_url is managed by the provider default and cannot be changed")
     if current.provider_type == "needs_baseurl" and "api_key" in updates:
         raise HTTPException(status_code=400, detail="api_key is not supported for this provider")
@@ -188,6 +189,7 @@ async def _update_provider(
         api_key=updates.get("api_key", current.api_key),
         provider_type=current.provider_type,
         website_url=current.website_url,
+        requires_base_url=current.requires_base_url,
     )
     try:
         providers[provider_key] = await _validate_provider_models_before_save(provider_key, candidate, service)
@@ -869,6 +871,7 @@ async def add_provider_model(
         api_key=current.api_key,
         provider_type=current.provider_type,
         website_url=current.website_url,
+        requires_base_url=current.requires_base_url,
     )
     try:
         providers[provider_key] = await _validate_provider_models_before_save(provider_key, candidate, service)
@@ -915,6 +918,7 @@ async def remove_provider_model(
         api_key=current.api_key,
         provider_type=current.provider_type,
         website_url=current.website_url,
+        requires_base_url=current.requires_base_url,
     )
 
     update_runtime_config({"provider_defaults": providers})

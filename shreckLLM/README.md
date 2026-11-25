@@ -11,7 +11,7 @@ Standalone LLM gateway service for Shrecknet-compatible chat semantics.
 
 ## Features
 - FastAPI API (`/health`, `/ready`, `/chat`, `/models`, `/status`, `/config`)
-- Multi-provider explicit routing via `provider_id` (`ollama`, `ollama_cloud`, `openai`, `anthropic`, `deepinfra`, `openrouter`)
+- Multi-provider explicit routing via `provider_id` (`ollama`, `ollama_cloud`, `openai`, `anthropic`, `deepinfra`, `openrouter`, `azure_ai`)
 - Redis-backed conversation memory with TTL + trimming
 - Bounded concurrent chat-job worker pool, with global and per-provider limits
 - Queue, provider-slot, and execution timing telemetry for chat jobs
@@ -55,7 +55,15 @@ Response includes execution details:
 - `DELETE /config/openrouter-token` (requires bearer token; role `admin` or `world_builder`)
 - `GET /providers/openrouter/validate` (requires bearer token; role `admin` or `world_builder`)
 - `GET /providers/{provider_id}/models` (requires bearer token; role `admin` or `world_builder`)
+- `PUT /config/providers/{provider_id}` (requires bearer token; role `admin` or `world_builder`)
+- `POST|DELETE /config/providers/{provider_id}/models` (requires bearer token; role `admin` or `world_builder`)
 - `GET|PUT /config/providers/{provider_id}/limits` (requires bearer token; role `admin` or `world_builder`)
+
+## Azure AI
+- Provider id: `azure_ai`
+- Uses an Azure OpenAI v1 base URL and resource API key, both configured through `PUT /config/providers/azure_ai`.
+- Model discovery calls the configured resource's OpenAI v1 `/models` endpoint; model IDs are Azure deployments.
+- Uses the shared OpenAI-compatible chat-completions and streaming paths. Microsoft Entra ID and OpenRouter web search are not supported by this configuration.
 
 ## Anthropic defaults
 - Provider id: `anthropic`

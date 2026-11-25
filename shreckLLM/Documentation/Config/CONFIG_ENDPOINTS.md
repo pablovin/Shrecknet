@@ -35,7 +35,8 @@ Response example:
     "openai": {"max_concurrent": 10},
     "anthropic": {"max_concurrent": 10},
     "deepinfra": {"max_concurrent": 10},
-    "openrouter": {"max_concurrent": 10}
+    "openrouter": {"max_concurrent": 10},
+    "azure_ai": {"max_concurrent": 10}
   }
 }
 ```
@@ -65,7 +66,7 @@ Request body (partial patch supported):
 
 `request_timeout_seconds` is the single user-configurable generation timeout.
 It applies to each provider attempt for every provider, including `ollama`,
-`ollama_cloud`, `openai`, `anthropic`, `deepinfra`, and `openrouter`.
+`ollama_cloud`, `openai`, `anthropic`, `deepinfra`, `openrouter`, and `azure_ai`.
 Updating it hot-rebuilds the provider adapters; no service restart is required.
 New installations bootstrap at 600 seconds per attempt. The one-time startup
 configuration migration `migration_companion_timeouts_v11_applied` raises shorter
@@ -143,7 +144,8 @@ returned by `GET /config` and submit the updated map:
     "openai": {"max_concurrent": 6},
     "anthropic": {"max_concurrent": 10},
     "deepinfra": {"max_concurrent": 10},
-    "openrouter": {"max_concurrent": 10}
+    "openrouter": {"max_concurrent": 10},
+    "azure_ai": {"max_concurrent": 10}
   }
 }
 ```
@@ -228,6 +230,43 @@ contract matches DeepInfra:
 `DELETE /config/openrouter-token` removes the key and immediately deactivates
 the provider. OpenRouter uses the shared runtime `request_timeout_seconds`
 value and has no provider-specific generation timeout.
+
+## Azure AI provider
+
+Azure AI is available as provider ID `azure_ai`. It uses API-key authentication
+and requires a resource endpoint configured as the OpenAI v1 base URL, for
+example `https://<resource>.services.ai.azure.com/openai/v1`. Azure OpenAI
+resource endpoints at `https://<resource>.openai.azure.com/openai/v1` are also
+supported. The key and endpoint are stored in the server-side runtime
+configuration; `GET /config` masks the key.
+
+Configure both values with the standard provider endpoint:
+
+```http
+PUT /config/providers/azure_ai
+Authorization: Bearer <shrecknet_admin_or_world_builder_token>
+Content-Type: application/json
+
+{
+  "base_url": "https://<resource>.services.ai.azure.com/openai/v1",
+  "api_key": "<azure-resource-key>"
+}
+```
+
+`GET /providers/azure_ai/models` lists the models available to the configured
+resource. Add the selected Azure deployment name using
+`POST /config/providers/azure_ai/models` with `{"model":"<deployment-name>"}`;
+ShreckLLM validates that it is in the discovered catalog and runs a functional
+chat check before activating the provider. The same GET endpoint can be called
+again whenever deployments change. Remove a model with
+`DELETE /config/providers/azure_ai/models`. Removing the key through
+`PUT /config/providers/azure_ai` with `{"api_key":null}` deactivates Azure AI.
+
+The provider uses the shared OpenAI-compatible chat-completions adapter,
+including streaming and structured response formats. Model-specific feature
+support remains Azure-controlled. Microsoft Entra ID is not part of this
+provider configuration, and Azure AI does not support OpenRouter web search.
+Azure AI uses the shared runtime `request_timeout_seconds` value.
 
 Configured and catalog model IDs remain unchanged. At chat execution time,
 shreckLLM sends OpenRouter `provider.sort: "latency"` and

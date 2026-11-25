@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -89,6 +90,36 @@ def _require_cpu_compatible_settings(root: Path) -> None:
         )
 
 
+def _wait_for_service_health(
+    compose_args: list[str], service: str, *, root: Path, env: dict[str, str], timeout: int = 600
+) -> bool:
+    container = subprocess.run(
+        [*compose_args, "ps", "-q", service], cwd=root, env=env,
+        capture_output=True, text=True, check=False,
+    )
+    container_id = container.stdout.strip()
+    if container.returncode != 0 or not container_id:
+        print(f"Could not find the {service} container after Compose startup.", file=sys.stderr)
+        return False
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = subprocess.run(
+            ["docker", "inspect", "--format={{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}", container_id],
+            cwd=root, env=env, capture_output=True, text=True, check=False,
+        )
+        current = status.stdout.strip()
+        if status.returncode == 0 and current == "healthy":
+            return True
+        if status.returncode != 0 or current in {"unhealthy", "exited", "dead"}:
+            break
+        time.sleep(2)
+
+    print(f"{service} did not become healthy; recent logs follow:", file=sys.stderr)
+    subprocess.run([*compose_args, "logs", "--tail=60", service], cwd=root, env=env, check=False)
+    return False
+
+
 def main(argv: Sequence[str] | None = None, *, root: Path = ROOT) -> int:
     raw_args = list(argv if argv is not None else sys.argv[1:])
     parser = argparse.ArgumentParser(description=__doc__)
@@ -139,24 +170,29 @@ def main(argv: Sequence[str] | None = None, *, root: Path = ROOT) -> int:
         _require_cpu_compatible_settings(root)
         print("No Docker-accessible NVIDIA GPU detected; using the CPU Compose build.", flush=True)
 
+    compose_base = compose_args.copy()
     compose_args.extend(["up", *args])
     if (options.apply_source_migration or options.migrate_shrecktables) and not any(
         arg in {"-d", "--detach"} for arg in args
     ):
         compose_args.append("-d")
-    if (options.apply_source_migration or options.migrate_shrecktables) and "--wait" not in args:
-        compose_args.append("--wait")
     compose_env = os.environ.copy()
     compose_env.setdefault("COMPOSE_BAKE", "true")
     startup = subprocess.run(compose_args, cwd=root, env=compose_env, check=False)
     if startup.returncode != 0:
+        if options.apply_source_migration or options.migrate_shrecktables:
+            print(
+                f"Compose startup exited with status {startup.returncode}; no migration was run.",
+                file=sys.stderr,
+            )
         return startup.returncode
 
-    compose_files = ["docker", "compose", "-f", "docker-compose.yml"]
-    if mineru_enabled:
-        compose_files.extend(["--profile", "mineru"])
-    if gpu_available:
-        compose_files.extend(["-f", "docker-compose.gpu.yml"])
+    if options.apply_source_migration or options.migrate_shrecktables:
+        print("Waiting for ShreckWorld API health before running migrations...", flush=True)
+        if not _wait_for_service_health(compose_base, "shreckworld_api", root=root, env=compose_env):
+            return 1
+
+    compose_files = compose_base
     if options.migrate_shrecktables:
         print(
             "Previewing ShreckRPG tables and sessions. Applying requires a "

@@ -110,8 +110,8 @@ operation. This is the usual command when rebuilding and starting the stack:
 ```
 
 For an already-built stack, omit `--build`; the migration option starts the
-stack detached, waits for Compose health checks, and then runs the preview
-inside `shreckworld_api` with an interactive terminal. The ShreckRPG database is read-only at
+stack detached, waits for the ShreckWorld API health check, and then runs the
+preview inside `shreckworld_api` with an interactive terminal. The ShreckRPG database is read-only at
 `/legacy-shreckrpg-data`; set
 `SHRECKNET_BACKUP_SHRECKRPG_HOST_DIR` in `.env` if it is not at the default
 `./shreckrpg/databases` path.

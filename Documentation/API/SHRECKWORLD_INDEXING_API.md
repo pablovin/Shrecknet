@@ -308,7 +308,13 @@ remains liveness only; Compose uses `/ready` for health.
 Compose prefetches models with `shreckworld_model_prefetch`; it checks the
 persistent Hugging Face volume locally first and contacts the model source only
 when the requested snapshot is missing. API/worker mount the cache read-only and
-disable runtime downloads. Prefetch does not recursively change ownership of
+disable runtime downloads. Before either prefetch runs, `shrecknet_permissions`
+gives the top-level `/hf-cache` directory to the Shrecknet container UID/GID, so
+a new (root-owned) volume works with `shrecknet_model_prefetch`, which drops to
+that UID before creating `/hf-cache/sentence_transformers`.
+`shreckworld_model_prefetch` waits for `shrecknet_model_prefetch` to complete,
+so the two never download the shared embedding model concurrently. A failed
+Shrecknet prefetch therefore also blocks the ShreckWorld prefetch. Prefetch does not recursively change ownership of
 cached model files; the default downloaded permissions allow the service user
 to read them. Both images require Docling and
 Sentence Transformers; the old `[semantic]` extra remains accepted but is no

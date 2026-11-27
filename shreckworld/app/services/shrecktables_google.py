@@ -297,28 +297,48 @@ def link_existing_calendar(db: Session, table: Table, connection: GoogleConnecti
     return selected
 
 
-MEET_POLICY_VERSION = 1
+MEET_POLICY_VERSION = 2
 
 
-def _configure_auto_artifacts(token: str, meet_uri: str, table: Table) -> str | None:
-    match = re.fullmatch(r"https://meet\.google\.com/([a-z]{3}-[a-z]{4}-[a-z]{3})", meet_uri)
+def _meet_link(event: dict) -> str | None:
+    candidates = [event.get("hangoutLink")]
+    candidates.extend(entry.get("uri") for entry in
+                      (event.get("conferenceData") or {}).get("entryPoints", [])
+                      if entry.get("entryPointType") == "video")
+    return next((uri for uri in candidates if isinstance(uri, str)
+                 and re.fullmatch(r"https://meet\\.google\\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}", uri)), None)
+
+
+def _resolve_meet_space(token: str, meet_uri: str) -> str | None:
+    match = re.fullmatch(r"https://meet\\.google\\.com/([a-z]{3}-[a-z]{4}-[a-z]{3})", meet_uri)
     if not match:
         return None
-    # Calendar created the Meet; settings scope is needed for spaces from another app.
     space = google("GET", MEET_BASE + "/spaces/" + match.group(1), token)
     name = space.get("name")
-    if not isinstance(name, str) or not re.fullmatch(r"spaces/[A-Za-z0-9_-]+", name):
-        return None
-    # No co-host assignment or video recording: the organizer's Workspace policy
-    # controls host-first admission and Google starts artifacts when eligible.
-    config = {"accessType": "OPEN", "entryPointAccess": "ALL", "artifactConfig": {
-        "transcriptionConfig": {"autoTranscriptionGeneration": "ON"},
-        "smartNotesConfig": {"autoSmartNotesGeneration": "ON"},
-    }}
-    google("PATCH", MEET_BASE + "/" + name, token,
-           params={"updateMask": "config.accessType,config.entryPointAccess,config.artifactConfig.transcriptionConfig,config.artifactConfig.smartNotesConfig"},
-           body={"name": name, "config": config})
-    return name
+    return name if isinstance(name, str) and re.fullmatch(r"spaces/[A-Za-z0-9_-]+", name) else None
+
+
+def _configure_auto_artifacts(token: str, name: str) -> list[str]:
+    """Attempt each independent setting; unsupported artifacts must not hide a valid room."""
+    failures = []
+    settings = (
+        ("accessType", "config.accessType", {"accessType": "OPEN"}),
+        ("entryPointAccess", "config.entryPointAccess", {"entryPointAccess": "ALL"}),
+        ("transcription", "config.artifactConfig.transcriptionConfig.autoTranscriptionGeneration",
+         {"artifactConfig": {"transcriptionConfig": {"autoTranscriptionGeneration": "ON"}}}),
+        ("smart notes", "config.artifactConfig.smartNotesConfig.autoSmartNotesGeneration",
+         {"artifactConfig": {"smartNotesConfig": {"autoSmartNotesGeneration": "ON"}}}),
+    )
+    for label, mask, config in settings:
+        try:
+            google("PATCH", MEET_BASE + "/" + name, token, params={"updateMask": mask},
+                   body={"name": name, "config": config})
+        except httpx.HTTPStatusError as exc:
+            failures.append(f"{label} (HTTP {exc.response.status_code})")
+        except (httpx.HTTPError, RuntimeError, ValueError):
+            failures.append(f"{label} (unavailable)")
+    return failures
+
 
 
 def sync_event(db: Session, session_id: int, *, allow_calendar_change: bool = False) -> str:
@@ -388,30 +408,56 @@ def sync_event(db: Session, session_id: int, *, allow_calendar_change: bool = Fa
             event = google("PATCH", url + "/" + quote(row.google_event_id, safe=""), token,
                            params={"conferenceDataVersion": 1}, body=body)
         row.google_event_calendar_id = table.calendar_id
-        row.google_event_connection_id = table.google_connection_id
-        row.google_meet_url = event.get("hangoutLink") or row.google_meet_url
-        if not row.google_meet_url:
-            conference = event.get("conferenceData") or {}
-            for entry in conference.get("entryPoints") or []:
-                if entry.get("entryPointType") == "video":
-                    row.google_meet_url = entry.get("uri")
-                    break
-        row.calendar_sync_status = "synced"
-        row.calendar_sync_error = None
-        if row.google_meet_url:
+        row.google_event_connection_id = connection.id
+        row.calendar_sync_status = "partial"
+        row.calendar_sync_error = "Checking Google Meet conference"
+        db.commit()
+        # A conference creation request is asynchronous. On subsequent syncs
+        # retry a failed or missing request on the SAME Calendar event.
+        link = _meet_link(event)
+        if not link:
+            event_url = url + "/" + quote(row.google_event_id, safe="")
+            event = google("GET", event_url, token)
+            link = _meet_link(event)
+            request_state = ((event.get("conferenceData") or {}).get("createRequest") or {}).get("status") or {}
+            if not link and request_state.get("statusCode") != "pending":
+                # A new request ID is needed after a failed conference request.
+                event = google("PATCH", event_url, token, params={"conferenceDataVersion": 1},
+                               body={"conferenceData": {"createRequest": {
+                                   "requestId": "shrecktables-" + uuid4().hex,
+                                   "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                               }}})
+                link = _meet_link(event)
+        row.google_event_calendar_id = table.calendar_id
+        row.google_event_connection_id = connection.id
+        if link and link != row.google_meet_url:
+            row.meet_space = None
+            row.meet_policy_version = 0
+        row.google_meet_url = link
+        row.calendar_sync_status = "partial"
+        row.calendar_sync_error = "Google Meet link is not yet available" if not link else "Meet settings pending"
+        # Persist event identity and link before optional Meet operations.
+        db.commit()
+        if link:
             try:
-                row.meet_space = _configure_auto_artifacts(token, row.google_meet_url, table)
-                if row.meet_space:
-                    row.meet_policy_version = MEET_POLICY_VERSION
-                else:
-                    row.calendar_sync_status = "partial"
+                row.meet_space = _resolve_meet_space(token, link)
+                db.commit()
+                if not row.meet_space:
                     row.calendar_sync_error = "Meet space could not be resolved for documentation"
-            except (httpx.HTTPError, ValueError):
+                elif row.meet_policy_version < MEET_POLICY_VERSION:
+                    failures = _configure_auto_artifacts(token, row.meet_space)
+                    if failures:
+                        row.calendar_sync_error = ("Meet settings unavailable: " + ", ".join(failures))[:255]
+                    else:
+                        row.meet_policy_version = MEET_POLICY_VERSION
+                        row.calendar_sync_status = "synced"
+                        row.calendar_sync_error = None
+                else:
+                    row.calendar_sync_status = "synced"
+                    row.calendar_sync_error = None
+            except (httpx.HTTPError, RuntimeError, ValueError, HTTPException):
                 row.calendar_sync_status = "partial"
-                row.calendar_sync_error = "Meet open access or automatic documentation could not be configured"
-        else:
-            row.calendar_sync_status = "partial"
-            row.calendar_sync_error = "Google Meet link is not yet available"
+                row.calendar_sync_error = "Meet space or settings unavailable; calendar link retained"
         db.commit()
         return row.calendar_sync_status
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:

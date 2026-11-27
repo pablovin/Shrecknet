@@ -160,7 +160,15 @@ issue edit operations. First-seen canonical names win, dependent references are
 mapped by the backend, and new-candidate evidence is combined. Approved definitions
 are never mutated by extraction. Previously known definitions are reused; later
 chapters add missing properties and relationships. Conflicting property definitions
-remain flagged for human review. A final whole-run reconciliation uses the same
+remain flagged for human review. The conflict payload now retains per-field
+`alternatives` (field path, retained and incoming values, and each variant's
+source evidence), plus the affected `fields` and reason. Multiple distinct
+conflicts are accumulated without discarding prior alternatives. Old saved
+runs containing reason-only conflicts remain readable, but cannot reconstruct
+alternatives retrospectively; a new extraction is required to gather them.
+Reviewers choose a corrected value through the existing proposal PATCH endpoint,
+which clears the conflict only after a deliberate edit. A final whole-run
+reconciliation uses the same
 decision memo to avoid repeating identical ambiguity calls.
 
 ### Completeness, checkpoints and provider limits

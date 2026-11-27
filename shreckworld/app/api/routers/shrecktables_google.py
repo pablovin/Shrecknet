@@ -6,6 +6,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
+from app.services import google_workspace_config as platform
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,6 +24,57 @@ FILE_TYPES = {
     "text/plain": ".txt", "text/markdown": ".md", "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
 }
+
+
+class GoogleSetup(BaseModel):
+    web: dict
+    redirect_uri: str = Field(max_length=2048)
+
+
+def _platform_status():
+    settings, source = platform.resolve(get_settings())
+    return {"configured": platform.configured(settings), "source": source,
+            "redirect_uri": settings.google_redirect_uri or None,
+            "return_url": settings.google_frontend_return_url or None,
+            "scopes": service.SCOPES.split()}
+
+
+@router.get("/google/setup")
+def google_setup(actor: ShrecknetPrincipal = Depends(get_current_user)):
+    return _platform_status()
+
+
+@router.post("/google/setup")
+def configure_google(payload: GoogleSetup, actor: ShrecknetPrincipal = Depends(get_current_user)):
+    if actor.role != "admin":
+        raise HTTPException(403, "Administrator privileges required")
+    platform.save(get_settings(), payload.web, payload.redirect_uri)
+    return _platform_status()
+
+
+@router.post("/google/connections/{connection_id}/diagnostics")
+def google_diagnostics(connection_id: str, actor: ShrecknetPrincipal = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    row = db.get(GoogleConnection, connection_id)
+    if not row or row.owner_user_id != actor.user_id or row.status != "connected":
+        raise HTTPException(404, "Google connection unavailable")
+    checks = {"refresh": False, "calendar": False, "meet": False, "drive": False}
+    try:
+        token = service.access_token(row)
+        checks["refresh"] = True
+    except Exception:
+        return checks
+    for name, url, params in (
+        ("calendar", service.CALENDAR_BASE + "/users/me/calendarList", {"maxResults": 1}),
+        ("meet", service.MEET_BASE + "/conferenceRecords", {"pageSize": 1}),
+        ("drive", service.DRIVE_BASE + "/files", {"pageSize": 1, "fields": "files(id)"}),
+    ):
+        try:
+            service.google("GET", url, token, params=params)
+            checks[name] = True
+        except Exception:
+            pass
+    return checks
 
 
 @router.get("/google/connections")
@@ -43,7 +96,7 @@ def start_google(actor: ShrecknetPrincipal = Depends(get_current_user),
 def google_callback(state: str = Query(min_length=10), code: str = Query(min_length=1),
                     db: Session = Depends(get_db)):
     service.oauth_finish(db, state, code)
-    target = get_settings().google_frontend_return_url
+    target = platform.resolve(get_settings())[0].google_frontend_return_url
     # Fixed administrator-configured URL only, never a user-controlled redirect.
     return RedirectResponse(target, status_code=303) if target else {"status": "connected"}
 

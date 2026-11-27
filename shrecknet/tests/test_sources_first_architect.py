@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from app.schemas.ontology_instance import SceneDerivedFrom, MilestoneDerivedFrom
 from app.services.architect_passages import milestone_source_passage
 from app.services.architect_source_documents import (
-    list_architect_sources, load_architect_source, _media_file,
+    list_architect_sources, list_architect_source_catalog, load_architect_source, _media_file,
 )
 
 
@@ -133,3 +133,38 @@ def test_partial_legacy_source_references_remain_readable():
     )
     assert legacy_scene.section_id is None
     assert legacy_milestone.section_id is None
+
+
+def test_catalog_recovers_full_document_when_only_stale_asset_exists(tmp_path, monkeypatch):
+    db, saved = _fixture(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE source_organizations SET nodes='[]'")
+    entries = list_architect_sources(42, db)
+    assert len(entries) == 1
+    assert entries[0].section_id == "source-source-1"
+    assert entries[0].markdown_asset_id is None
+    assert load_architect_source(42, "source-1", "source-source-1", db)[1].startswith("# The Journey")
+
+
+def test_catalog_uses_collection_title_and_reports_missing_file(tmp_path, monkeypatch):
+    db, saved = _fixture(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as conn:
+        conn.execute("""CREATE TABLE source_collections (
+            id TEXT, name TEXT, nodes TEXT, ontology_id INTEGER, source_type TEXT, archived INTEGER
+        )""")
+        conn.execute("INSERT INTO source_collections VALUES(?,?,?,?,?,?)", (
+            "c", "Stories",
+            '[{"id":"a","title":"Adventure","parent_id":null,"source_ids":[]},'
+            '{"id":"b","title":"The Vampire Sol","parent_id":"a","source_ids":["source-1"]}]',
+            42, "narrative", 0))
+        conn.execute("UPDATE shreckworld_library_items SET title='Page 123abc'")
+    entry = list_architect_source_catalog(42, db)[0]
+    assert entry["title"] == "The Vampire Sol"
+    assert entry["hierarchy"] == ["Adventure", "The Vampire Sol"]
+    assert entry["readiness"] == "ready"
+    assert list_architect_source_catalog(99, db) == []
+    saved.unlink()
+    entry = list_architect_source_catalog(42, db)[0]
+    assert entry["readiness"] == "unavailable"
+    assert entry["readiness_reason"]
+    assert list_architect_sources(42, db) == []

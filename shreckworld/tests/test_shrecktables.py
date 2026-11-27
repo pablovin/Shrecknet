@@ -385,21 +385,34 @@ def test_calendar_event_projection_masks_private_events_and_expands_recurring(mo
     assert calls[0][2]["params"]["singleEvents"] is True
 
 
-def test_meet_policy_is_fixed_even_for_legacy_disabled_flags(monkeypatch):
-    from types import SimpleNamespace
+def test_meet_settings_are_independent_when_google_rejects_one(monkeypatch):
     from app.services import shrecktables_google as google
+    import httpx
     calls = []
     def request(method, url, token, **kwargs):
         calls.append((method, kwargs))
+        if kwargs["params"]["updateMask"] == "config.accessType":
+            req = httpx.Request(method, url)
+            raise httpx.HTTPStatusError("Bad request", request=req,
+                response=httpx.Response(400, request=req))
         return {"name": "spaces/test"}
     monkeypatch.setattr(google, "google", request)
-    assert google._configure_auto_artifacts("token", "https://meet.google.com/abc-defg-hij",
-        SimpleNamespace(auto_notes=False, auto_transcript=False)) == "spaces/test"
-    config = calls[1][1]["body"]["config"]
-    assert config["accessType"] == "OPEN" and config["entryPointAccess"] == "ALL"
-    assert config["artifactConfig"]["transcriptionConfig"]["autoTranscriptionGeneration"] == "ON"
-    assert config["artifactConfig"]["smartNotesConfig"]["autoSmartNotesGeneration"] == "ON"
-    assert "recordingConfig" not in config["artifactConfig"]
+    assert google._configure_auto_artifacts("token", "spaces/test") == ["accessType (HTTP 400)"]
+    assert len(calls) == 4
+    configs = [call[1]["body"]["config"] for call in calls]
+    assert configs[0] == {"accessType": "OPEN"}
+    assert configs[1] == {"entryPointAccess": "ALL"}
+    assert configs[2]["artifactConfig"]["transcriptionConfig"]["autoTranscriptionGeneration"] == "ON"
+    assert configs[3]["artifactConfig"]["smartNotesConfig"]["autoSmartNotesGeneration"] == "ON"
+
+
+def test_meet_link_uses_video_entry_point_and_ignores_non_meet_urls():
+    from app.services import shrecktables_google as google
+    assert google._meet_link({"hangoutLink": "https://example.com",
+        "conferenceData": {"entryPoints": [
+            {"entryPointType": "phone", "uri": "tel:123"},
+            {"entryPointType": "video", "uri": "https://meet.google.com/abc-defg-hij"}]}}) == "https://meet.google.com/abc-defg-hij"
+    assert google._meet_link({"conferenceData": {"createRequest": {"status": {"statusCode": "pending"}}}}) is None
 
 
 def test_table_current_session_survives_start(api, monkeypatch):
@@ -544,3 +557,40 @@ def test_public_repair_never_changes_primary_calendar(monkeypatch):
             SimpleNamespace(scopes="https://www.googleapis.com/auth/calendar.acls"))
     assert exc.value.status_code == 403
     request.assert_called_once()
+
+
+def test_sync_persists_meet_link_and_space_when_settings_fail(api, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    from app.db.session import session_factory
+    from app.models.shrecktables import Table, TableSession, GoogleConnection
+    from app.services import shrecktables_google as google
+
+    mock_contracts(monkeypatch)
+    client, headers, _ = api
+    table_id = make_table(client, headers)
+    with session_factory()() as db:
+        db.add(GoogleConnection(id="meet-test-connection", owner_user_id="1",
+            email="organizer@example.com", encrypted_refresh_token="unused", scopes="", status="connected"))
+        table = db.get(Table, table_id)
+        table.calendar_id = "campaign@group.calendar.google.com"
+        table.google_connection_id = "meet-test-connection"
+        row = TableSession(table_id=table_id, title="Playing", created_by="1", status="scheduled",
+            scheduled_at_utc=datetime.now(timezone.utc)+timedelta(days=1), duration_minutes=180)
+        db.add(row); db.commit()
+        session_id = row.id
+    monkeypatch.setattr(google, "access_token", lambda _: "token")
+    monkeypatch.setattr(google, "google", lambda *args, **kwargs: {"hangoutLink": "https://meet.google.com/abc-defg-hij"})
+    monkeypatch.setattr(google, "_resolve_meet_space", lambda *args: "spaces/test")
+    monkeypatch.setattr(google, "_configure_auto_artifacts", lambda *args: ["smart notes (HTTP 400)"])
+    with session_factory()() as db:
+        assert google.sync_event(db, session_id) == "partial"
+    with session_factory()() as db:
+        row = db.get(TableSession, session_id)
+        assert row.google_event_id
+        assert row.google_meet_url == "https://meet.google.com/abc-defg-hij"
+        assert row.meet_space == "spaces/test"
+        assert "smart notes (HTTP 400)" in row.calendar_sync_error
+    response = client.get(f"/api/v1/shrecktables/tables/{table_id}/sessions/{session_id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["google_meet_link"] == "https://meet.google.com/abc-defg-hij"
+    assert response.json()["calendar_sync_status"] == "partial"

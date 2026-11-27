@@ -171,11 +171,14 @@ async def test_elder_cards_are_active_world_filtered_and_omit_configuration(sess
 async def test_world_web_compact_projection_and_no_cross_world_edges():
     graph = Graph([
         dict(key='neo-a', id='entity:a', kind='source', name='Source', page_id='page'),
-        dict(key='neo-b', id='scene:b', kind='scene', name='Scene', page_id='container'),
+        dict(key='neo-b', id='scene:b', kind='scene', name='Scene', page_id='container', source_id='source-1'),
     ], [dict(source='neo-a', target='neo-b', label='DERIVED_FROM')])
     web = await AtlasDiscoveryService(graph).world_web(ontology_id=7)
     assert web.ontology_id == 7 and not web.truncated
     assert web.edges[0].source == 'entity:a'
+    assert web.nodes[1].source_id == 'source-1'
+    assert web.nodes[0].source_id is None
+    assert 'node.source_id' in graph.calls[0][0]
     assert 'key' not in web.nodes[0].model_dump()
     assert len(graph.calls) == 2
     assert graph.calls[1][1]['membership'] == {'neo-a': True, 'neo-b': True}

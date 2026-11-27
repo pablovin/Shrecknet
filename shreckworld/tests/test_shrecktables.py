@@ -406,6 +406,21 @@ def test_meet_settings_are_independent_when_google_rejects_one(monkeypatch):
     assert configs[3]["artifactConfig"]["smartNotesConfig"]["autoSmartNotesGeneration"] == "ON"
 
 
+def test_resolve_meet_space_accepts_valid_url_and_rejects_other_hosts(monkeypatch):
+    from unittest.mock import Mock
+    from app.services import shrecktables_google as google
+
+    request = Mock(return_value={"name": "spaces/test"})
+    monkeypatch.setattr(google, "google", request)
+    assert google._resolve_meet_space("token", "https://meet.google.com/abc-defg-hij") == "spaces/test"
+    request.assert_called_once_with("GET", google.MEET_BASE + "/spaces/abc-defg-hij", "token")
+    for invalid in ("https://meetXgoogleXcom/abc-defg-hij",
+                    "https://meet.google.com.example.com/abc-defg-hij"):
+        assert google._resolve_meet_space("token", invalid) is None
+        assert google._meet_link({"hangoutLink": invalid}) is None
+    assert request.call_count == 1
+
+
 def test_meet_link_uses_video_entry_point_and_ignores_non_meet_urls():
     from app.services import shrecktables_google as google
     assert google._meet_link({"hangoutLink": "https://example.com",

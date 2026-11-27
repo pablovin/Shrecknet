@@ -282,3 +282,36 @@ def test_world_integrity_detects_foreign_table_and_keeps_shared_sources(api, mon
         db.commit()
     broken = client.get(url, headers=headers)
     assert {"code": "ontology_used_by_other_world", "table_id": first} in broken.json()["issues"]
+
+
+def test_google_workspace_setup_route_and_safe_status(api, monkeypatch, tmp_path):
+    from app.core.config import Settings
+    from app.services.google_workspace_config import CALLBACK_PATH
+    from app.main import app
+    from app.api.deps import ShrecknetPrincipal, get_current_user
+
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'oauth-test' / 'world.db'}",
+                        google_client_id="", google_client_secret="", google_redirect_uri="",
+                        google_token_fernet_key="", google_frontend_return_url="")
+    monkeypatch.setattr("app.api.routers.shrecktables_google.get_settings", lambda: settings)
+    client, headers, _ = api
+    path = "/api/v1/shrecktables/google/setup"
+    assert {"get", "post"} <= set(client.get("/openapi.json").json()["paths"][path])
+    response = client.get(path, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["configured"] is False
+    assert response.json()["source"] == "unconfigured"
+    redirect = "https://example.test" + CALLBACK_PATH
+    payload = {"redirect_uri": redirect, "web": {
+        "client_id": "test.apps.googleusercontent.com",
+        "client_secret": "fixture-secret", "redirect_uris": [redirect]}}
+    app.dependency_overrides[get_current_user] = lambda: ShrecknetPrincipal(user_id="2", role="player")
+    assert client.post(path, headers=headers, json=payload).status_code == 403
+    app.dependency_overrides[get_current_user] = lambda: ShrecknetPrincipal(user_id="1", role="admin")
+    result = client.post(path, headers=headers, json=payload)
+    assert result.status_code == 200, result.text
+    assert result.json()["configured"] is True
+    assert result.json()["redirect_uri"] == redirect
+    assert "fixture-secret" not in result.text
+    assert client.get(path, headers=headers).json()["source"] == "wizard"
+    assert client.post(path, headers=headers, json=payload).status_code == 409

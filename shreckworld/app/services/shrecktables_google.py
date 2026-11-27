@@ -153,10 +153,71 @@ def google(method: str, url: str, token: str, *, params=None, body=None, raw: bo
     return response.json() if response.content else {}
 
 
-def create_calendar(db: Session, table: Table, connection: GoogleConnection) -> str:
+def calendar_choices(connection: GoogleConnection, page_token: str | None = None) -> dict:
+    token = access_token(connection)
+    params = {"maxResults": 250, "showHidden": True}
+    if page_token:
+        params["pageToken"] = page_token
+    page = google("GET", CALENDAR_BASE + "/users/me/calendarList", token, params=params)
+    return {"results": [
+        {"id": item["id"], "name": item.get("summaryOverride") or item.get("summary") or item["id"],
+         "timezone": item.get("timeZone"), "access_role": item["accessRole"]}
+        for item in page.get("items", []) if item.get("id") and not item.get("primary")
+        and not item.get("deleted") and item.get("accessRole") in {"owner", "writer"}
+    ], "next_page_token": page.get("nextPageToken")}
+
+
+def calendar_events(db: Session, table: Table, connection: GoogleConnection,
+                    start: datetime, end: datetime, page_token: str | None = None) -> dict:
+    token = access_token(connection)
+    params = {"timeMin": start.isoformat(), "timeMax": end.isoformat(), "singleEvents": True,
+              "showDeleted": False, "orderBy": "startTime", "maxResults": 250,
+              "timeZone": table.timezone}
+    if page_token:
+        params["pageToken"] = page_token
+    page = google("GET", CALENDAR_BASE + "/calendars/" + quote(table.calendar_id, safe="") + "/events",
+                  token, params=params)
+    session_ids = {row.google_event_id: row.id for row in db.scalars(select(TableSession).where(
+        TableSession.table_id == table.id, TableSession.google_event_id.is_not(None),
+        (TableSession.google_event_calendar_id == table.calendar_id) | TableSession.google_event_calendar_id.is_(None)
+    )).all()}
+    results = []
+    for item in page.get("items", []):
+        if item.get("status") == "cancelled" or not item.get("id"):
+            continue
+        begins, ends = item.get("start") or {}, item.get("end") or {}
+        first, last = begins.get("dateTime") or begins.get("date"), ends.get("dateTime") or ends.get("date")
+        if not first or not last:
+            continue
+        private = item.get("visibility") in {"private", "confidential"}
+        results.append({"id": item["id"], "title": "Private event" if private else item.get("summary") or "Untitled event",
+                        "start": first, "end": last, "all_day": bool(begins.get("date")),
+                        "session_id": session_ids.get(item["id"])})
+    return {"results": results, "next_page_token": page.get("nextPageToken")}
+
+
+def unlink_calendar(db: Session, table: Table) -> None:
+    # Preserve historical event and Meet references. Record their original calendar
+    # before removing the table mapping so future sync cannot patch the wrong event.
+    for row in db.scalars(select(TableSession).where(TableSession.table_id == table.id)).all():
+        if row.google_event_id or row.meet_space:
+            if not row.google_event_calendar_id:
+                row.google_event_calendar_id = table.calendar_id
+                row.google_event_connection_id = table.google_connection_id
+            row.calendar_sync_status = "detached"
+        else:
+            row.calendar_sync_status = "not_configured"
+        row.calendar_sync_error = None
+    table.calendar_id = None
+    table.google_connection_id = None
+    table.revision += 1
+    db.commit()
+
+
+def create_calendar(db: Session, table: Table, connection: GoogleConnection, name: str | None = None) -> str:
     token = access_token(connection)
     record = google("POST", CALENDAR_BASE + "/calendars", token,
-        body={"summary": "ShreckTables — " + table.name, "timeZone": table.timezone})
+        body={"summary": name or "ShreckTables — " + table.name, "timeZone": table.timezone})
     calendar_id = record["id"]
     table.google_connection_id = connection.id
     table.calendar_id = calendar_id
@@ -176,6 +237,8 @@ def link_existing_calendar(db: Session, table: Table, connection: GoogleConnecti
         item = google("GET", CALENDAR_BASE + "/users/me/calendarList/" + quote(selected, safe=""), token)
     except httpx.HTTPStatusError as exc:
         raise HTTPException(409, "Connected Google account cannot access this calendar") from exc
+    if item.get("primary") and selected != table.calendar_id:
+        raise HTTPException(422, {"code": "primary_calendar_not_supported"})
     if item.get("accessRole") not in {"owner", "writer"}:
         raise HTTPException(403, "Google account needs writer access to this calendar")
     table.calendar_id = selected
@@ -206,15 +269,24 @@ def _configure_auto_artifacts(token: str, meet_uri: str, table: Table) -> str | 
     return name
 
 
-def sync_event(db: Session, session_id: int) -> str:
+def sync_event(db: Session, session_id: int, *, allow_calendar_change: bool = False) -> str:
     row = db.get(TableSession, session_id)
     if not row:
         return "missing"
     table = db.get(Table, row.table_id)
     if not table or not table.calendar_id or not table.google_connection_id:
-        row.calendar_sync_status = "not_configured"
+        row.calendar_sync_status = "detached" if row.google_event_calendar_id else "not_configured"
         db.commit()
-        return "not_configured"
+        return row.calendar_sync_status
+    changed_calendar = bool(row.google_event_calendar_id and row.google_event_calendar_id != table.calendar_id)
+    if changed_calendar:
+        scheduled = row.scheduled_at_utc
+        if scheduled and scheduled.tzinfo is None:
+            scheduled = scheduled.replace(tzinfo=timezone.utc)
+        if not allow_calendar_change or row.status != "scheduled" or not scheduled or scheduled <= datetime.now(timezone.utc):
+            row.calendar_sync_status = "detached"
+            db.commit()
+            return "detached"
     connection = db.get(GoogleConnection, table.google_connection_id)
     if not connection or connection.status != "connected":
         row.calendar_sync_status = "failed"
@@ -223,6 +295,10 @@ def sync_event(db: Session, session_id: int) -> str:
         return "failed"
     try:
         token = access_token(connection)
+        if changed_calendar:
+            row.google_event_id = None
+            row.google_meet_url = None
+            row.meet_space = None
         url = CALENDAR_BASE + "/calendars/" + quote(table.calendar_id, safe="") + "/events"
         if row.scheduled_at_utc is None or row.status != "scheduled":
             if row.google_event_id:
@@ -258,6 +334,8 @@ def sync_event(db: Session, session_id: int) -> str:
         else:
             event = google("PATCH", url + "/" + quote(row.google_event_id, safe=""), token,
                            params={"conferenceDataVersion": 1}, body=body)
+        row.google_event_calendar_id = table.calendar_id
+        row.google_event_connection_id = table.google_connection_id
         row.google_meet_url = event.get("hangoutLink") or row.google_meet_url
         if not row.google_meet_url:
             conference = event.get("conferenceData") or {}
@@ -334,6 +412,10 @@ def import_session_artifacts(db: Session, session_id: int) -> dict:
     table = db.get(Table, row.table_id)
     if not table or not table.google_connection_id or not (table.auto_notes or table.auto_transcript):
         return {"imported": 0, "state": "disabled"}
+    if (row.google_event_calendar_id and row.google_event_calendar_id != table.calendar_id) or row.calendar_sync_status == "detached":
+        return {"imported": 0, "state": "detached"}
+    if row.google_event_connection_id and row.google_event_connection_id != table.google_connection_id:
+        return {"imported": 0, "state": "detached"}
     connection = db.get(GoogleConnection, table.google_connection_id)
     if not connection:
         return {"imported": 0, "state": "not_connected"}

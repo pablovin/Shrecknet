@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
+import httpx
 from pathlib import Path
 from uuid import uuid4
 
@@ -113,8 +115,60 @@ def disconnect(connection_id: str, actor: ShrecknetPrincipal = Depends(get_curre
     return {"status": "disconnected"}
 
 
+def _calendar_connection(db: Session, connection_id: str, actor: ShrecknetPrincipal):
+    row = db.get(GoogleConnection, connection_id)
+    if not row or row.status != "connected":
+        raise HTTPException(404, {"code": "google_connection_unavailable"})
+    if row.owner_user_id != actor.user_id:
+        raise HTTPException(403, {"code": "google_connection_not_owned"})
+    return row
+
+
+def _calendar_error(exc: Exception):
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {401, 403}:
+        return HTTPException(403, {"code": "google_calendar_permissions"})
+    return HTTPException(502, {"code": "google_calendar_unavailable"})
+
+
+@router.get("/google/connections/{connection_id}/calendars")
+def list_calendars(connection_id: str, page_token: str | None = Query(None, max_length=4096),
+                   actor: ShrecknetPrincipal = Depends(get_current_user), db: Session = Depends(get_db)):
+    connection = _calendar_connection(db, connection_id, actor)
+    try:
+        return service.calendar_choices(connection, page_token)
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise _calendar_error(exc) from exc
+
+
+@router.get("/tables/{table_id}/calendar/events")
+def table_calendar_events(table_id: int, start: datetime, end: datetime,
+                          page_token: str | None = Query(None, max_length=4096),
+                          actor: ShrecknetPrincipal = Depends(get_current_user), db: Session = Depends(get_db)):
+    table = _table(db, table_id, actor, manage=True)
+    if not start.tzinfo or not end.tzinfo or not start < end or end - start > timedelta(days=93):
+        raise HTTPException(422, {"code": "invalid_calendar_range"})
+    if not table.calendar_id or not table.google_connection_id:
+        return {"results": [], "next_page_token": None}
+    connection = db.get(GoogleConnection, table.google_connection_id)
+    if not connection or connection.status != "connected":
+        raise HTTPException(409, {"code": "google_connection_unavailable"})
+    try:
+        return service.calendar_events(db, table, connection, start, end, page_token)
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise _calendar_error(exc) from exc
+
+
+@router.delete("/tables/{table_id}/calendar")
+def remove_calendar(table_id: int, actor: ShrecknetPrincipal = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    table = _table(db, table_id, actor, manage=True)
+    if table.calendar_id or table.google_connection_id:
+        service.unlink_calendar(db, table)
+    return {"status": "unlinked"}
+
+
 @router.post("/tables/{table_id}/calendar/create")
-def table_calendar(table_id: int, connection_id: str,
+def table_calendar(table_id: int, connection_id: str, name: str | None = Query(None, min_length=1, max_length=200),
                    actor: ShrecknetPrincipal = Depends(get_current_user),
                    db: Session = Depends(get_db)):
     table = _table(db, table_id, actor, manage=True)
@@ -123,10 +177,10 @@ def table_calendar(table_id: int, connection_id: str,
     connection = db.get(GoogleConnection, connection_id)
     if not connection or connection.status != "connected":
         raise HTTPException(404, "Google connection unavailable")
-    if actor.role not in {"admin", "world_builder"} and connection.owner_user_id != actor.user_id:
+    if connection.owner_user_id != actor.user_id:
         raise HTTPException(403, "Connect your own Google account")
     try:
-        calendar_id = service.create_calendar(db, table, connection)
+        calendar_id = service.create_calendar(db, table, connection, name)
     except Exception as exc:
         # Do not leak service account keys or Google user data into API errors.
         raise HTTPException(502, "Google Calendar creation failed") from exc
@@ -144,7 +198,15 @@ def connect_existing_calendar(table_id: int, connection_id: str,
         raise HTTPException(404, "Google connection unavailable")
     if actor.role not in {"admin", "world_builder"} and connection.owner_user_id != actor.user_id:
         raise HTTPException(403, "Connect your own Google account")
-    selected = service.link_existing_calendar(db, table, connection, calendar_id)
+    if table.calendar_id and calendar_id and calendar_id != table.calendar_id:
+        raise HTTPException(409, {"code": "unlink_calendar_first"})
+    # New links must use credentials owned by the acting organizer.
+    if connection.owner_user_id != actor.user_id and not table.calendar_id:
+        raise HTTPException(403, {"code": "google_connection_not_owned"})
+    try:
+        selected = service.link_existing_calendar(db, table, connection, calendar_id)
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise _calendar_error(exc) from exc
     return {"calendar_id": selected, "connection_id": connection.id}
 
 
@@ -153,7 +215,7 @@ def sync_google(table_id: int, session_id: int, actor: ShrecknetPrincipal = Depe
                 db: Session = Depends(get_db)):
     _table(db, table_id, actor, manage=True)
     _session(db, table_id, session_id)
-    result = service.sync_event(db, session_id)
+    result = service.sync_event(db, session_id, allow_calendar_change=True)
     return {"status": result}
 
 

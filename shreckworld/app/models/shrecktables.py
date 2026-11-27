@@ -66,6 +66,8 @@ class TableSession(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer, default=180, nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="draft", nullable=False)
     google_event_id: Mapped[str | None] = mapped_column(String(255))
+    google_event_calendar_id: Mapped[str | None] = mapped_column(String(255))
+    google_event_connection_id: Mapped[str | None] = mapped_column(String(36))
     google_meet_url: Mapped[str | None] = mapped_column(String(1024))
     meet_space: Mapped[str | None] = mapped_column(String(255))
     calendar_sync_status: Mapped[str] = mapped_column(String(24), default="not_configured", nullable=False)

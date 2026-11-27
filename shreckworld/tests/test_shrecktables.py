@@ -315,3 +315,42 @@ def test_google_workspace_setup_route_and_safe_status(api, monkeypatch, tmp_path
     assert "fixture-secret" not in result.text
     assert client.get(path, headers=headers).json()["source"] == "wizard"
     assert client.post(path, headers=headers, json=payload).status_code == 409
+
+
+def test_calendar_unlink_preserves_old_event_and_prevents_cross_calendar_sync(api, monkeypatch):
+    from app.db.session import session_factory
+    from app.models.shrecktables import Table, TableSession
+    from app.services import shrecktables_google as google
+    mock_contracts(monkeypatch)
+    client, headers, _ = api
+    table_id = make_table(client, headers)
+    with session_factory()() as db:
+        table = db.get(Table, table_id)
+        table.calendar_id, table.google_connection_id = "old-calendar", "old-connection"
+        row = TableSession(table_id=table_id, title="Existing", created_by="1", google_event_id="old-event")
+        db.add(row); db.commit()
+        session_id = row.id
+    path = f"/api/v1/shrecktables/tables/{table_id}/calendar"
+    assert client.delete(path, headers=headers).json() == {"status": "unlinked"}
+    with session_factory()() as db:
+        table = db.get(Table, table_id)
+        row = db.get(TableSession, session_id)
+        assert table.calendar_id is None and table.google_connection_id is None
+        assert row.google_event_id == "old-event" and row.google_event_calendar_id == "old-calendar"
+        table.calendar_id, table.google_connection_id = "new-calendar", "new-connection"
+        db.commit()
+        assert google.sync_event(db, session_id) == "detached"
+        assert db.get(TableSession, session_id).google_event_id == "old-event"
+
+
+def test_calendar_picker_excludes_primary_readonly_and_keeps_pagination(monkeypatch):
+    from app.services import shrecktables_google as google
+    monkeypatch.setattr(google, "access_token", lambda _: "token")
+    monkeypatch.setattr(google, "google", lambda *args, **kwargs: {
+        "items": [{"id":"primary", "primary":True, "accessRole":"owner"},
+                  {"id":"readonly", "accessRole":"reader"},
+                  {"id":"campaign", "summary":"Campaign", "accessRole":"writer"}],
+        "nextPageToken":"next"})
+    page = google.calendar_choices(None)
+    assert [row["id"] for row in page["results"]] == ["campaign"]
+    assert page["next_page_token"] == "next"

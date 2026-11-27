@@ -146,7 +146,7 @@ def _source_candidates(ontology_id: int, database_path: Path | None = None,
                         readiness, reason = "unavailable", "Markdown file is not visible to Architect"
                     elif path.stat().st_size > 4_000_000:
                         readiness, reason = "unavailable", "Markdown exceeds the current Architect size limit"
-                    elif path.stat().st_size == 0:
+                    elif not path.read_bytes().strip():
                         readiness, reason = "empty", "Add narrative text and save the document"
                 except (ValueError, OSError):
                     readiness, reason = "unavailable", "Markdown storage is inaccessible"
@@ -168,6 +168,10 @@ def _source_candidates(ontology_id: int, database_path: Path | None = None,
         # A stale orphan asset must not mask a valid complete Markdown document.
         if not active:
             active.append(candidate(first))
+        elif not any(meta["readiness"] == "ready" for _, meta in active):
+            fallback = candidate(first)
+            if fallback[1]["readiness"] == "ready":
+                active.append(fallback)
         result.extend(active)
     return result
 

@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.services import google_workspace_config
 from app.models.shrecktables import (
     GoogleConnection, GoogleOAuthState, Table, TableSession, TableAttachment,
 )
@@ -33,7 +34,8 @@ SCOPES = (
     "https://www.googleapis.com/auth/calendar.events "
     "https://www.googleapis.com/auth/meetings.space.readonly "
     "https://www.googleapis.com/auth/meetings.space.settings "
-    "https://www.googleapis.com/auth/drive.readonly"
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly "
+    "https://www.googleapis.com/auth/drive.meet.readonly"
 )
 CALENDAR_BASE = "https://www.googleapis.com/calendar/v3"
 MEET_BASE = "https://meet.googleapis.com/v2"
@@ -42,8 +44,8 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 def _settings():
-    s = get_settings()
-    if not all((s.google_client_id, s.google_client_secret, s.google_redirect_uri, s.google_token_fernet_key)):
+    s, _ = google_workspace_config.resolve(get_settings())
+    if not google_workspace_config.configured(s):
         raise HTTPException(503, "Google OAuth is not configured by the administrator")
     return s
 

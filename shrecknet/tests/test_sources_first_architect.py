@@ -25,7 +25,7 @@ def _fixture(tmp_path, monkeypatch):
             CREATE TABLE shreckworld_library_items (
                 id TEXT PRIMARY KEY, ontology_id INTEGER, title TEXT,
                 source_revision INTEGER, storage_path TEXT,
-                mime_type TEXT, source_sha256 TEXT, source_type TEXT);
+                mime_type TEXT, source_sha256 TEXT, source_type TEXT, created_at TEXT);
             CREATE TABLE source_assets (
                 id TEXT, source_id TEXT, section_id TEXT,
                 kind TEXT, storage_path TEXT, content_sha256 TEXT);
@@ -35,9 +35,9 @@ def _fixture(tmp_path, monkeypatch):
                 ontology_id INTEGER, instance_id TEXT, entity_instance_id TEXT,
                 source_id TEXT, section_id TEXT);
         """)
-        conn.execute("INSERT INTO shreckworld_library_items VALUES(?,?,?,?,?,?,?,?)",
+        conn.execute("INSERT INTO shreckworld_library_items VALUES(?,?,?,?,?,?,?,?,?)",
             ("source-1", 42, "The Journey", 5, "/app/media/ontologies/42/source-1/story.md",
-             "text/markdown", sha256(payload).hexdigest(), "narrative"))
+             "text/markdown", sha256(payload).hexdigest(), "narrative", "2026-11-19 10:00:00"))
         conn.execute("INSERT INTO source_assets VALUES(?,?,?,?,?,?)",
             ("asset-1", "source-1", "chapter-1", "markdown",
              "/app/media/ontologies/42/source-1/story.md", sha256(payload).hexdigest()))
@@ -168,3 +168,15 @@ def test_catalog_uses_collection_title_and_reports_missing_file(tmp_path, monkey
     assert entry["readiness"] == "unavailable"
     assert entry["readiness_reason"]
     assert list_architect_sources(42, db) == []
+
+
+def test_catalog_is_ordered_by_creation_not_title_or_revision(tmp_path, monkeypatch):
+    db, saved = _fixture(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as conn:
+        conn.execute("""INSERT INTO shreckworld_library_items
+            SELECT 'new-source', ontology_id, 'Z New Story', 1, storage_path,
+                mime_type, source_sha256, source_type, '2026-11-27 10:00:00'
+            FROM shreckworld_library_items WHERE id='source-1'""")
+    entries = list_architect_source_catalog(42, db)
+    assert [row["source_id"] for row in entries] == ["new-source", "source-1"]
+    assert entries[0]["created_at"] == "2026-11-27 10:00:00"

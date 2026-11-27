@@ -424,3 +424,43 @@ def test_table_current_session_survives_start(api, monkeypatch):
     assert row["next_session"]["id"] == future_id
     monkeypatch.setattr("app.api.routers.shrecktables.utcnow", lambda: now+timedelta(minutes=120))
     assert client.get(f"/api/v1/shrecktables/tables/{table_id}", headers=headers).json()["current_session"] is None
+
+
+def test_calendar_events_route_for_connected_table(api, monkeypatch):
+    from app.db.session import session_factory
+    from app.models.shrecktables import Table, GoogleConnection
+    from app.services import shrecktables_google as google
+    import httpx
+
+    mock_contracts(monkeypatch)
+    client, headers, _ = api
+    table_id = make_table(client, headers)
+    with session_factory()() as db:
+        db.add(GoogleConnection(id="test-calendar-connection", owner_user_id="1",
+            email="organizer@example.com", encrypted_refresh_token="unused",
+            scopes="", status="connected"))
+        table = db.get(Table, table_id)
+        table.calendar_id = "campaign@group.calendar.google.com"
+        table.google_connection_id = "test-calendar-connection"
+        db.commit()
+
+    calls = []
+    def events(db, table, connection, start, end, page_token, *, organizer):
+        calls.append((table.calendar_id, connection.id, organizer))
+        return {"results": [], "next_page_token": None}
+    monkeypatch.setattr(google, "calendar_events", events)
+    path = f"/api/v1/shrecktables/tables/{table_id}/calendar/events"
+    params = {"start": "2026-11-01T00:00:00Z", "end": "2026-12-01T00:00:00Z"}
+    response = client.get(path, headers=headers, params=params)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"results": [], "next_page_token": None}
+    assert calls == [("campaign@group.calendar.google.com", "test-calendar-connection", True)]
+
+    def missing(*args, **kwargs):
+        request = httpx.Request("GET", "https://www.googleapis.com/calendar/v3/calendars/missing/events")
+        raise httpx.HTTPStatusError("Not found", request=request,
+            response=httpx.Response(404, request=request))
+    monkeypatch.setattr(google, "calendar_events", missing)
+    response = client.get(path, headers=headers, params=params)
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "google_calendar_not_accessible"

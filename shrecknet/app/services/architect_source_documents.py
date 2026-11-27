@@ -60,7 +60,44 @@ def _media_file(stored: str, media_root: Path | None = None) -> Path:
     return candidate
 
 
-def list_architect_sources(ontology_id: int, database_path: Path | None = None) -> list[ArchitectSource]:
+def _json_nodes(raw: str | None) -> list[dict]:
+    try:
+        value = json.loads(raw or "[]")
+        return [node for node in value if isinstance(node, dict)] if isinstance(value, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def _collection_metadata(db: sqlite3.Connection, ontology_id: int) -> dict[str, list[dict]]:
+    # Older databases may predate collections. Never infer ownership from a title.
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_collections'").fetchone():
+        return {}
+    result: dict[str, list[dict]] = {}
+    for collection in db.execute("""
+        SELECT id, name, nodes FROM source_collections
+        WHERE ontology_id=? AND source_type='narrative' AND archived=0 ORDER BY name,id
+    """, (ontology_id,)):
+        nodes = _json_nodes(collection["nodes"])
+        by_id = {node.get("id"): node for node in nodes if isinstance(node.get("id"), str)}
+        for node in nodes:
+            path, seen = [], set()
+            cursor = node
+            while cursor and cursor.get("id") not in seen:
+                seen.add(cursor.get("id"))
+                path.insert(0, str(cursor.get("title") or "Untitled"))
+                cursor = by_id.get(cursor.get("parent_id"))
+            for source_id in node.get("source_ids") or []:
+                if isinstance(source_id, str):
+                    result.setdefault(source_id, []).append({
+                        "collection_id": collection["id"], "collection_name": collection["name"],
+                        "entry_id": node.get("id"), "title": str(node.get("title") or ""),
+                        "hierarchy": path, "image_key": node.get("image_key"),
+                    })
+    return result
+
+
+def _source_candidates(ontology_id: int, database_path: Path | None = None,
+                       media_root: Path | None = None) -> list[tuple[ArchitectSource, dict]]:
     with _connection(database_path) as db:
         rows = db.execute("""
             SELECT i.id, i.title, i.source_revision, i.storage_path, i.mime_type,
@@ -75,55 +112,86 @@ def list_architect_sources(ontology_id: int, database_path: Path | None = None) 
             FROM shreckworld_library_items i
             LEFT JOIN source_assets a ON a.source_id=i.id AND a.kind='markdown'
             WHERE i.ontology_id=? AND i.source_type='narrative'
-              AND (a.id IS NOT NULL OR (i.mime_type='text/markdown'
-                   AND COALESCE(i.storage_path, '') <> ''))
-            ORDER BY i.title, a.section_id
+            ORDER BY i.title, i.id, a.section_id
         """, (ontology_id,)).fetchall()
-        result = []
-        for row in rows:
-            if row["asset_id"] is not None:
-                # SourceAssets are immutable files, but an old revision can
-                # leave an unlinked row behind. Only active SourceOrganization
-                # section references can be analyzed.
+        collection_meta = _collection_metadata(db, ontology_id)
+    grouped: dict[str, list] = {}
+    for row in rows:
+        grouped.setdefault(str(row["id"]), []).append(row)
+    result = []
+    for source_id, group in grouped.items():
+        first = group[0]
+        sections = {node.get("id"): node for node in _json_nodes(first["organization_nodes"])}
+        placements = collection_meta.get(source_id, [])
+        placement = placements[0] if placements else {}
+        title = placement.get("title") or first["title"] or "Untitled narrative"
+
+        def candidate(row, section=None):
+            asset = section is not None
+            section_id = str(row["section_id"]) if asset else f"source-{source_id}"
+            stored = (row["asset_path"] if asset else row["storage_path"]) or ""
+            digest = (row["asset_hash"] if asset else row["source_sha256"]) or ""
+            doc = ArchitectSource(source_id, section_id, row["asset_id"] if asset else None,
+                                  str(title), int(row["source_revision"]), str(digest), stored,
+                                  row["instance_id"])
+            readiness, reason = "ready", None
+            if not asset and row["mime_type"] != "text/markdown":
+                readiness, reason = "unavailable", "No Markdown document is attached"
+            elif not stored:
+                readiness, reason = "unavailable", "Markdown storage path is missing"
+            else:
                 try:
-                    sections = json.loads(row["organization_nodes"] or "[]")
-                except (TypeError, ValueError):
-                    sections = []
-                if not isinstance(sections, list) or not any(
-                    isinstance(node, dict)
-                    and node.get("id") == row["section_id"]
-                    and isinstance(node.get("metadata"), dict)
-                    and node["metadata"].get("markdown_asset_id") == row["asset_id"]
-                    for node in sections
-                ):
-                    continue
-            stored = row["asset_path"] or row["storage_path"] or ""
-            if not stored:
-                continue
-            try:
-                path = _media_file(stored)
-                if not path.is_file() or path.stat().st_size > 4_000_000:
-                    continue
-            except (ValueError, OSError):
-                continue
-            result.append(ArchitectSource(
-                source_id=str(row["id"]),
-                section_id=str(row["section_id"] or f"source-{row['id']}"),
-                markdown_asset_id=row["asset_id"],
-                title=str(row["title"]),
-                source_revision=int(row["source_revision"]),
-                content_sha256=str(row["asset_hash"] or row["source_sha256"]),
-                storage_path=stored,
-                legacy_instance_id=row["instance_id"],
-            ))
-        return result
+                    path = _media_file(stored, media_root)
+                    if not path.is_file():
+                        readiness, reason = "unavailable", "Markdown file is not visible to Architect"
+                    elif path.stat().st_size > 4_000_000:
+                        readiness, reason = "unavailable", "Markdown exceeds the current Architect size limit"
+                    elif not path.read_bytes().strip():
+                        readiness, reason = "empty", "Add narrative text and save the document"
+                except (ValueError, OSError):
+                    readiness, reason = "unavailable", "Markdown storage is inaccessible"
+            meta = {
+                "document_title": str(first["title"]), "section_title": section.get("title") if asset else None,
+                "collection_id": placement.get("collection_id"), "collection_name": placement.get("collection_name"),
+                "entry_id": placement.get("entry_id"), "hierarchy": placement.get("hierarchy", []),
+                "image_key": placement.get("image_key"), "placements": placements,
+                "readiness": readiness, "readiness_reason": reason,
+            }
+            return doc, meta
+
+        active = []
+        for row in group:
+            section = sections.get(row["section_id"])
+            metadata = section.get("metadata") if section else None
+            if row["asset_id"] and isinstance(metadata, dict) and metadata.get("markdown_asset_id") == row["asset_id"]:
+                active.append(candidate(row, section))
+        # A stale orphan asset must not mask a valid complete Markdown document.
+        if not active:
+            active.append(candidate(first))
+        elif not any(meta["readiness"] == "ready" for _, meta in active):
+            fallback = candidate(first)
+            if fallback[1]["readiness"] == "ready":
+                active.append(fallback)
+        result.extend(active)
+    return result
+
+
+def list_architect_sources(ontology_id: int, database_path: Path | None = None,
+                           media_root: Path | None = None) -> list[ArchitectSource]:
+    return [doc for doc, meta in _source_candidates(ontology_id, database_path, media_root)
+            if meta["readiness"] == "ready"]
+
+
+def list_architect_source_catalog(ontology_id: int, database_path: Path | None = None,
+                                  media_root: Path | None = None) -> list[dict]:
+    return [{**doc.public(), **meta} for doc, meta in _source_candidates(ontology_id, database_path, media_root)]
 
 
 def load_architect_source(
     ontology_id: int, source_id: str, section_id: str | None = None,
     database_path: Path | None = None, media_root: Path | None = None,
 ) -> tuple[ArchitectSource, str]:
-    sources = [s for s in list_architect_sources(ontology_id, database_path)
+    sources = [s for s in list_architect_sources(ontology_id, database_path, media_root)
                if s.source_id == source_id and (section_id is None or s.section_id == section_id)]
     if len(sources) != 1:
         raise ValueError("Select exactly one existing narrative Markdown section")

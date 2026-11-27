@@ -551,13 +551,13 @@ async def list_world_architect_sources(
 ) -> list[dict[str, Any]]:
     """Markdown-backed Narrative Sources, including document-only legacy Scene links."""
     from app.services.creative_workshop_service import require_workshop_world
-    from app.services.architect_source_documents import list_architect_sources
+    from app.services.architect_source_documents import list_architect_source_catalog
     await require_workshop_world(session, ontology_id)
     try:
-        documents = list_architect_sources(ontology_id)
+        documents = list_architect_source_catalog(ontology_id)
     except (FileNotFoundError, OSError) as exc:
         raise HTTPException(status_code=503, detail="ShreckWorld Sources are unavailable") from exc
-    rows = [item.public() for item in documents]
+    rows = documents
     if rows:
         result = await instances.graph_session.run("""
             MATCH (scene:Scene)

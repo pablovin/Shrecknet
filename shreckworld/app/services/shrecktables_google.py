@@ -303,7 +303,7 @@ MEET_POLICY_VERSION = 2
 def _meet_link(event: dict) -> str | None:
     candidates = [event.get("hangoutLink")]
     candidates.extend(entry.get("uri") for entry in
-                      (event.get("conferenceData") or {}).get("entryPoints", [])
+                      ((event.get("conferenceData") or {}).get("entryPoints") or [])
                       if entry.get("entryPointType") == "video")
     return next((uri for uri in candidates if isinstance(uri, str)
                  and re.fullmatch(r"https://meet\\.google\\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}", uri)), None)
@@ -420,7 +420,7 @@ def sync_event(db: Session, session_id: int, *, allow_calendar_change: bool = Fa
             event = google("GET", event_url, token)
             link = _meet_link(event)
             request_state = ((event.get("conferenceData") or {}).get("createRequest") or {}).get("status") or {}
-            if not link and request_state.get("statusCode") != "pending":
+            if not link and request_state.get("statusCode") in {None, "failure"}:
                 # A new request ID is needed after a failed conference request.
                 event = google("PATCH", event_url, token, params={"conferenceDataVersion": 1},
                                body={"conferenceData": {"createRequest": {
@@ -430,7 +430,7 @@ def sync_event(db: Session, session_id: int, *, allow_calendar_change: bool = Fa
                 link = _meet_link(event)
         row.google_event_calendar_id = table.calendar_id
         row.google_event_connection_id = connection.id
-        if link and link != row.google_meet_url:
+        if link != row.google_meet_url:
             row.meet_space = None
             row.meet_policy_version = 0
         row.google_meet_url = link

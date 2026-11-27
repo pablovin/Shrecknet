@@ -594,3 +594,14 @@ def test_sync_persists_meet_link_and_space_when_settings_fail(api, monkeypatch):
     assert response.status_code == 200
     assert response.json()["google_meet_link"] == "https://meet.google.com/abc-defg-hij"
     assert response.json()["calendar_sync_status"] == "partial"
+
+    # A subsequent sync must reuse the existing event rather than insert again.
+    calls = []
+    def request(method, url, token, **kwargs):
+        calls.append((method, url))
+        return {"conferenceData": {"createRequest": {"status": {"statusCode": "pending"}}}}
+    monkeypatch.setattr(google, "google", request)
+    with session_factory()() as db:
+        assert google.sync_event(db, session_id) == "partial"
+        assert db.get(TableSession, session_id).google_event_id
+    assert [method for method, _ in calls] == ["PATCH", "GET"]

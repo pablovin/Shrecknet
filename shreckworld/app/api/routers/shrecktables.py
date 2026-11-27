@@ -367,6 +367,8 @@ def patch_table(table_id: int, body: UpdateTable, if_match: int = Header(alias="
     changes = body.model_dump(exclude_unset=True)
     if "timezone" in changes and changes["timezone"] is not None:
         _zone(changes["timezone"])
+    if any(key in changes and changes[key] != getattr(row, key) for key in ("calendar_id", "google_connection_id")):
+        raise HTTPException(409, {"code": "use_calendar_management"})
     if changes.get("google_connection_id") is not None:
         from app.models.shrecktables import GoogleConnection
         connection = session.get(GoogleConnection, changes["google_connection_id"])

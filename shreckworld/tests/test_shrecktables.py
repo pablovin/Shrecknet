@@ -383,3 +383,44 @@ def test_calendar_event_projection_masks_private_events_and_expands_recurring(mo
     assert result["results"][1]["session_id"] == 17
     assert len(result["results"]) == 2
     assert calls[0][2]["params"]["singleEvents"] is True
+
+
+def test_meet_policy_is_fixed_even_for_legacy_disabled_flags(monkeypatch):
+    from types import SimpleNamespace
+    from app.services import shrecktables_google as google
+    calls = []
+    def request(method, url, token, **kwargs):
+        calls.append((method, kwargs))
+        return {"name": "spaces/test"}
+    monkeypatch.setattr(google, "google", request)
+    assert google._configure_auto_artifacts("token", "https://meet.google.com/abc-defg-hij",
+        SimpleNamespace(auto_notes=False, auto_transcript=False)) == "spaces/test"
+    config = calls[1][1]["body"]["config"]
+    assert config["accessType"] == "OPEN" and config["entryPointAccess"] == "ALL"
+    assert config["artifactConfig"]["transcriptionConfig"]["autoTranscriptionGeneration"] == "ON"
+    assert config["artifactConfig"]["smartNotesConfig"]["autoSmartNotesGeneration"] == "ON"
+    assert "recordingConfig" not in config["artifactConfig"]
+
+
+def test_table_current_session_survives_start(api, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    from app.db.session import session_factory
+    from app.models.shrecktables import TableSession
+    mock_contracts(monkeypatch)
+    client, headers, _ = api
+    table_id = make_table(client, headers)
+    now = datetime(2026, 11, 27, 20, tzinfo=timezone.utc)
+    monkeypatch.setattr("app.api.routers.shrecktables.utcnow", lambda: now)
+    with session_factory()() as db:
+        active = TableSession(table_id=table_id, title="Playing", created_by="1", status="scheduled",
+            scheduled_at_utc=now-timedelta(minutes=60), duration_minutes=180)
+        future = TableSession(table_id=table_id, title="Next", created_by="1", status="scheduled",
+            scheduled_at_utc=now+timedelta(days=7), duration_minutes=180)
+        db.add_all([active,future]); db.commit()
+        active_id, future_id = active.id, future.id
+    row = client.get(f"/api/v1/shrecktables/tables/{table_id}", headers=headers).json()
+    assert row["current_session"]["id"] == active_id
+    assert row["current_session"]["duration_minutes"] == 180
+    assert row["next_session"]["id"] == future_id
+    monkeypatch.setattr("app.api.routers.shrecktables.utcnow", lambda: now+timedelta(minutes=120))
+    assert client.get(f"/api/v1/shrecktables/tables/{table_id}", headers=headers).json()["current_session"] is None

@@ -38,9 +38,11 @@ def create_schema() -> None:
     # data readable while introducing the external Shrecknet-world reference.
     inspector = inspect(engine)
     with engine.begin() as connection:
+        if "shrecktables" in inspector.get_table_names():
+            connection.execute(text("UPDATE shrecktables SET auto_notes = TRUE, auto_transcript = TRUE WHERE auto_notes = FALSE OR auto_transcript = FALSE"))
         if "shrecktables_sessions" in inspector.get_table_names():
             columns = {column["name"] for column in inspector.get_columns("shrecktables_sessions")}
-            for name, definition in {"google_event_calendar_id": "VARCHAR(255)", "google_event_connection_id": "VARCHAR(36)"}.items():
+            for name, definition in {"google_event_calendar_id": "VARCHAR(255)", "google_event_connection_id": "VARCHAR(36)", "meet_policy_version": "INTEGER NOT NULL DEFAULT 0"}.items():
                 if name not in columns:
                     connection.execute(text(f"ALTER TABLE shrecktables_sessions ADD COLUMN {name} {definition}"))
         if "shreckworld_document_chunks" in inspector.get_table_names():

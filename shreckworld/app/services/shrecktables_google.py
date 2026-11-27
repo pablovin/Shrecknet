@@ -253,6 +253,9 @@ def link_existing_calendar(db: Session, table: Table, connection: GoogleConnecti
     return selected
 
 
+MEET_POLICY_VERSION = 1
+
+
 def _configure_auto_artifacts(token: str, meet_uri: str, table: Table) -> str | None:
     match = re.fullmatch(r"https://meet\.google\.com/([a-z]{3}-[a-z]{4}-[a-z]{3})", meet_uri)
     if not match:
@@ -262,15 +265,15 @@ def _configure_auto_artifacts(token: str, meet_uri: str, table: Table) -> str | 
     name = space.get("name")
     if not isinstance(name, str) or not re.fullmatch(r"spaces/[A-Za-z0-9_-]+", name):
         return None
-    if table.auto_notes or table.auto_transcript:
-        artifact = {}
-        if table.auto_notes:
-            artifact["smartNotesConfig"] = {"autoSmartNotesGeneration": "ON"}
-        if table.auto_transcript:
-            artifact["transcriptionConfig"] = {"autoTranscriptionGeneration": "ON"}
-        google("PATCH", MEET_BASE + "/" + name, token,
-               params={"updateMask": "config.artifactConfig"},
-               body={"name": name, "config": {"artifactConfig": artifact}})
+    # No co-host assignment or video recording: the organizer's Workspace policy
+    # controls host-first admission and Google starts artifacts when eligible.
+    config = {"accessType": "OPEN", "entryPointAccess": "ALL", "artifactConfig": {
+        "transcriptionConfig": {"autoTranscriptionGeneration": "ON"},
+        "smartNotesConfig": {"autoSmartNotesGeneration": "ON"},
+    }}
+    google("PATCH", MEET_BASE + "/" + name, token,
+           params={"updateMask": "config.accessType,config.entryPointAccess,config.artifactConfig.transcriptionConfig,config.artifactConfig.smartNotesConfig"},
+           body={"name": name, "config": config})
     return name
 
 
@@ -304,6 +307,7 @@ def sync_event(db: Session, session_id: int, *, allow_calendar_change: bool = Fa
             row.google_event_id = None
             row.google_meet_url = None
             row.meet_space = None
+            row.meet_policy_version = 0
         url = CALENDAR_BASE + "/calendars/" + quote(table.calendar_id, safe="") + "/events"
         if row.scheduled_at_utc is None or row.status != "scheduled":
             if row.google_event_id:
@@ -353,12 +357,14 @@ def sync_event(db: Session, session_id: int, *, allow_calendar_change: bool = Fa
         if row.google_meet_url:
             try:
                 row.meet_space = _configure_auto_artifacts(token, row.google_meet_url, table)
-                if (table.auto_notes or table.auto_transcript) and not row.meet_space:
+                if row.meet_space:
+                    row.meet_policy_version = MEET_POLICY_VERSION
+                else:
                     row.calendar_sync_status = "partial"
                     row.calendar_sync_error = "Meet space could not be resolved for documentation"
             except (httpx.HTTPError, ValueError):
                 row.calendar_sync_status = "partial"
-                row.calendar_sync_error = "Meet auto-documentation could not be configured"
+                row.calendar_sync_error = "Meet open access or automatic documentation could not be configured"
         else:
             row.calendar_sync_status = "partial"
             row.calendar_sync_error = "Google Meet link is not yet available"
@@ -415,7 +421,7 @@ def import_session_artifacts(db: Session, session_id: int) -> dict:
     if not row or not row.meet_space:
         return {"imported": 0, "state": "no_meet_space"}
     table = db.get(Table, row.table_id)
-    if not table or not table.google_connection_id or not (table.auto_notes or table.auto_transcript):
+    if not table or not table.google_connection_id:
         return {"imported": 0, "state": "disabled"}
     if (row.google_event_calendar_id and row.google_event_calendar_id != table.calendar_id) or row.calendar_sync_status == "detached":
         return {"imported": 0, "state": "detached"}
@@ -444,12 +450,10 @@ def import_session_artifacts(db: Session, session_id: int) -> dict:
         if expected and abs((started - expected).total_seconds()) > 18 * 3600:
             continue
         parent = record["name"]
-        for enabled, endpoint, source in (
-            (table.auto_transcript, "transcripts", "transcript"),
-            (table.auto_notes, "smartNotes", "gemini_notes")
+        for endpoint, source in (
+            ("transcripts", "transcript"),
+            ("smartNotes", "gemini_notes")
         ):
-            if not enabled:
-                continue
             if not re.fullmatch(r"conferenceRecords/[A-Za-z0-9_-]+", parent):
                 continue
             artifacts = google("GET", MEET_BASE + "/" + parent + "/" + endpoint, token)

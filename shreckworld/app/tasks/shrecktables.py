@@ -2,11 +2,11 @@
 from datetime import datetime, timedelta, timezone
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from app.celery_app import celery_app
 from app.db.session import session_factory
 from app.models.shrecktables import TableSession, Table
-from app.services.shrecktables_google import sync_event, import_session_artifacts
+from app.services.shrecktables_google import sync_event, import_session_artifacts, MEET_POLICY_VERSION
 
 log = logging.getLogger(__name__)
 
@@ -26,8 +26,13 @@ def reconcile_sessions() -> dict:
     threshold = datetime.now(timezone.utc) - timedelta(minutes=45)
     beginning = threshold - timedelta(days=29)
     with session_factory()() as db:
-        pending = db.scalars(select(TableSession).where(
-            TableSession.calendar_sync_status.in_(("pending", "failed", "partial")),
+        pending = db.scalars(select(TableSession).join(Table, Table.id == TableSession.table_id).where(
+            or_(TableSession.calendar_sync_status.in_(("pending", "failed", "partial")),
+                (TableSession.meet_policy_version < MEET_POLICY_VERSION)
+                & (TableSession.status == "scheduled")
+                & (TableSession.scheduled_at_utc >= datetime.now(timezone.utc))
+                & (TableSession.calendar_sync_status != "detached")
+                & Table.calendar_id.is_not(None) & Table.google_connection_id.is_not(None)),
             TableSession.scheduled_at_utc.is_not(None),
         ).order_by(TableSession.id).limit(200)).all()
         for row in pending:
@@ -39,7 +44,7 @@ def reconcile_sessions() -> dict:
             TableSession.meet_space.is_not(None),
             TableSession.scheduled_at_utc >= beginning,
             TableSession.scheduled_at_utc <= threshold,
-            (Table.auto_notes.is_(True) | Table.auto_transcript.is_(True)),
+            Table.google_connection_id.is_not(None),
         ).order_by(TableSession.scheduled_at_utc.desc()).limit(200)).all()
         checked = imported = 0
         for row in rows:

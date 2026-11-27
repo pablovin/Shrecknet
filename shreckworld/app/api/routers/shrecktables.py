@@ -5,7 +5,7 @@ explicitly asynchronous; a pending event is never represented as synchronized.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -95,21 +95,29 @@ def _poll(session: Session, session_id: int, poll_id: int) -> TablePoll:
 def _table_read(row: Table, actor: ShrecknetPrincipal, session: Session) -> dict:
     rules = read_world_rules(session, row.world_id)
     members = list(row.memberships)
-    upcoming = session.scalar(select(TableSession).where(
-        TableSession.table_id == row.id, TableSession.scheduled_at_utc > utcnow(),
-        TableSession.status == "scheduled"
-    ).order_by(TableSession.scheduled_at_utc, TableSession.id).limit(1))
-    next_info = None
-    if upcoming:
+    now = utcnow()
+    scheduled = select(TableSession).where(TableSession.table_id == row.id, TableSession.status == "scheduled")
+    upcoming = session.scalar(scheduled.where(TableSession.scheduled_at_utc > now)
+        .order_by(TableSession.scheduled_at_utc, TableSession.id).limit(1))
+    candidates = session.scalars(scheduled.where(
+        TableSession.scheduled_at_utc <= now,
+        TableSession.scheduled_at_utc > now - timedelta(days=1)
+    ).order_by(TableSession.scheduled_at_utc.desc(), TableSession.id)).all()
+    active = next((item for item in candidates if
+        datetime.fromisoformat(_instant(item.scheduled_at_utc)) + timedelta(minutes=item.duration_minutes) > now), None)
+
+    def summary(item):
+        if not item:
+            return None
         attendance = session.scalar(select(TableAttendance).where(
-            TableAttendance.session_id == upcoming.id, TableAttendance.user_id == actor.user_id))
-        next_info = dict(
-            id=upcoming.id, game_id=row.id, title=upcoming.title,
-            scheduled_at_utc=_instant(upcoming.scheduled_at_utc),
+            TableAttendance.session_id == item.id, TableAttendance.user_id == actor.user_id))
+        return dict(id=item.id, game_id=row.id, title=item.title,
+            scheduled_at_utc=_instant(item.scheduled_at_utc), duration_minutes=item.duration_minutes,
             attending=attendance.attending if attendance else None,
             confirmed_count=session.scalar(select(func.count()).select_from(TableAttendance).where(
-                TableAttendance.session_id == upcoming.id, TableAttendance.attending.is_(True))) or 0
-        )
+                TableAttendance.session_id == item.id, TableAttendance.attending.is_(True))) or 0)
+
+    next_info, current_info = summary(upcoming), summary(active)
     polls = session.scalars(select(TablePoll).join(TableSession).where(
         TableSession.table_id == row.id, TablePoll.is_finalized.is_(False))).all()
     unanswered = 0
@@ -126,8 +134,8 @@ def _table_read(row: Table, actor: ShrecknetPrincipal, session: Session) -> dict
         google_calendar_id=row.calendar_id, member_count=len(members),
         members=[{"user_id": m.user_id, "role": m.role, "character_agent_id": m.character_agent_id} for m in members],
         current_role=next((m.role for m in members if m.user_id == actor.user_id), "admin" if actor.role in GLOBAL_MANAGERS else None),
-        next_session=next_info, open_poll_count=len(polls), unanswered_poll_count=unanswered,
-        status=row.status, revision=row.revision, auto_notes=row.auto_notes, auto_transcript=row.auto_transcript,
+        next_session=next_info, current_session=current_info, open_poll_count=len(polls), unanswered_poll_count=unanswered,
+        status=row.status, revision=row.revision, auto_notes=True, auto_transcript=True,
         google_connection_id=row.google_connection_id,
     )
 
@@ -365,6 +373,9 @@ def patch_table(table_id: int, body: UpdateTable, if_match: int = Header(alias="
     if row.revision != if_match:
         raise HTTPException(409, "Table revision conflict")
     changes = body.model_dump(exclude_unset=True)
+    # Legacy clients may still send these switches; the platform policy is fixed.
+    changes.pop("auto_notes", None)
+    changes.pop("auto_transcript", None)
     if "timezone" in changes and changes["timezone"] is not None:
         _zone(changes["timezone"])
     if any(key in changes and changes[key] != getattr(row, key) for key in ("calendar_id", "google_connection_id")):

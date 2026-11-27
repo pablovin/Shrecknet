@@ -183,6 +183,7 @@ class AtlasDiscoveryService:
                 RETURN node, owner.instance_id AS page_id, coalesce(node.name, '') AS name, 'milestone' AS kind
             }
             RETURN DISTINCT elementId(node) AS key, page_id, name, kind,
+                   CASE WHEN kind IN ['scene', 'milestone'] THEN node.source_id ELSE null END AS source_id,
                    CASE kind WHEN 'scene' THEN 'scene:' + node.id
                              WHEN 'milestone' THEN 'milestone:' + node.id
                              ELSE 'entity:' + node.entity_instance_id END AS id

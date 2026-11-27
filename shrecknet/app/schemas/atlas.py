@@ -133,6 +133,7 @@ class AtlasWebNode(BaseModel):
     kind: Literal["entity", "source", "scene", "milestone"]
     name: str
     page_id: str
+    source_id: str | None = None
 
 
 class AtlasWebEdge(BaseModel):

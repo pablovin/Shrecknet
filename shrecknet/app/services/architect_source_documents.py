@@ -101,7 +101,7 @@ def _source_candidates(ontology_id: int, database_path: Path | None = None,
     with _connection(database_path) as db:
         rows = db.execute("""
             SELECT i.id, i.title, i.source_revision, i.storage_path, i.mime_type,
-                   i.source_sha256, a.id AS asset_id, a.section_id,
+                   i.source_sha256, i.created_at, a.id AS asset_id, a.section_id,
                    a.storage_path AS asset_path, a.content_sha256 AS asset_hash,
                    (SELECT o.nodes FROM source_organizations o
                     WHERE o.source_id=i.id ORDER BY o.revision DESC LIMIT 1)
@@ -112,7 +112,7 @@ def _source_candidates(ontology_id: int, database_path: Path | None = None,
             FROM shreckworld_library_items i
             LEFT JOIN source_assets a ON a.source_id=i.id AND a.kind='markdown'
             WHERE i.ontology_id=? AND i.source_type='narrative'
-            ORDER BY i.title, i.id, a.section_id
+            ORDER BY i.created_at DESC, i.id, a.section_id
         """, (ontology_id,)).fetchall()
         collection_meta = _collection_metadata(db, ontology_id)
     grouped: dict[str, list] = {}
@@ -151,6 +151,7 @@ def _source_candidates(ontology_id: int, database_path: Path | None = None,
                 except (ValueError, OSError):
                     readiness, reason = "unavailable", "Markdown storage is inaccessible"
             meta = {
+                "created_at": first["created_at"],
                 "document_title": str(first["title"]), "section_title": section.get("title") if asset else None,
                 "collection_id": placement.get("collection_id"), "collection_name": placement.get("collection_name"),
                 "entry_id": placement.get("entry_id"), "hierarchy": placement.get("hierarchy", []),

@@ -385,21 +385,49 @@ def test_calendar_event_projection_masks_private_events_and_expands_recurring(mo
     assert calls[0][2]["params"]["singleEvents"] is True
 
 
-def test_meet_policy_is_fixed_even_for_legacy_disabled_flags(monkeypatch):
-    from types import SimpleNamespace
+def test_meet_settings_are_independent_when_google_rejects_one(monkeypatch):
     from app.services import shrecktables_google as google
+    import httpx
     calls = []
     def request(method, url, token, **kwargs):
         calls.append((method, kwargs))
+        if kwargs["params"]["updateMask"] == "config.accessType":
+            req = httpx.Request(method, url)
+            raise httpx.HTTPStatusError("Bad request", request=req,
+                response=httpx.Response(400, request=req))
         return {"name": "spaces/test"}
     monkeypatch.setattr(google, "google", request)
-    assert google._configure_auto_artifacts("token", "https://meet.google.com/abc-defg-hij",
-        SimpleNamespace(auto_notes=False, auto_transcript=False)) == "spaces/test"
-    config = calls[1][1]["body"]["config"]
-    assert config["accessType"] == "OPEN" and config["entryPointAccess"] == "ALL"
-    assert config["artifactConfig"]["transcriptionConfig"]["autoTranscriptionGeneration"] == "ON"
-    assert config["artifactConfig"]["smartNotesConfig"]["autoSmartNotesGeneration"] == "ON"
-    assert "recordingConfig" not in config["artifactConfig"]
+    assert google._configure_auto_artifacts("token", "spaces/test") == ["accessType (HTTP 400)"]
+    assert len(calls) == 4
+    configs = [call[1]["body"]["config"] for call in calls]
+    assert configs[0] == {"accessType": "OPEN"}
+    assert configs[1] == {"entryPointAccess": "ALL"}
+    assert configs[2]["artifactConfig"]["transcriptionConfig"]["autoTranscriptionGeneration"] == "ON"
+    assert configs[3]["artifactConfig"]["smartNotesConfig"]["autoSmartNotesGeneration"] == "ON"
+
+
+def test_resolve_meet_space_accepts_valid_url_and_rejects_other_hosts(monkeypatch):
+    from unittest.mock import Mock
+    from app.services import shrecktables_google as google
+
+    request = Mock(return_value={"name": "spaces/test"})
+    monkeypatch.setattr(google, "google", request)
+    assert google._resolve_meet_space("token", "https://meet.google.com/abc-defg-hij") == "spaces/test"
+    request.assert_called_once_with("GET", google.MEET_BASE + "/spaces/abc-defg-hij", "token")
+    for invalid in ("https://meetXgoogleXcom/abc-defg-hij",
+                    "https://meet.google.com.example.com/abc-defg-hij"):
+        assert google._resolve_meet_space("token", invalid) is None
+        assert google._meet_link({"hangoutLink": invalid}) is None
+    assert request.call_count == 1
+
+
+def test_meet_link_uses_video_entry_point_and_ignores_non_meet_urls():
+    from app.services import shrecktables_google as google
+    assert google._meet_link({"hangoutLink": "https://example.com",
+        "conferenceData": {"entryPoints": [
+            {"entryPointType": "phone", "uri": "tel:123"},
+            {"entryPointType": "video", "uri": "https://meet.google.com/abc-defg-hij"}]}}) == "https://meet.google.com/abc-defg-hij"
+    assert google._meet_link({"conferenceData": {"createRequest": {"status": {"statusCode": "pending"}}}}) is None
 
 
 def test_table_current_session_survives_start(api, monkeypatch):
@@ -544,3 +572,91 @@ def test_public_repair_never_changes_primary_calendar(monkeypatch):
             SimpleNamespace(scopes="https://www.googleapis.com/auth/calendar.acls"))
     assert exc.value.status_code == 403
     request.assert_called_once()
+
+
+def test_sync_persists_meet_link_and_space_when_settings_fail(api, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    from app.db.session import session_factory
+    from app.models.shrecktables import Table, TableSession, GoogleConnection
+    from app.services import shrecktables_google as google
+
+    mock_contracts(monkeypatch)
+    client, headers, _ = api
+    table_id = make_table(client, headers)
+    with session_factory()() as db:
+        db.add(GoogleConnection(id="meet-test-connection", owner_user_id="1",
+            email="organizer@example.com", encrypted_refresh_token="unused", scopes="", status="connected"))
+        table = db.get(Table, table_id)
+        table.calendar_id = "campaign@group.calendar.google.com"
+        table.google_connection_id = "meet-test-connection"
+        row = TableSession(table_id=table_id, title="Playing", created_by="1", status="scheduled",
+            scheduled_at_utc=datetime.now(timezone.utc)+timedelta(days=1), duration_minutes=180)
+        db.add(row); db.commit()
+        session_id = row.id
+    monkeypatch.setattr(google, "access_token", lambda _: "token")
+    monkeypatch.setattr(google, "google", lambda *args, **kwargs: {"hangoutLink": "https://meet.google.com/abc-defg-hij"})
+    monkeypatch.setattr(google, "_resolve_meet_space", lambda *args: "spaces/test")
+    monkeypatch.setattr(google, "_configure_auto_artifacts", lambda *args: ["smart notes (HTTP 400)"])
+    with session_factory()() as db:
+        assert google.sync_event(db, session_id) == "partial"
+    with session_factory()() as db:
+        row = db.get(TableSession, session_id)
+        assert row.google_event_id
+        assert row.google_meet_url == "https://meet.google.com/abc-defg-hij"
+        assert row.meet_space == "spaces/test"
+        assert "smart notes (HTTP 400)" in row.calendar_sync_error
+    response = client.get(f"/api/v1/shrecktables/tables/{table_id}/sessions/{session_id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["google_meet_link"] == "https://meet.google.com/abc-defg-hij"
+    assert response.json()["calendar_sync_status"] == "partial"
+
+    # A subsequent sync must reuse the existing event rather than insert again.
+    calls = []
+    def request(method, url, token, **kwargs):
+        calls.append((method, url))
+        return {"conferenceData": {"createRequest": {"status": {"statusCode": "pending"}}}}
+    monkeypatch.setattr(google, "google", request)
+    with session_factory()() as db:
+        assert google.sync_event(db, session_id) == "partial"
+        assert db.get(TableSession, session_id).google_event_id
+    assert [method for method, _ in calls] == ["PATCH", "GET"]
+
+
+    # Editing and cancelling through the public ShreckTables endpoints must
+    # enqueue synchronization and operate on the original Google event.
+    queued = []
+    monkeypatch.setattr("app.api.routers.shrecktables._enqueue_sync",
+                        lambda db, row: queued.append(row.id))
+    event_path = f"/api/v1/shrecktables/tables/{table_id}/sessions/{session_id}"
+    with session_factory()() as db:
+        event_id = db.get(TableSession, session_id).google_event_id
+    new_date = datetime.now(timezone.utc)+timedelta(days=7)
+    response = client.patch(event_path, headers=headers, json={
+        "title": "Rescheduled", "scheduled_at": new_date.isoformat(),
+        "scheduled_timezone": "UTC", "duration_minutes": 180,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["calendar_sync_status"] == "pending"
+    calls.clear()
+    def reschedule(method, url, token, **kwargs):
+        calls.append((method, url, kwargs))
+        return {"hangoutLink": "https://meet.google.com/abc-defg-hij"}
+    monkeypatch.setattr(google, "google", reschedule)
+    monkeypatch.setattr(google, "_configure_auto_artifacts", lambda *args: [])
+    with session_factory()() as db:
+        assert google.sync_event(db, session_id) == "synced"
+        assert db.get(TableSession, session_id).google_event_id == event_id
+    assert len(calls) == 1
+    assert calls[0][0] == "PATCH" and calls[0][1].endswith("/"+event_id)
+    assert datetime.fromisoformat(calls[0][2]["body"]["start"]["dateTime"]) == new_date
+    assert "conferenceData" not in calls[0][2]["body"]
+
+    assert client.delete(event_path, headers=headers).status_code == 204
+    assert queued == [session_id, session_id]
+    calls.clear()
+    with session_factory()() as db:
+        assert google.sync_event(db, session_id) == "not_configured"
+        row = db.get(TableSession, session_id)
+        assert row.status == "cancelled" and row.google_event_id is None
+    assert len(calls) == 1
+    assert calls[0][0] == "DELETE" and calls[0][1].endswith("/"+event_id)

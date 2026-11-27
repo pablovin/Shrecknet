@@ -159,7 +159,7 @@ def _session_read(session: Session, row: TableSession) -> dict:
                 scheduled_at_utc=_instant(row.scheduled_at_utc),
                 scheduled_timezone=row.scheduled_timezone, duration_minutes=row.duration_minutes,
                 google_meet_link=row.google_meet_url, google_event_id=row.google_event_id,
-                calendar_sync_status=row.calendar_sync_status,
+                calendar_sync_status=row.calendar_sync_status, calendar_sync_error=row.calendar_sync_error,
                 attendance=[dict(user_id=int(a.user_id), attending=a.attending) for a in attendance],
                 polls=[_poll_read(session, poll) for poll in polls])
 

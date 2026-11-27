@@ -190,7 +190,30 @@ def table_calendar(table_id: int, connection_id: str, name: str | None = Query(N
         raise
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
         raise _calendar_error(exc) from exc
-    return {"calendar_id": calendar_id, "connection_id": connection.id}
+    return {"calendar_id": calendar_id, "connection_id": connection.id, "public_status": "public"}
+
+
+@router.get("/tables/{table_id}/calendar/public-status")
+def table_calendar_public_status(table_id: int,
+                                 actor: ShrecknetPrincipal = Depends(get_current_user),
+                                 db: Session = Depends(get_db)):
+    table = _table(db, table_id, actor, manage=True)
+    if not table.calendar_id or not table.google_connection_id:
+        raise HTTPException(409, {"code": "google_connection_unavailable"})
+    connection = _calendar_connection(db, table.google_connection_id, actor)
+    service.require_calendar_sharing_scope(connection)
+    try:
+        token = service.access_token(connection)
+        rule = service.google("GET", service.CALENDAR_BASE + "/calendars/" +
+                              service.quote(table.calendar_id, safe="") + "/acl/default", token)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return {"status": "not_verified"}
+        raise _calendar_error(exc) from exc
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise _calendar_error(exc) from exc
+    public = rule.get("scope", {}).get("type") == "default" and rule.get("role") == "reader"
+    return {"status": "public" if public else "not_verified"}
 
 
 @router.post("/tables/{table_id}/calendar/make-public")

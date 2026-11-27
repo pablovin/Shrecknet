@@ -464,3 +464,83 @@ def test_calendar_events_route_for_connected_table(api, monkeypatch):
     response = client.get(path, headers=headers, params=params)
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "google_calendar_not_accessible"
+
+
+def test_create_calendar_requires_public_acl_before_link(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.services import shrecktables_google as google
+
+    connection = SimpleNamespace(id="organizer", scopes="https://www.googleapis.com/auth/calendar.acls")
+    table = SimpleNamespace(name="NicoQuest", timezone="UTC", calendar_id=None,
+                            google_connection_id=None, revision=1)
+    db = Mock()
+    monkeypatch.setattr(google, "access_token", lambda _: "token")
+    calls = []
+    def request(method, url, token, **kwargs):
+        calls.append((method, url, kwargs))
+        if url.endswith("/calendars"):
+            return {"id": "new@group.calendar.google.com"}
+        assert table.calendar_id is None
+        return {"role": "reader", "scope": {"type": "default"}}
+    monkeypatch.setattr(google, "google", request)
+    assert google.create_calendar(db, table, connection) == "new@group.calendar.google.com"
+    assert [call[0] for call in calls] == ["POST", "POST", "GET"]
+    assert calls[1][2]["body"] == {"role": "reader", "scope": {"type": "default"}}
+    assert table.calendar_id == "new@group.calendar.google.com"
+    db.commit.assert_called_once()
+
+
+def test_create_calendar_does_not_create_without_sharing_scope(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from fastapi import HTTPException
+    import pytest
+    from app.services import shrecktables_google as google
+
+    token = Mock()
+    monkeypatch.setattr(google, "access_token", token)
+    with pytest.raises(HTTPException) as exc:
+        google.create_calendar(Mock(), Mock(), SimpleNamespace(scopes=""))
+    assert exc.value.detail["code"] == "google_calendar_sharing_reauthorization"
+    token.assert_not_called()
+
+
+def test_public_calendar_creation_fails_if_workspace_downgrades_acl(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from fastapi import HTTPException
+    import pytest
+    from app.services import shrecktables_google as google
+
+    table = SimpleNamespace(name="NicoQuest", timezone="UTC", calendar_id=None,
+                            google_connection_id=None, revision=1)
+    connection = SimpleNamespace(id="organizer", scopes="https://www.googleapis.com/auth/calendar.acls")
+    db = Mock()
+    monkeypatch.setattr(google, "access_token", lambda _: "token")
+    request = Mock(side_effect=[{"id": "new-calendar"}, {},
+                                {"role": "freeBusyReader", "scope": {"type": "default"}}, {}])
+    monkeypatch.setattr(google, "google", request)
+    with pytest.raises(HTTPException) as exc:
+        google.create_calendar(db, table, connection)
+    assert exc.value.detail["code"] == "google_calendar_public_sharing_blocked"
+    assert table.calendar_id is None
+    db.commit.assert_not_called()
+    assert request.call_args.args[0] == "DELETE"
+
+
+def test_public_repair_never_changes_primary_calendar(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from fastapi import HTTPException
+    import pytest
+    from app.services import shrecktables_google as google
+
+    monkeypatch.setattr(google, "access_token", lambda _: "token")
+    request = Mock(return_value={"primary": True, "accessRole": "owner"})
+    monkeypatch.setattr(google, "google", request)
+    with pytest.raises(HTTPException) as exc:
+        google.make_linked_calendar_public(SimpleNamespace(calendar_id="primary"),
+            SimpleNamespace(scopes="https://www.googleapis.com/auth/calendar.acls"))
+    assert exc.value.status_code == 403
+    request.assert_called_once()

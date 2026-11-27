@@ -125,8 +125,13 @@ def _calendar_connection(db: Session, connection_id: str, actor: ShrecknetPrinci
 
 
 def _calendar_error(exc: Exception):
-    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {401, 403}:
-        return HTTPException(403, {"code": "google_calendar_permissions"})
+    if isinstance(exc, httpx.HTTPStatusError):
+        if exc.response.status_code in {401, 403}:
+            return HTTPException(403, {"code": "google_calendar_permissions"})
+        if exc.response.status_code == 404:
+            return HTTPException(409, {"code": "google_calendar_not_accessible"})
+        if exc.response.status_code == 429:
+            return HTTPException(503, {"code": "google_calendar_rate_limited"})
     return HTTPException(502, {"code": "google_calendar_unavailable"})
 
 

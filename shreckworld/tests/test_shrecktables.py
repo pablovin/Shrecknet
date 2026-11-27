@@ -605,3 +605,43 @@ def test_sync_persists_meet_link_and_space_when_settings_fail(api, monkeypatch):
         assert google.sync_event(db, session_id) == "partial"
         assert db.get(TableSession, session_id).google_event_id
     assert [method for method, _ in calls] == ["PATCH", "GET"]
+
+
+    # Editing and cancelling through the public ShreckTables endpoints must
+    # enqueue synchronization and operate on the original Google event.
+    queued = []
+    monkeypatch.setattr("app.api.routers.shrecktables._enqueue_sync",
+                        lambda db, row: queued.append(row.id))
+    event_path = f"/api/v1/shrecktables/tables/{table_id}/sessions/{session_id}"
+    with session_factory()() as db:
+        event_id = db.get(TableSession, session_id).google_event_id
+    new_date = datetime.now(timezone.utc)+timedelta(days=7)
+    response = client.patch(event_path, headers=headers, json={
+        "title": "Rescheduled", "scheduled_at": new_date.isoformat(),
+        "scheduled_timezone": "UTC", "duration_minutes": 180,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["calendar_sync_status"] == "pending"
+    calls.clear()
+    def reschedule(method, url, token, **kwargs):
+        calls.append((method, url, kwargs))
+        return {"hangoutLink": "https://meet.google.com/abc-defg-hij"}
+    monkeypatch.setattr(google, "google", reschedule)
+    monkeypatch.setattr(google, "_configure_auto_artifacts", lambda *args: [])
+    with session_factory()() as db:
+        assert google.sync_event(db, session_id) == "synced"
+        assert db.get(TableSession, session_id).google_event_id == event_id
+    assert len(calls) == 1
+    assert calls[0][0] == "PATCH" and calls[0][1].endswith("/"+event_id)
+    assert datetime.fromisoformat(calls[0][2]["body"]["start"]["dateTime"]) == new_date
+    assert "conferenceData" not in calls[0][2]["body"]
+
+    assert client.delete(event_path, headers=headers).status_code == 204
+    assert queued == [session_id, session_id]
+    calls.clear()
+    with session_factory()() as db:
+        assert google.sync_event(db, session_id) == "not_configured"
+        row = db.get(TableSession, session_id)
+        assert row.status == "cancelled" and row.google_event_id is None
+    assert len(calls) == 1
+    assert calls[0][0] == "DELETE" and calls[0][1].endswith("/"+event_id)

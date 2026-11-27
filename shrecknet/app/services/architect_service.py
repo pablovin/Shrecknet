@@ -17,6 +17,66 @@ from app.models.architect import (
 from app.repositories.architect_repository import ArchitectRepository
 
 
+async def resolve_world_source_destination(
+    ontology_id: int,
+    source_id: str,
+    section_id: str | None,
+    instances: OntologyInstanceService,
+) -> str:
+    """Resolve the graph container, not a legacy narrative EntityInstance.
+
+    Validate the saved world-scoped Markdown before creating any graph state.
+    Reuse existing scene ownership or a valid legacy import destination.
+    New narratives get an empty, idempotent source-specific graph container;
+    the existing analysis and generation pipeline still receives a concrete ID.
+    """
+    import asyncio
+    from hashlib import sha256
+    from app.schemas.ontology_instance import OntologyInstanceCreate
+    from app.services.architect_source_documents import load_architect_source
+
+    try:
+        source, _ = await asyncio.to_thread(load_architect_source, ontology_id, source_id, section_id)
+    except (FileNotFoundError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="Narrative source storage is unavailable") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    result = await instances.graph_session.run("""
+        MATCH (page:OntologyInstance)-[:HAS_SCENE]->(scene:Scene)
+        WHERE toInteger(page.ontology_id) = $ontology_id
+          AND toInteger(scene.ontology_id) = $ontology_id
+          AND scene.source_id = $source_id
+        RETURN DISTINCT page.instance_id AS instance_id
+        ORDER BY instance_id
+    """, ontology_id=ontology_id, source_id=source_id)
+    destinations = [str(row["instance_id"]) for row in await result.data() if row["instance_id"]]
+    if len(destinations) == 1:
+        return destinations[0]
+    if len(destinations) > 1:
+        raise HTTPException(status_code=409, detail="This narrative already has scenes on multiple graph pages. Select the intended destination under Advanced configuration.")
+    if source.legacy_instance_id:
+        try:
+            page = await instances.get_instance(source.legacy_instance_id, include_scenes=False, include_relationships=False)
+        except ValueError:
+            page = None
+        if page is not None and page.ontology_id == ontology_id:
+            return page.instance_id
+
+    # Stable identity is independent of the title, revision and section.
+    key = f"architect-source:{ontology_id}:{source_id}"
+    page = await instances.create_instance(
+        OntologyInstanceCreate(ontology_id=ontology_id, name=source.title, entities=[]),
+        creation_key=key,
+        creation_fingerprint=sha256(key.encode("utf-8")).hexdigest(),
+        trigger_background_jobs=False,
+        bounded_result=True,
+    )
+    if page.ontology_id != ontology_id:
+        raise HTTPException(status_code=409, detail="Narrative destination does not belong to this world")
+    return page.instance_id
+
+
 class ArchitectService:
     """Business logic wrapper around architect repositories."""
 

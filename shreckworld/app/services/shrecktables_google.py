@@ -306,11 +306,11 @@ def _meet_link(event: dict) -> str | None:
                       ((event.get("conferenceData") or {}).get("entryPoints") or [])
                       if entry.get("entryPointType") == "video")
     return next((uri for uri in candidates if isinstance(uri, str)
-                 and re.fullmatch(r"https://meet\\.google\\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}", uri)), None)
+                 and re.fullmatch(r"https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}", uri)), None)
 
 
 def _resolve_meet_space(token: str, meet_uri: str) -> str | None:
-    match = re.fullmatch(r"https://meet\\.google\\.com/([a-z]{3}-[a-z]{4}-[a-z]{3})", meet_uri)
+    match = re.fullmatch(r"https://meet\.google\.com/([a-z]{3}-[a-z]{4}-[a-z]{3})", meet_uri)
     if not match:
         return None
     space = google("GET", MEET_BASE + "/spaces/" + match.group(1), token)

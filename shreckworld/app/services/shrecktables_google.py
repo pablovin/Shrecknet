@@ -32,6 +32,7 @@ SCOPES = (
     "openid email "
     "https://www.googleapis.com/auth/calendar.app.created "
     "https://www.googleapis.com/auth/calendar.events "
+    "https://www.googleapis.com/auth/calendar.acls "
     "https://www.googleapis.com/auth/meetings.space.readonly "
     "https://www.googleapis.com/auth/meetings.space.settings "
     "https://www.googleapis.com/auth/calendar.calendarlist.readonly "
@@ -219,11 +220,54 @@ def unlink_calendar(db: Session, table: Table) -> None:
     db.commit()
 
 
+def require_calendar_sharing_scope(connection: GoogleConnection) -> None:
+    scopes = set((connection.scopes or "").split())
+    if not scopes.intersection({"https://www.googleapis.com/auth/calendar.acls",
+                                "https://www.googleapis.com/auth/calendar"}):
+        raise HTTPException(409, {"code": "google_calendar_sharing_reauthorization"})
+
+
+def ensure_public_calendar(calendar_id: str, token: str) -> None:
+    """Set the public ACL to read-only and verify Google's returned rule."""
+    url = CALENDAR_BASE + "/calendars/" + quote(calendar_id, safe="") + "/acl"
+    body = {"scope": {"type": "default"}, "role": "reader"}
+    try:
+        google("POST", url, token, body=body, params={"sendNotifications": False})
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 409:
+            raise
+        google("PUT", url + "/default", token, body=body)
+    actual = google("GET", url + "/default", token)
+    if actual.get("role") != "reader" or (actual.get("scope") or {}).get("type") != "default":
+        raise HTTPException(409, {"code": "google_calendar_public_sharing_blocked"})
+
+
+def make_linked_calendar_public(table: Table, connection: GoogleConnection) -> None:
+    """Explicit organizer action only; never change externally linked calendars automatically."""
+    require_calendar_sharing_scope(connection)
+    token = access_token(connection)
+    metadata = google("GET", CALENDAR_BASE + "/users/me/calendarList/" + quote(table.calendar_id, safe=""), token)
+    if metadata.get("primary") or metadata.get("accessRole") != "owner":
+        raise HTTPException(403, {"code": "google_calendar_public_owner_required"})
+    ensure_public_calendar(table.calendar_id, token)
+
+
 def create_calendar(db: Session, table: Table, connection: GoogleConnection, name: str | None = None) -> str:
+    require_calendar_sharing_scope(connection)
     token = access_token(connection)
     record = google("POST", CALENDAR_BASE + "/calendars", token,
         body={"summary": name or "ShreckTables — " + table.name, "timeZone": table.timezone})
     calendar_id = record["id"]
+    try:
+        ensure_public_calendar(calendar_id, token)
+    except Exception:
+        # Never attach a private calendar as a successful ShreckTables creation.
+        # Only clean up the brand-new, empty calendar created by this request.
+        try:
+            google("DELETE", CALENDAR_BASE + "/calendars/" + quote(calendar_id, safe=""), token)
+        except (httpx.HTTPError, RuntimeError, ValueError):
+            pass  # Organizer may need to remove the unattached calendar manually.
+        raise
     table.google_connection_id = connection.id
     table.calendar_id = calendar_id
     table.revision += 1

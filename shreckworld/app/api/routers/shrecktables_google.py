@@ -186,10 +186,28 @@ def table_calendar(table_id: int, connection_id: str, name: str | None = Query(N
         raise HTTPException(403, "Connect your own Google account")
     try:
         calendar_id = service.create_calendar(db, table, connection, name)
-    except Exception as exc:
-        # Do not leak service account keys or Google user data into API errors.
-        raise HTTPException(502, "Google Calendar creation failed") from exc
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise _calendar_error(exc) from exc
     return {"calendar_id": calendar_id, "connection_id": connection.id}
+
+
+@router.post("/tables/{table_id}/calendar/make-public")
+def make_table_calendar_public(table_id: int,
+                               actor: ShrecknetPrincipal = Depends(get_current_user),
+                               db: Session = Depends(get_db)):
+    table = _table(db, table_id, actor, manage=True)
+    if not table.calendar_id or not table.google_connection_id:
+        raise HTTPException(409, {"code": "google_connection_unavailable"})
+    connection = _calendar_connection(db, table.google_connection_id, actor)
+    try:
+        service.make_linked_calendar_public(table, connection)
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise _calendar_error(exc) from exc
+    return {"status": "public"}
 
 
 @router.post("/tables/{table_id}/calendar/connect-existing")

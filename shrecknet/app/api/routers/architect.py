@@ -583,6 +583,10 @@ async def list_world_architect_sources(
     return rows
 
 
+class WorldArchitectAnalysisRequest(ArchitectAnalysisRequest):
+    ontology_instance_id: str | None = Field(default=None, min_length=1, description="Optional manual graph destination")
+
+
 @router.post(
     "/worlds/{ontology_id}/analyze",
     response_model=ArchitectAnalysisRunRead,
@@ -590,7 +594,7 @@ async def list_world_architect_sources(
 )
 async def request_world_architect_analysis(
     ontology_id: int,
-    payload: ArchitectAnalysisRequest,
+    payload: WorldArchitectAnalysisRequest,
     actor: User = Depends(require_roles("world_builder")),
     session: AsyncSession = Depends(get_db_session),
     service: ArchitectService = Depends(get_architect_service),
@@ -600,8 +604,19 @@ async def request_world_architect_analysis(
     settings = get_settings()
     if not is_shreckllm_configured(settings):
         raise HTTPException(status_code=503, detail="shreckLLM is not configured")
+    await require_workshop_world(session, ontology_id)
+    if payload.ontology_id is not None and payload.ontology_id != ontology_id:
+        raise HTTPException(status_code=400, detail="Payload world must match selected world")
+    destination = payload.ontology_instance_id
+    if destination is None:
+        if not payload.source_id:
+            raise HTTPException(status_code=422, detail="Select a narrative Source or graph destination")
+        from app.services.architect_service import resolve_world_source_destination
+        destination = await resolve_world_source_destination(ontology_id, payload.source_id, payload.section_id, instances)
+    payload = ArchitectAnalysisRequest.model_validate({
+        **payload.model_dump(), "ontology_id": ontology_id, "ontology_instance_id": destination,
+    })
     run = await service.create_world_run(ontology_id, payload, str(actor.id), instances)
-    payload = payload.model_copy(update={"ontology_id": ontology_id})
     architect_task.apply_async(
         kwargs={
             "run_id": run.id,

@@ -153,7 +153,7 @@ def table_calendar_events(table_id: int, start: datetime, end: datetime,
     if not connection or connection.status != "connected":
         raise HTTPException(409, {"code": "google_connection_unavailable"})
     try:
-        return service.calendar_events(db, table, connection, start, end, page_token)
+        return service.calendar_events(db, table, connection, start, end, page_token, organizer=connection.owner_user_id == actor.user_id)
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
         raise _calendar_error(exc) from exc
 
@@ -201,7 +201,7 @@ def connect_existing_calendar(table_id: int, connection_id: str,
     if table.calendar_id and calendar_id and calendar_id != table.calendar_id:
         raise HTTPException(409, {"code": "unlink_calendar_first"})
     # New links must use credentials owned by the acting organizer.
-    if connection.owner_user_id != actor.user_id and not table.calendar_id:
+    if connection.owner_user_id != actor.user_id:
         raise HTTPException(403, {"code": "google_connection_not_owned"})
     try:
         selected = service.link_existing_calendar(db, table, connection, calendar_id)

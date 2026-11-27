@@ -354,3 +354,32 @@ def test_calendar_picker_excludes_primary_readonly_and_keeps_pagination(monkeypa
     page = google.calendar_choices(None)
     assert [row["id"] for row in page["results"]] == ["campaign"]
     assert page["next_page_token"] == "next"
+
+
+def test_calendar_event_projection_masks_private_events_and_expands_recurring(monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from app.services import shrecktables_google as google
+    calls = []
+    def request(method, url, token, **kwargs):
+        calls.append((method, url, kwargs))
+        return {"items": [
+            {"id":"e1", "summary":"Secret", "visibility":"private",
+             "start":{"date":"2026-11-27"}, "end":{"date":"2026-11-28"}},
+            {"id":"e2", "summary":"Campaign", "start":{"dateTime":"2026-11-27T20:00:00Z"},
+             "end":{"dateTime":"2026-11-27T23:00:00Z"}},
+            {"id":"cancelled", "status":"cancelled"}
+        ], "nextPageToken":"next"}
+    class DB:
+        def scalars(self, statement):
+            return SimpleNamespace(all=lambda: [SimpleNamespace(google_event_id="e2", id=17)])
+    monkeypatch.setattr(google, "access_token", lambda _: "token")
+    monkeypatch.setattr(google, "google", request)
+    result = google.calendar_events(DB(), SimpleNamespace(id=1, calendar_id="calendar", timezone="UTC"), None,
+                                    datetime(2026,11,1,tzinfo=timezone.utc), datetime(2026,12,1,tzinfo=timezone.utc))
+    assert result["next_page_token"] == "next"
+    assert result["results"][0]["title"] == "Private event"
+    assert result["results"][0]["all_day"] is True
+    assert result["results"][1]["session_id"] == 17
+    assert len(result["results"]) == 2
+    assert calls[0][2]["params"]["singleEvents"] is True

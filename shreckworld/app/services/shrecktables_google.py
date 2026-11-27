@@ -168,8 +168,13 @@ def calendar_choices(connection: GoogleConnection, page_token: str | None = None
 
 
 def calendar_events(db: Session, table: Table, connection: GoogleConnection,
-                    start: datetime, end: datetime, page_token: str | None = None) -> dict:
+                    start: datetime, end: datetime, page_token: str | None = None,
+                    *, organizer: bool = True) -> dict:
     token = access_token(connection)
+    if not organizer:
+        metadata = google("GET", CALENDAR_BASE + "/users/me/calendarList/" + quote(table.calendar_id, safe=""), token)
+        if metadata.get("primary"):
+            raise HTTPException(403, {"code": "google_calendar_permissions"})
     params = {"timeMin": start.isoformat(), "timeMax": end.isoformat(), "singleEvents": True,
               "showDeleted": False, "orderBy": "startTime", "maxResults": 250,
               "timeZone": table.timezone}
